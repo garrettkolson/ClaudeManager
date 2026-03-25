@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ClaudeManager.Agent;
 using ClaudeManager.Agent.Models;
 using Microsoft.Extensions.Configuration;
@@ -40,6 +41,46 @@ if (!ok)
 }
 logger.LogInformation("Claude authenticated successfully.");
 
+// ── MCP config (wiki tools for Claude) ───────────────────────────────────────
+
+string? mcpConfigPath = null;
+
+if (config.McpServerPath is not null)
+{
+    if (!File.Exists(config.McpServerPath))
+    {
+        logger.LogWarning(
+            "McpServerPath '{Path}' not found; wiki MCP tools will be disabled.",
+            config.McpServerPath);
+    }
+    else
+    {
+        mcpConfigPath = Path.Combine(Path.GetTempPath(), "claude_manager_mcp.json");
+
+        var mcpConfig = new
+        {
+            mcpServers = new Dictionary<string, object>
+            {
+                ["claude-manager-wiki"] = new
+                {
+                    command = config.McpServerPath,
+                    env = new Dictionary<string, string>
+                    {
+                        ["CM_HUB_URL"]        = config.HubUrl,
+                        ["CM_AGENT_SECRET"]   = config.SharedSecret,
+                    },
+                },
+            },
+        };
+
+        await File.WriteAllTextAsync(
+            mcpConfigPath,
+            JsonSerializer.Serialize(mcpConfig, new JsonSerializerOptions { WriteIndented = true }));
+
+        logger.LogInformation("MCP config written to {Path}", mcpConfigPath);
+    }
+}
+
 // ── Run ───────────────────────────────────────────────────────────────────────
 
 using var agentHost = Host.CreateDefaultBuilder(args)
@@ -49,7 +90,7 @@ using var agentHost = Host.CreateDefaultBuilder(args)
         services.AddSingleton<IProcessRunner, ProcessRunner>();
         services.AddSingleton<ClaudeValidator>();
         services.AddSingleton<IClaudeProcessFactory>(sp =>
-            new ClaudeProcessFactory(binary, sp.GetRequiredService<ILoggerFactory>()));
+            new ClaudeProcessFactory(binary, sp.GetRequiredService<ILoggerFactory>(), mcpConfigPath));
         services.AddSingleton(sp =>
             new SessionProcessManager(
                 sp.GetRequiredService<IClaudeProcessFactory>(),

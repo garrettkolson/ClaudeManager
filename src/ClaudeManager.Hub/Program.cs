@@ -74,7 +74,41 @@ app.UseStaticFiles();
 app.UseRouting();
 
 app.MapHub<AgentHub>("/agenthub");
+
+// ── Wiki REST API (used by ClaudeManager.McpServer on agent machines) ─────────
+
+var agentSecret = app.Configuration["AgentSecret"]!;
+
+app.MapGet("/api/wiki", async (WikiService wiki) =>
+{
+    var entries = await wiki.GetAllAsync();
+    return Results.Ok(entries
+        .Where(e => !e.IsArchived)
+        .Select(e => new { e.Id, e.Title, e.Category, e.Tags }));
+}).AddEndpointFilter(AgentSecretFilter(agentSecret));
+
+app.MapPost("/api/wiki/save", async (WikiService wiki, WikiSaveRequest req) =>
+{
+    await wiki.UpsertByTitleAsync(req.Title, req.Category, req.Content, req.Tags);
+    return Results.Ok();
+}).AddEndpointFilter(AgentSecretFilter(agentSecret));
+
 app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");
 
 app.Run();
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+static Func<EndpointFilterInvocationContext, EndpointFilterDelegate, ValueTask<object?>>
+    AgentSecretFilter(string secret) =>
+    async (ctx, next) =>
+    {
+        var supplied = ctx.HttpContext.Request.Headers["X-Agent-Secret"].FirstOrDefault()
+                    ?? ctx.HttpContext.Request.Query["secret"].FirstOrDefault();
+        if (supplied != secret)
+            return Results.Unauthorized();
+        return await next(ctx);
+    };
+
+record WikiSaveRequest(string Title, string Category, string Content, string? Tags);

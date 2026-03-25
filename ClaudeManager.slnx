@@ -5,6 +5,7 @@
   <Folder Name="/src/">
     <Project Path="src/ClaudeManager.Agent/ClaudeManager.Agent.csproj" />
     <Project Path="src/ClaudeManager.Hub/ClaudeManager.Hub.csproj" />
+    <Project Path="src/ClaudeManager.McpServer/ClaudeManager.McpServer.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ClaudeManager.Agent.Tests/ClaudeManager.Agent.Tests.csproj" />

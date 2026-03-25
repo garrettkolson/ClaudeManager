@@ -77,6 +77,42 @@ public class WikiService : IWikiService
     }
 
     /// <summary>
+    /// Creates a new wiki entry or updates an existing active one with the same title
+    /// (case-insensitive). Called by the MCP server tool on behalf of Claude.
+    /// </summary>
+    public async Task UpsertByTitleAsync(string title, string category, string content, string? tags)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var existing = await db.WikiEntries
+            .Where(e => !e.IsArchived && e.Title.ToLower() == title.ToLower())
+            .FirstOrDefaultAsync();
+
+        var now = DateTimeOffset.UtcNow;
+        if (existing is not null)
+        {
+            existing.Category  = category;
+            existing.Content   = content;
+            existing.Tags      = string.IsNullOrWhiteSpace(tags) ? null : tags.Trim();
+            existing.UpdatedAt = now;
+        }
+        else
+        {
+            db.WikiEntries.Add(new WikiEntryEntity
+            {
+                Title      = title,
+                Category   = category,
+                Content    = content,
+                Tags       = string.IsNullOrWhiteSpace(tags) ? null : tags.Trim(),
+                CreatedAt  = now,
+                UpdatedAt  = now,
+                IsArchived = false,
+            });
+        }
+
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
     /// Formats all non-archived wiki entries as an XML context block for injection
     /// into claude prompts. Returns null if there are no active entries.
     /// </summary>

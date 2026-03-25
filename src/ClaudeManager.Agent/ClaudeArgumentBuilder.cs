@@ -6,7 +6,7 @@ namespace ClaudeManager.Agent;
 /// </summary>
 public static class ClaudeArgumentBuilder
 {
-    public static string Build(string prompt, string? resumeSessionId)
+    public static string Build(string prompt, string? resumeSessionId, string? mcpConfigPath = null)
     {
         // Escape the prompt for CLI: wrap in double quotes, escape inner quotes and backslashes
         var escaped = prompt.Replace("\\", "\\\\").Replace("\"", "\\\"");
@@ -14,6 +14,9 @@ public static class ClaudeArgumentBuilder
 
         if (resumeSessionId is not null)
             args += $" --resume {resumeSessionId}";
+
+        if (mcpConfigPath is not null)
+            args += $" --mcp-config \"{mcpConfigPath.Replace("\"", "\\\"")}\"";
 
         return args;
     }

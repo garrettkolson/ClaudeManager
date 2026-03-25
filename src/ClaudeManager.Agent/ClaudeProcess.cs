@@ -15,6 +15,7 @@ public sealed class ClaudeProcess : IClaudeProcess
     private readonly string _workingDirectory;
     private readonly string _prompt;
     private readonly string? _resumeSessionId;
+    private readonly string? _mcpConfigPath;
     private readonly ILogger<ClaudeProcess> _logger;
 
     private Process? _process;
@@ -32,13 +33,15 @@ public sealed class ClaudeProcess : IClaudeProcess
         string workingDirectory,
         string prompt,
         string? resumeSessionId,
+        string? mcpConfigPath,
         ILogger<ClaudeProcess> logger)
     {
-        _binary          = binary;
+        _binary           = binary;
         _workingDirectory = workingDirectory;
-        _prompt          = prompt;
-        _resumeSessionId = resumeSessionId;
-        _logger          = logger;
+        _prompt           = prompt;
+        _resumeSessionId  = resumeSessionId;
+        _mcpConfigPath    = mcpConfigPath;
+        _logger           = logger;
     }
 
     public Task StartAsync(CancellationToken ct)
@@ -89,7 +92,7 @@ public sealed class ClaudeProcess : IClaudeProcess
     // ── Private ───────────────────────────────────────────────────────────────
 
     private string BuildArguments() =>
-        ClaudeArgumentBuilder.Build(_prompt, _resumeSessionId);
+        ClaudeArgumentBuilder.Build(_prompt, _resumeSessionId, _mcpConfigPath);
 
     private async Task ReadStdoutAsync(CancellationToken ct)
     {
