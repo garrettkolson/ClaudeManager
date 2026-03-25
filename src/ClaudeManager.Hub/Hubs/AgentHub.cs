@@ -26,7 +26,7 @@ public class AgentHub : SignalRHub
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         // Find the machine that owned this connection and mark it offline
-        var machineId = Context.Items["MachineId"] as string;
+        var machineId = Context.Items.TryGetValue("MachineId", out var val) ? val as string : null;
         if (machineId is not null)
         {
             _logger.LogInformation("Agent disconnected: {MachineId}", machineId);

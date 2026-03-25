@@ -61,6 +61,74 @@ public class AgentCommandServiceTests
     }
 
     [Test]
+    public async Task StartSessionAsync_WikiReturnsNull_SystemContextIsNullInSentRequest()
+    {
+        _wikiMock.Setup(w => w.BuildContextSummaryAsync()).ReturnsAsync((string?)null);
+
+        StartSessionRequest? sent = null;
+        _proxyMock
+            .Setup(p => p.SendCoreAsync("StartSession", It.IsAny<object[]>(), It.IsAny<CancellationToken>()))
+            .Callback<string, object[], CancellationToken>((_, args, _) => sent = args[0] as StartSessionRequest)
+            .Returns(Task.CompletedTask);
+
+        await _svc.StartSessionAsync(MakeStartRequest());
+
+        sent.Should().NotBeNull();
+        sent!.SystemContext.Should().BeNull();
+    }
+
+    [Test]
+    public async Task StartSessionAsync_WikiReturnsContext_SystemContextPopulatedInSentRequest()
+    {
+        const string wikiContext = "<wiki><note><entry title=\"T\">content</entry></note></wiki>";
+        _wikiMock.Setup(w => w.BuildContextSummaryAsync()).ReturnsAsync(wikiContext);
+
+        StartSessionRequest? sent = null;
+        _proxyMock
+            .Setup(p => p.SendCoreAsync("StartSession", It.IsAny<object[]>(), It.IsAny<CancellationToken>()))
+            .Callback<string, object[], CancellationToken>((_, args, _) => sent = args[0] as StartSessionRequest)
+            .Returns(Task.CompletedTask);
+
+        await _svc.StartSessionAsync(MakeStartRequest());
+
+        sent!.SystemContext.Should().Be(wikiContext);
+    }
+
+    [Test]
+    public async Task StartSessionAsync_WikiReturnsContext_OriginalPromptPreservedInSentRequest()
+    {
+        _wikiMock.Setup(w => w.BuildContextSummaryAsync()).ReturnsAsync("<wiki>ctx</wiki>");
+
+        StartSessionRequest? sent = null;
+        _proxyMock
+            .Setup(p => p.SendCoreAsync("StartSession", It.IsAny<object[]>(), It.IsAny<CancellationToken>()))
+            .Callback<string, object[], CancellationToken>((_, args, _) => sent = args[0] as StartSessionRequest)
+            .Returns(Task.CompletedTask);
+
+        await _svc.StartSessionAsync(MakeStartRequest());
+
+        sent!.InitialPrompt.Should().Be("hello");
+    }
+
+    [Test]
+    public async Task StartSessionAsync_AlwaysCallsWikiBuildContext()
+    {
+        await _svc.StartSessionAsync(MakeStartRequest());
+
+        _wikiMock.Verify(w => w.BuildContextSummaryAsync(), Times.Once);
+    }
+
+    [Test]
+    public async Task StartSessionAsync_OfflineMachine_DoesNotCallWikiBuildContext()
+    {
+        _store.MarkAgentDisconnected(TestData.MachineId);
+
+        await _svc.StartSessionAsync(MakeStartRequest());
+
+        _wikiMock.Verify(w => w.BuildContextSummaryAsync(), Times.Never);
+    }
+
+    [Test]
     public async Task StartSessionAsync_OfflineMachine_ReturnsFalse()
     {
         _store.MarkAgentDisconnected(TestData.MachineId);

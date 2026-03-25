@@ -4,7 +4,8 @@
       "Bash(dotnet build:*)",
       "Bash(dotnet test:*)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:csharp.sdk.modelcontextprotocol.io)"
+      "WebFetch(domain:csharp.sdk.modelcontextprotocol.io)",
+      "Bash(grep -v \"^\\\\s*//\")"
     ]
   }
 }

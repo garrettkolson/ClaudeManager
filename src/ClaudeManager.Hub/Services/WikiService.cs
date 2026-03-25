@@ -17,11 +17,13 @@ public class WikiService : IWikiService
     public async Task<List<WikiEntryEntity>> GetAllAsync()
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
-        return await db.WikiEntries
+        // Fetch first, sort client-side: SQLite does not support DateTimeOffset in ORDER BY
+        var entries = await db.WikiEntries.ToListAsync();
+        return entries
             .OrderBy(e => e.IsArchived)
             .ThenBy(e => e.Category)
             .ThenByDescending(e => e.UpdatedAt)
-            .ToListAsync();
+            .ToList();
     }
 
     public async Task<WikiEntryEntity> CreateAsync(
@@ -119,11 +121,9 @@ public class WikiService : IWikiService
     public async Task<string?> BuildContextSummaryAsync()
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
-        var entries = await db.WikiEntries
-            .Where(e => !e.IsArchived)
-            .OrderBy(e => e.Category)
-            .ThenByDescending(e => e.UpdatedAt)
-            .ToListAsync();
+        // Fetch first, sort client-side: SQLite does not support DateTimeOffset in ORDER BY
+        var allActive = await db.WikiEntries.Where(e => !e.IsArchived).ToListAsync();
+        var entries   = allActive.OrderBy(e => e.Category).ThenByDescending(e => e.UpdatedAt).ToList();
 
         if (entries.Count == 0) return null;
 
