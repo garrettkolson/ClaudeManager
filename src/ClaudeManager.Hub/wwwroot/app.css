@@ -116,6 +116,31 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 .prompt-input-area textarea:focus { outline: none; border-color: #7cb8ff; }
 .prompt-input-area textarea.disabled { opacity: 0.5; }
 
+/* ── Nav links ── */
+.nav-links { margin-bottom: 16px; display: flex; flex-direction: column; gap: 2px; }
+.nav-link { color: #aaa; text-decoration: none; font-size: 13px; padding: 4px 6px; border-radius: 3px; display: block; }
+.nav-link:hover { background: #222; color: #fff; }
+
+/* ── Wiki page ── */
+.wiki-page { max-width: 960px; }
+.wiki-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
+.wiki-header h1 { font-size: 22px; color: #7cb8ff; flex: 1; }
+.wiki-table { width: 100%; border-collapse: collapse; }
+.wiki-table th, .wiki-table td { padding: 8px 12px; text-align: left; font-size: 13px; }
+.wiki-table th { color: #777; font-weight: normal; border-bottom: 1px solid #333; }
+.wiki-table td { border-bottom: 1px solid #2a2a2a; }
+.wiki-row.archived { opacity: 0.45; }
+.wiki-title-btn { background: none; border: none; color: #7cb8ff; cursor: pointer; font-size: 13px; padding: 0; text-align: left; }
+.wiki-title-btn:hover { text-decoration: underline; }
+.wiki-category { display: inline-block; padding: 2px 7px; border-radius: 8px; font-size: 11px; font-weight: bold; text-transform: uppercase; }
+.wiki-category.project  { background: #1a3040; color: #7cb8ff; }
+.wiki-category.decision { background: #2a2a1a; color: #e5c07b; }
+.wiki-category.bug      { background: #3a1a1a; color: #cf6679; }
+.wiki-category.note     { background: #222;    color: #888; }
+.wiki-tags { color: #666; font-size: 12px; }
+.wiki-actions { display: flex; gap: 6px; white-space: nowrap; }
+.wiki-field-hint { color: #666; font-weight: normal; }
+
 /* ── Blazor error UI ── */
 #blazor-error-ui { background: #5a1a1a; bottom: 0; box-shadow: 0 -1px 2px rgba(0,0,0,0.2); display: none; left: 0; padding: 0.6rem 1.25rem 0.7rem 1.25rem; position: fixed; width: 100%; z-index: 1000; color: #cf6679; }
 #blazor-error-ui .dismiss { cursor: pointer; position: absolute; right: 0.75rem; top: 0.5rem; }

@@ -1,0 +1,181 @@
+@page "/wiki"
+@inject WikiService WikiSvc
+
+<PageTitle>Wiki – Claude Manager</PageTitle>
+
+<div class="wiki-page">
+    <div class="wiki-header">
+        <h1>Wiki</h1>
+        <button class="btn-primary" @onclick="OpenCreate">New Entry</button>
+    </div>
+
+    @if (_entries is null)
+    {
+        <div class="loading">Loading…</div>
+    }
+    else if (!_entries.Any())
+    {
+        <div class="empty-state">No wiki entries yet. Create one to inject context into future Claude sessions.</div>
+    }
+    else
+    {
+        <table class="wiki-table">
+            <thead>
+                <tr>
+                    <th>Title</th>
+                    <th>Category</th>
+                    <th>Tags</th>
+                    <th>Updated</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var entry in _entries)
+                {
+                    <tr class="@(entry.IsArchived ? "wiki-row archived" : "wiki-row")">
+                        <td>
+                            <button class="wiki-title-btn" @onclick="() => OpenEdit(entry)">@entry.Title</button>
+                        </td>
+                        <td><span class="wiki-category @entry.Category">@entry.Category</span></td>
+                        <td><span class="wiki-tags">@entry.Tags</span></td>
+                        <td>@entry.UpdatedAt.LocalDateTime.ToString("MM/dd/yy")</td>
+                        <td class="wiki-actions">
+                            <button class="btn-sm" @onclick="() => OpenEdit(entry)">Edit</button>
+                            @if (entry.IsArchived)
+                            {
+                                <button class="btn-sm" @onclick="() => Unarchive(entry.Id)">Restore</button>
+                            }
+                            else
+                            {
+                                <button class="btn-danger-sm" @onclick="() => Archive(entry.Id)">Archive</button>
+                            }
+                            <button class="btn-danger-sm" @onclick="() => Delete(entry.Id)">Delete</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@if (_showModal)
+{
+    <div class="modal-overlay" @onclick="CloseModal">
+        <div class="modal" @onclick:stopPropagation>
+            <h3>@(_editId.HasValue ? "Edit Entry" : "New Entry")</h3>
+
+            <label>Title</label>
+            <input @bind="_formTitle" placeholder="Short descriptive title" />
+
+            <label>Category</label>
+            <select @bind="_formCategory">
+                <option value="project">project</option>
+                <option value="decision">decision</option>
+                <option value="bug">bug</option>
+                <option value="note">note</option>
+            </select>
+
+            <label>Tags <span class="wiki-field-hint">(comma-separated, optional)</span></label>
+            <input @bind="_formTags" placeholder="e.g. auth,jwt,backend" />
+
+            <label>Content</label>
+            <textarea @bind="_formContent" rows="8" placeholder="Enter knowledge, context, or notes…" />
+
+            @if (_modalError is not null)
+            {
+                <div class="error-msg">@_modalError</div>
+            }
+            <div class="modal-actions">
+                <button class="btn-secondary" @onclick="CloseModal">Cancel</button>
+                <button class="btn-primary" @onclick="SaveEntry" disabled="@_saving">
+                    @(_saving ? "Saving…" : "Save")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<WikiEntryEntity>? _entries;
+
+    private bool    _showModal;
+    private long?   _editId;
+    private string  _formTitle    = string.Empty;
+    private string  _formCategory = "note";
+    private string  _formTags     = string.Empty;
+    private string  _formContent  = string.Empty;
+    private string? _modalError;
+    private bool    _saving;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        _entries = await WikiSvc.GetAllAsync();
+    }
+
+    private void OpenCreate()
+    {
+        _editId       = null;
+        _formTitle    = string.Empty;
+        _formCategory = "note";
+        _formTags     = string.Empty;
+        _formContent  = string.Empty;
+        _modalError   = null;
+        _saving       = false;
+        _showModal    = true;
+    }
+
+    private void OpenEdit(WikiEntryEntity entry)
+    {
+        _editId       = entry.Id;
+        _formTitle    = entry.Title;
+        _formCategory = entry.Category;
+        _formTags     = entry.Tags ?? string.Empty;
+        _formContent  = entry.Content;
+        _modalError   = null;
+        _saving       = false;
+        _showModal    = true;
+    }
+
+    private void CloseModal() => _showModal = false;
+
+    private async Task SaveEntry()
+    {
+        if (string.IsNullOrWhiteSpace(_formTitle))   { _modalError = "Title is required.";   return; }
+        if (string.IsNullOrWhiteSpace(_formContent))  { _modalError = "Content is required."; return; }
+
+        _saving     = true;
+        _modalError = null;
+
+        if (_editId.HasValue)
+            await WikiSvc.UpdateAsync(_editId.Value, _formTitle.Trim(), _formCategory, _formContent, _formTags);
+        else
+            await WikiSvc.CreateAsync(_formTitle.Trim(), _formCategory, _formContent, _formTags);
+
+        _saving    = false;
+        _showModal = false;
+        await Reload();
+    }
+
+    private async Task Archive(long id)
+    {
+        await WikiSvc.SetArchivedAsync(id, true);
+        await Reload();
+    }
+
+    private async Task Unarchive(long id)
+    {
+        await WikiSvc.SetArchivedAsync(id, false);
+        await Reload();
+    }
+
+    private async Task Delete(long id)
+    {
+        await WikiSvc.DeleteAsync(id);
+        await Reload();
+    }
+}

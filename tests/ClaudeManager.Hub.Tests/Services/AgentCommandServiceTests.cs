@@ -15,6 +15,7 @@ public class AgentCommandServiceTests
 {
     private Mock<IHubContext<AgentHub>> _hubCtxMock = default!;
     private Mock<ISingleClientProxy> _proxyMock = default!;
+    private Mock<IWikiService> _wikiMock = default!;
     private SessionStore _store = default!;
     private AgentCommandService _svc = default!;
 
@@ -27,7 +28,10 @@ public class AgentCommandServiceTests
         _store = store;
         _store.RegisterTestAgent();
 
-        _svc = new AgentCommandService(_hubCtxMock.Object, _store, NullLogger<AgentCommandService>.Instance);
+        _wikiMock = new Mock<IWikiService>();
+        _wikiMock.Setup(w => w.BuildContextSummaryAsync()).ReturnsAsync((string?)null);
+
+        _svc = new AgentCommandService(_hubCtxMock.Object, _store, _wikiMock.Object, NullLogger<AgentCommandService>.Instance);
     }
 
     private StartSessionRequest MakeStartRequest() =>

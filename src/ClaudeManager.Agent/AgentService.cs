@@ -115,7 +115,7 @@ public class AgentService : BackgroundService
         _logger.LogInformation("Starting session {SessionId} in {Dir}", sessionId, req.WorkingDirectory);
 
         await _hub.InvokeAsync("SessionStarted", _machineId, sessionId, req.WorkingDirectory, req.InitialPrompt);
-        await _processManager.StartSessionAsync(sessionId, req.WorkingDirectory, req.InitialPrompt, req.ResumeSessionId);
+        await _processManager.StartSessionAsync(sessionId, req.WorkingDirectory, req.InitialPrompt, req.ResumeSessionId, req.SystemContext);
     }
 
     private Task OnSendPrompt(SendPromptRequest req) =>

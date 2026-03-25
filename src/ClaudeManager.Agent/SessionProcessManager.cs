@@ -32,10 +32,15 @@ public class SessionProcessManager
 
     // ── Public API (called by AgentService hub handlers) ─────────────────────
 
-    public async Task StartSessionAsync(string sessionId, string workingDirectory, string prompt, string? resumeId)
+    public async Task StartSessionAsync(
+        string sessionId, string workingDirectory, string prompt, string? resumeId,
+        string? systemContext = null)
     {
         _workingDirs[sessionId] = workingDirectory;
-        await SpawnAsync(sessionId, workingDirectory, prompt, resumeId);
+        var combinedPrompt = systemContext is not null
+            ? $"{systemContext}\n\n{prompt}"
+            : prompt;
+        await SpawnAsync(sessionId, workingDirectory, combinedPrompt, resumeId);
     }
 
     public async Task SendPromptAsync(string sessionId, string workingDirectory, string prompt)

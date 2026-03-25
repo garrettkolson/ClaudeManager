@@ -7,15 +7,18 @@ public class AgentCommandService
 {
     private readonly IHubContext<Hubs.AgentHub> _hubContext;
     private readonly SessionStore _store;
+    private readonly IWikiService _wiki;
     private readonly ILogger<AgentCommandService> _logger;
 
     public AgentCommandService(
         IHubContext<Hubs.AgentHub> hubContext,
         SessionStore store,
+        IWikiService wiki,
         ILogger<AgentCommandService> logger)
     {
         _hubContext = hubContext;
         _store      = store;
+        _wiki       = wiki;
         _logger     = logger;
     }
 
@@ -28,7 +31,10 @@ public class AgentCommandService
             return false;
         }
 
-        await _hubContext.Clients.Client(connId).SendAsync("StartSession", request);
+        var ctx      = await _wiki.BuildContextSummaryAsync();
+        var enriched = ctx is null ? request : request with { SystemContext = ctx };
+
+        await _hubContext.Clients.Client(connId).SendAsync("StartSession", enriched);
         return true;
     }
 
