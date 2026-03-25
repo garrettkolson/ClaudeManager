@@ -105,9 +105,9 @@ public class StartupRecoveryServiceTests
     }
 
     [Test]
-    public async Task StartAsync_SessionOlderThan7Days_NotLoadedIntoStore()
+    public async Task StartAsync_SessionOlderThan30Days_NotLoadedIntoStore()
     {
-        var oldActivity = DateTimeOffset.UtcNow.AddDays(-8);
+        var oldActivity = DateTimeOffset.UtcNow.AddDays(-31);
         await SeedSessionAsync("m1", "old-sess", SessionStatus.Ended, oldActivity);
 
         await BuildService().StartAsync(CancellationToken.None);

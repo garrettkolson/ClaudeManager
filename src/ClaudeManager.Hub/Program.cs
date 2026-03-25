@@ -42,6 +42,7 @@ builder.Services.AddHostedService<StartupRecoveryService>();
 builder.Services.AddSingleton<PersistenceQueue>();
 builder.Services.AddSingleton<IPersistenceQueue>(sp => sp.GetRequiredService<PersistenceQueue>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PersistenceQueue>());
+builder.Services.AddHostedService<DbPruningService>();
 builder.Services.AddSingleton<WikiService>();
 builder.Services.AddSingleton<IWikiService>(sp => sp.GetRequiredService<WikiService>());
 builder.Services.AddSingleton<AgentCommandService>();

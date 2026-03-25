@@ -44,9 +44,9 @@ public class StartupRecoveryService : IHostedService
         if (patched > 0)
             _logger.LogInformation("Marked {Count} stale Active sessions as Disconnected on startup", patched);
 
-        // Load sessions from the last 7 days into memory.
+        // Load sessions from the last 30 days into memory.
         // Client-side filter: SQLite does not support DateTimeOffset comparisons in WHERE/ORDER BY.
-        var cutoff = DateTimeOffset.UtcNow.AddDays(-7);
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-30);
 
         var allSessions = await db.ClaudeSessions
             .Include(s => s.Machine)
