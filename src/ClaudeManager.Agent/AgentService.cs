@@ -181,7 +181,7 @@ public class AgentService : BackgroundService
 /// <summary>
 /// Retries indefinitely with capped backoff: 0, 2, 5, 15, 30s, then every 60s.
 /// </summary>
-internal sealed class InfiniteRetryPolicy : IRetryPolicy
+public sealed class InfiniteRetryPolicy : IRetryPolicy
 {
     private static readonly TimeSpan[] InitialDelays =
         [TimeSpan.Zero, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5),

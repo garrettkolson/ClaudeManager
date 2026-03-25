@@ -6,4 +6,9 @@
     <Project Path="src/ClaudeManager.Agent/ClaudeManager.Agent.csproj" />
     <Project Path="src/ClaudeManager.Hub/ClaudeManager.Hub.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ClaudeManager.Agent.Tests/ClaudeManager.Agent.Tests.csproj" />
+    <Project Path="tests/ClaudeManager.Hub.Tests/ClaudeManager.Hub.Tests.csproj" />
+    <Project Path="tests/ClaudeManager.Integration.Tests/ClaudeManager.Integration.Tests.csproj" />
+  </Folder>
 </Solution>
