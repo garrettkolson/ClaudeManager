@@ -9,7 +9,7 @@ namespace ClaudeManager.Agent;
 /// Manages a single claude -p request/response cycle.
 /// Claude exits after each response; use --resume for follow-up prompts.
 /// </summary>
-public sealed class ClaudeProcess : IAsyncDisposable
+public sealed class ClaudeProcess : IClaudeProcess
 {
     private readonly string _binary;
     private readonly string _workingDirectory;
@@ -88,17 +88,8 @@ public sealed class ClaudeProcess : IAsyncDisposable
 
     // ── Private ───────────────────────────────────────────────────────────────
 
-    private string BuildArguments()
-    {
-        // Escape the prompt for CLI: wrap in double quotes, escape inner quotes
-        var escaped = _prompt.Replace("\\", "\\\\").Replace("\"", "\\\"");
-        var args    = $"-p \"{escaped}\" --output-format stream-json";
-
-        if (_resumeSessionId is not null)
-            args += $" --resume {_resumeSessionId}";
-
-        return args;
-    }
+    private string BuildArguments() =>
+        ClaudeArgumentBuilder.Build(_prompt, _resumeSessionId);
 
     private async Task ReadStdoutAsync(CancellationToken ct)
     {
@@ -175,22 +166,15 @@ public sealed class ClaudeProcess : IAsyncDisposable
 
     private void TryExtractSessionId(string json)
     {
-        // system/init line: {"type":"system","subtype":"init","session_id":"<id>", ...}
-        const string marker = "\"session_id\":\"";
-        var idx = json.IndexOf(marker, StringComparison.Ordinal);
-        if (idx < 0) return;
-
-        var start = idx + marker.Length;
-        var end   = json.IndexOf('"', start);
-        if (end > start)
-            SessionId = json[start..end];
+        var id = ClaudeStreamJsonParser.ExtractSessionId(json);
+        if (id is not null)
+            SessionId = id;
     }
 
     private void CheckForResumeError(string json)
     {
-        // Detect a result/error on the very first line, which indicates --resume failed
         if (_resumeSessionId is null) return;
-        if (json.Contains("\"type\":\"result\"") && json.Contains("\"subtype\":\"error\""))
+        if (ClaudeStreamJsonParser.IsResumeError(json))
             _logger.LogWarning("--resume {SessionId} may have failed; first line is an error result", _resumeSessionId);
     }
 

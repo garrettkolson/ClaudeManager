@@ -1,50 +1,39 @@
-using System.Diagnostics;
-
 namespace ClaudeManager.Agent;
 
 /// <summary>
 /// Verifies the claude binary is resolvable and authenticated before the agent connects.
+/// Accepts an IProcessRunner so validation logic can be tested without spawning a real process.
 /// </summary>
-public static class ClaudeValidator
+public class ClaudeValidator
 {
-    public static async Task<(bool ok, string error)> ValidateAsync(string? binaryPath, CancellationToken ct)
+    private readonly IProcessRunner _runner;
+
+    public ClaudeValidator(IProcessRunner runner)
+    {
+        _runner = runner;
+    }
+
+    public async Task<(bool ok, string error)> ValidateAsync(string? binaryPath, CancellationToken ct)
     {
         var binary = ResolveBinary(binaryPath);
         if (binary is null)
             return (false, "Could not find 'claude' on PATH. Set ClaudeBinaryPath in appsettings.json.");
 
-        // Run a minimal one-shot invocation to check authentication
-        using var proc = new Process();
-        proc.StartInfo = new ProcessStartInfo
-        {
-            FileName               = binary,
-            Arguments              = "-p \"ping\" --output-format json",
-            RedirectStandardOutput = true,
-            RedirectStandardError  = true,
-            UseShellExecute        = false,
-        };
-
         try
         {
-            proc.Start();
+            var result = await _runner.RunAsync(
+                binary,
+                "-p \"ping\" --output-format json",
+                TimeSpan.FromSeconds(15),
+                ct);
 
-            // Give claude 15 seconds to respond
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(15));
-
-            await proc.WaitForExitAsync(cts.Token);
-
-            if (proc.ExitCode != 0)
-            {
-                var stderr = await proc.StandardError.ReadToEndAsync(ct);
-                return (false, $"claude exited with code {proc.ExitCode}. Stderr: {stderr.Trim()}");
-            }
+            if (result.ExitCode != 0)
+                return (false, $"claude exited with code {result.ExitCode}. Stderr: {result.Stderr.Trim()}");
 
             return (true, string.Empty);
         }
         catch (OperationCanceledException)
         {
-            try { proc.Kill(entireProcessTree: true); } catch { /* ignore */ }
             return (false, "claude validation timed out (15s). Is the binary hanging or unauthenticated?");
         }
         catch (Exception ex)
@@ -53,12 +42,14 @@ public static class ClaudeValidator
         }
     }
 
+    /// <summary>
+    /// Resolves the claude binary path from config or PATH. Remains static for use before DI is built.
+    /// </summary>
     public static string? ResolveBinary(string? configured)
     {
         if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured))
             return configured;
 
-        // Search PATH
         var binary = OperatingSystem.IsWindows() ? "claude.exe" : "claude";
         var paths  = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [];
         foreach (var dir in paths)

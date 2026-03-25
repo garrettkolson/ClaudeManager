@@ -15,8 +15,8 @@ var host = Host.CreateDefaultBuilder(args)
     })
     .Build();
 
-var logger   = host.Services.GetRequiredService<ILogger<Program>>();
-var config   = host.Services.GetRequiredService<AgentConfig>();
+var logger = host.Services.GetRequiredService<ILogger<Program>>();
+var config = host.Services.GetRequiredService<AgentConfig>();
 
 // ── Startup validation ────────────────────────────────────────────────────────
 
@@ -31,7 +31,8 @@ if (binary is null)
 }
 
 logger.LogInformation("Validating claude authentication...");
-var (ok, error) = await ClaudeValidator.ValidateAsync(config.ClaudeBinaryPath, CancellationToken.None);
+var validator      = new ClaudeValidator(new ProcessRunner());
+var (ok, error)    = await validator.ValidateAsync(config.ClaudeBinaryPath, CancellationToken.None);
 if (!ok)
 {
     logger.LogCritical("Claude validation failed: {Error}", error);
@@ -41,27 +42,26 @@ logger.LogInformation("Claude authenticated successfully.");
 
 // ── Run ───────────────────────────────────────────────────────────────────────
 
-var loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
-
 using var agentHost = Host.CreateDefaultBuilder(args)
     .ConfigureServices((ctx, services) =>
     {
         services.AddSingleton(config);
-        services.AddSingleton(new AgentServiceArgs(machineId, binary));
+        services.AddSingleton<IProcessRunner, ProcessRunner>();
+        services.AddSingleton<ClaudeValidator>();
+        services.AddSingleton<IClaudeProcessFactory>(sp =>
+            new ClaudeProcessFactory(binary, sp.GetRequiredService<ILoggerFactory>()));
+        services.AddSingleton(sp =>
+            new SessionProcessManager(
+                sp.GetRequiredService<IClaudeProcessFactory>(),
+                sp.GetRequiredService<ILogger<SessionProcessManager>>()));
         services.AddHostedService(sp =>
-        {
-            var args2 = sp.GetRequiredService<AgentServiceArgs>();
-            return new AgentService(
+            new AgentService(
                 config,
-                args2.MachineId,
-                args2.Binary,
-                sp.GetRequiredService<ILogger<AgentService>>(),
-                sp.GetRequiredService<ILoggerFactory>());
-        });
+                machineId,
+                sp.GetRequiredService<SessionProcessManager>(),
+                sp.GetRequiredService<ILogger<AgentService>>()));
     })
     .Build();
 
 await agentHost.RunAsync();
 return 0;
-
-internal record AgentServiceArgs(string MachineId, string Binary);

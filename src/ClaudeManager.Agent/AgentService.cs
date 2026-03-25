@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using ClaudeManager.Agent.Models;
 using ClaudeManager.Shared.Dto;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -11,30 +10,26 @@ public class AgentService : BackgroundService
 {
     private readonly AgentConfig _config;
     private readonly string _machineId;
-    private readonly string _binary;
+    private readonly SessionProcessManager _processManager;
     private readonly ILogger<AgentService> _logger;
-    private readonly ILoggerFactory _loggerFactory;
 
     private HubConnection _hub = default!;
-
-    // Active processes keyed by sessionId
-    private readonly ConcurrentDictionary<string, ClaudeProcess> _processes = new();
-
-    // Pending prompts queued while a process is already running for a session
-    private readonly ConcurrentDictionary<string, Queue<string>> _pendingPrompts = new();
 
     public AgentService(
         AgentConfig config,
         string machineId,
-        string binary,
-        ILogger<AgentService> logger,
-        ILoggerFactory loggerFactory)
+        SessionProcessManager processManager,
+        ILogger<AgentService> logger)
     {
-        _config       = config;
-        _machineId    = machineId;
-        _binary       = binary;
-        _logger       = logger;
-        _loggerFactory = loggerFactory;
+        _config         = config;
+        _machineId      = machineId;
+        _processManager = processManager;
+        _logger         = logger;
+
+        // Wire process manager callbacks to hub forwarding
+        _processManager.OnOutputLine   = ForwardOutputLine;
+        _processManager.OnStderrLine   = ForwardStderrLine;
+        _processManager.OnSessionEnded = ForwardSessionEnded;
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -59,9 +54,9 @@ public class AgentService : BackgroundService
 
     private void RegisterHandlers()
     {
-        _hub.On<StartSessionRequest>("StartSession",  OnStartSession);
-        _hub.On<SendPromptRequest>("SendPrompt",      OnSendPrompt);
-        _hub.On<KillSessionRequest>("KillSession",    OnKillSession);
+        _hub.On<StartSessionRequest>("StartSession", OnStartSession);
+        _hub.On<SendPromptRequest>("SendPrompt",     OnSendPrompt);
+        _hub.On<KillSessionRequest>("KillSession",   OnKillSession);
 
         _hub.Reconnected += async connectionId =>
         {
@@ -119,60 +114,19 @@ public class AgentService : BackgroundService
         var sessionId = req.ResumeSessionId ?? $"pending-{Guid.NewGuid()}";
         _logger.LogInformation("Starting session {SessionId} in {Dir}", sessionId, req.WorkingDirectory);
 
-        await SpawnProcessAsync(sessionId, req.WorkingDirectory, req.InitialPrompt, req.ResumeSessionId);
+        await _hub.InvokeAsync("SessionStarted", _machineId, sessionId, req.WorkingDirectory, req.InitialPrompt);
+        await _processManager.StartSessionAsync(sessionId, req.WorkingDirectory, req.InitialPrompt, req.ResumeSessionId);
     }
 
-    private async Task OnSendPrompt(SendPromptRequest req)
-    {
-        if (_processes.TryGetValue(req.SessionId, out var running) && running.IsRunning)
-        {
-            // Queue the prompt for after the current process exits
-            _pendingPrompts.GetOrAdd(req.SessionId, _ => new Queue<string>()).Enqueue(req.Prompt);
-            _logger.LogInformation("Queued prompt for session {SessionId} (process still running)", req.SessionId);
-            return;
-        }
+    private Task OnSendPrompt(SendPromptRequest req) =>
+        _processManager.SendPromptAsync(req.SessionId, _config.DefaultWorkingDirectory, req.Prompt);
 
-        var session = _processes.ContainsKey(req.SessionId) ? req.SessionId : null;
-        if (session is null && !req.SessionId.StartsWith("pending-"))
-            session = req.SessionId;
+    private Task OnKillSession(KillSessionRequest req) =>
+        _processManager.KillSessionAsync(req.SessionId);
 
-        await SpawnProcessAsync(req.SessionId, GetWorkingDir(req.SessionId), req.Prompt, req.SessionId);
-    }
+    // ── Process manager callbacks → hub ──────────────────────────────────────
 
-    private async Task OnKillSession(KillSessionRequest req)
-    {
-        if (_processes.TryRemove(req.SessionId, out var proc))
-        {
-            _logger.LogInformation("Killing session {SessionId}", req.SessionId);
-            await proc.KillAsync();
-            await proc.DisposeAsync();
-        }
-    }
-
-    // ── Process management ────────────────────────────────────────────────────
-
-    private async Task SpawnProcessAsync(string sessionId, string workingDir, string prompt, string? resumeId)
-    {
-        var proc = new ClaudeProcess(
-            _binary,
-            workingDir,
-            prompt,
-            resumeId,
-            _loggerFactory.CreateLogger<ClaudeProcess>());
-
-        proc.OnOutputLine  += line => ForwardLine(line, proc.SessionId ?? sessionId);
-        proc.OnStderrLine  += line => ForwardStderr(line, proc.SessionId ?? sessionId);
-        proc.OnExit        += exitCode => OnProcessExited(proc, sessionId, workingDir, exitCode);
-
-        _processes[sessionId] = proc;
-
-        // Announce session start to hub
-        await _hub.InvokeAsync("SessionStarted", _machineId, resumeId ?? sessionId, workingDir, prompt);
-
-        await proc.StartAsync(default);
-    }
-
-    private async Task ForwardLine(string rawJson, string sessionId)
+    private async Task ForwardOutputLine(string sessionId, string rawJson)
     {
         try
         {
@@ -188,45 +142,26 @@ public class AgentService : BackgroundService
         }
     }
 
-    private async Task ForwardStderr(string line, string sessionId)
+    private async Task ForwardStderrLine(string sessionId, string line)
     {
-        // Wrap stderr as a JSON-like envelope so AgentHub can detect it
         var escaped = line.Replace("\\", "\\\\").Replace("\"", "\\\"");
         var json    = $"{{\"stderr\":\"{escaped}\"}}";
-        await ForwardLine(json, sessionId);
+        await ForwardOutputLine(sessionId, json);
     }
 
-    private async Task OnProcessExited(ClaudeProcess proc, string pendingSessionId, string workingDir, int exitCode)
+    private async Task ForwardSessionEnded(string sessionId, int exitCode)
     {
-        // The real session ID from claude (may differ from our initial pending- ID)
-        var realSessionId = proc.SessionId ?? pendingSessionId;
-
-        // Swap the process registration to the real session ID
-        _processes.TryRemove(pendingSessionId, out _);
-        _processes.TryRemove(realSessionId, out _);
-        await proc.DisposeAsync();
-
-        await _hub.InvokeAsync("SessionEnded", _machineId, realSessionId, exitCode);
-
-        // Drain any queued prompts
-        if (_pendingPrompts.TryRemove(realSessionId, out var queue) ||
-            _pendingPrompts.TryRemove(pendingSessionId, out queue))
+        try
         {
-            if (queue.TryDequeue(out var nextPrompt))
-            {
-                _logger.LogInformation("Dispatching queued prompt for session {SessionId}", realSessionId);
-                await SpawnProcessAsync(realSessionId, workingDir, nextPrompt, realSessionId);
-            }
+            await _hub.InvokeAsync("SessionEnded", _machineId, sessionId, exitCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to notify hub of session end for {SessionId}", sessionId);
         }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private string GetWorkingDir(string sessionId)
-    {
-        // Best-effort: use config default (agent doesn't store session→dir mapping beyond processes dict)
-        return _config.DefaultWorkingDirectory;
-    }
 
     private static string GetPlatform()
     {
@@ -237,10 +172,7 @@ public class AgentService : BackgroundService
 
     public override async Task StopAsync(CancellationToken ct)
     {
-        foreach (var proc in _processes.Values)
-        {
-            try { await proc.KillAsync(); await proc.DisposeAsync(); } catch { /* ignore on shutdown */ }
-        }
+        await _processManager.KillAllAsync();
         await _hub.DisposeAsync();
         await base.StopAsync(ct);
     }
