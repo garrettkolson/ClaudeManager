@@ -1,0 +1,267 @@
+@page "/session/{MachineId}/{SessionId}"
+@implements IDisposable
+@inject DashboardNotifier Notifier
+@inject SessionStore Store
+@inject AgentCommandService Commands
+@inject IDbContextFactory<ClaudeManagerDbContext> DbFactory
+@inject IJSRuntime JS
+@using ClaudeManager.Hub.Persistence
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Session — @SessionId[..Math.Min(SessionId.Length, 8)]</PageTitle>
+
+<div class="session-detail">
+    <div class="session-header">
+        <a href="/" class="back-link">← Dashboard</a>
+        <h2>@(_session?.WorkingDirectory ?? SessionId)</h2>
+        <div class="session-meta">
+            @if (_session is not null)
+            {
+                <span class="badge @_session.Status.ToString().ToLower()">
+                    @if (_session.IsProcessRunning) { <span>Running</span> }
+                    else { <span>@_session.Status</span> }
+                </span>
+                <span class="session-id">@_session.SessionId[..Math.Min(_session.SessionId.Length, 12)]…</span>
+                @if (_loadedFromDb)
+                {
+                    <span class="history-badge">Loaded from history</span>
+                }
+            }
+        </div>
+    </div>
+
+    @if (_session is null && _loading)
+    {
+        <div class="loading">Loading session…</div>
+    }
+    else if (_session is null)
+    {
+        <div class="empty-state">Session not found.</div>
+    }
+    else
+    {
+        <div class="output-pane" @ref="_outputRef">
+            <Virtualize Items="_lines" Context="line" OverscanCount="20">
+                <div class="line @line.Kind.ToString().ToLower() @(line.IsContentTruncated ? "truncated" : "")">
+                    <span class="line-time">@line.Timestamp.LocalDateTime.ToString("HH:mm:ss")</span>
+                    <span class="line-kind">@GetKindLabel(line.Kind)</span>
+                    <span class="line-content">@GetDisplayContent(line)</span>
+                    @if (line.IsContentTruncated)
+                    {
+                        <span class="truncation-note">[content truncated]</span>
+                    }
+                </div>
+            </Virtualize>
+        </div>
+
+        @if (!_loadedFromDb && (_session.Status == SessionStatus.Active))
+        {
+            <div class="prompt-input-area">
+                <textarea
+                    @bind="_prompt"
+                    @bind:event="oninput"
+                    @onkeydown="OnKeyDown"
+                    placeholder="Send a follow-up prompt… (Ctrl+Enter to send)"
+                    rows="3"
+                    disabled="@_session.IsProcessRunning"
+                    class="@(_session.IsProcessRunning ? "disabled" : "")"></textarea>
+                <button class="btn-primary"
+                        @onclick="SendPrompt"
+                        disabled="@(_session.IsProcessRunning || string.IsNullOrWhiteSpace(_prompt))">
+                    @(_session.IsProcessRunning ? "Waiting…" : "Send")
+                </button>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public string MachineId  { get; set; } = default!;
+    [Parameter] public string SessionId  { get; set; } = default!;
+
+    private ClaudeSession? _session;
+    private List<StreamedLine> _lines = [];
+    private bool _loadedFromDb;
+    private bool _loading = true;
+    private string _prompt = string.Empty;
+    private ElementReference _outputRef;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _session = Store.GetSession(MachineId, SessionId);
+
+        if (_session is null)
+        {
+            await LoadFromDbAsync();
+        }
+        else
+        {
+            _lines = _session.OutputLines.ToList();
+            _loadedFromDb = false;
+        }
+
+        _loading = false;
+
+        Notifier.LineStreamed          += OnLineStreamed;
+        Notifier.SessionStatusChanged  += OnSessionStatusChanged;
+        Notifier.SessionEnded          += OnSessionEnded;
+    }
+
+    private async Task LoadFromDbAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var entity = await db.ClaudeSessions
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.SessionId == SessionId);
+
+        if (entity is null) return;
+
+        var lineEntities = await db.StreamedLines
+            .AsNoTracking()
+            .Where(l => l.SessionId == SessionId)
+            .OrderBy(l => l.Id)
+            .ToListAsync();
+
+        _session = new ClaudeSession
+        {
+            SessionId        = entity.SessionId,
+            MachineId        = entity.MachineId,
+            WorkingDirectory = entity.WorkingDirectory,
+            StartedAt        = entity.StartedAt,
+            EndedAt          = entity.EndedAt,
+            InitialPrompt    = entity.InitialPrompt,
+            Status           = entity.Status,
+            IsProcessRunning = false,
+        };
+
+        var lines = lineEntities.Select(l => new StreamedLine
+        {
+            DbId               = l.Id,
+            Timestamp          = l.Timestamp,
+            SessionId          = l.SessionId,
+            Kind               = l.Kind,
+            Content            = l.Content,
+            IsContentTruncated = l.IsContentTruncated,
+            ToolName           = l.ToolName,
+        }).ToList();
+
+        _session.SetOutputLines(lines);
+        _lines = _session.OutputLines.ToList();
+        _loadedFromDb = true;
+    }
+
+    private void OnLineStreamed(StreamedLine line)
+    {
+        if (_loadedFromDb || line.SessionId != SessionId) return;
+
+        _lines = _session?.OutputLines.ToList() ?? [];
+        InvokeAsync(async () =>
+        {
+            StateHasChanged();
+            await ScrollToBottomIfNearAsync();
+        });
+    }
+
+    private void OnSessionStatusChanged(ClaudeSession session)
+    {
+        if (session.SessionId != SessionId) return;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnSessionEnded(string machineId, string sessionId, int exitCode)
+    {
+        if (sessionId != SessionId) return;
+        _lines = _session?.OutputLines.ToList() ?? [];
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SendPrompt()
+    {
+        if (string.IsNullOrWhiteSpace(_prompt) || _session is null) return;
+
+        var p = _prompt.Trim();
+        _prompt = string.Empty;
+
+        await Commands.SendPromptAsync(new SendPromptRequest(MachineId, SessionId, p));
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && e.CtrlKey)
+            await SendPrompt();
+    }
+
+    private async Task ScrollToBottomIfNearAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("claudeManager.scrollToBottomIfNear", _outputRef);
+        }
+        catch { /* JS interop may fail during prerender */ }
+    }
+
+    private static string GetKindLabel(StreamLineKind kind) => kind switch
+    {
+        StreamLineKind.AssistantToken => "assistant",
+        StreamLineKind.ToolUse        => "tool",
+        StreamLineKind.ToolResult     => "result",
+        StreamLineKind.ResultSummary  => "summary",
+        StreamLineKind.Error          => "error",
+        StreamLineKind.ProcessExit    => "exit",
+        _                             => "msg",
+    };
+
+    private static string GetDisplayContent(StreamedLine line)
+    {
+        // Try to extract readable text from the raw JSON
+        var json = line.Content;
+
+        // For assistant tokens, extract the text delta
+        var deltaMarker = "\"text\":\"";
+        var idx = json.IndexOf(deltaMarker, StringComparison.Ordinal);
+        if (idx >= 0)
+        {
+            var start = idx + deltaMarker.Length;
+            var end   = json.IndexOf('"', start);
+            if (end > start) return Unescape(json[start..end]);
+        }
+
+        // For result summary, extract the result field
+        var resultMarker = "\"result\":\"";
+        idx = json.IndexOf(resultMarker, StringComparison.Ordinal);
+        if (idx >= 0)
+        {
+            var start = idx + resultMarker.Length;
+            var end   = json.IndexOf('"', start);
+            if (end > start) return Unescape(json[start..end]);
+        }
+
+        // For tool use, show tool name + input summary
+        if (line.Kind == StreamLineKind.ToolUse && line.ToolName is not null)
+            return $"[{line.ToolName}]";
+
+        // Stderr / error lines
+        var stderrMarker = "\"stderr\":\"";
+        idx = json.IndexOf(stderrMarker, StringComparison.Ordinal);
+        if (idx >= 0)
+        {
+            var start = idx + stderrMarker.Length;
+            var end   = json.IndexOf('"', start);
+            if (end > start) return Unescape(json[start..end]);
+        }
+
+        return json;
+    }
+
+    private static string Unescape(string s) =>
+        s.Replace("\\n", "\n").Replace("\\t", "\t").Replace("\\\"", "\"").Replace("\\\\", "\\");
+
+    public void Dispose()
+    {
+        Notifier.LineStreamed          -= OnLineStreamed;
+        Notifier.SessionStatusChanged  -= OnSessionStatusChanged;
+        Notifier.SessionEnded          -= OnSessionEnded;
+    }
+}

@@ -1,0 +1,179 @@
+@page "/"
+@implements IDisposable
+@inject DashboardNotifier Notifier
+@inject SessionStore Store
+@inject AgentCommandService Commands
+
+<PageTitle>Claude Manager</PageTitle>
+
+<div class="dashboard">
+    <div class="dashboard-header">
+        <h1>Dashboard</h1>
+        <button class="btn-primary" @onclick="() => _showNewSession = true">New Session</button>
+    </div>
+
+    @if (!_machines.Any())
+    {
+        <div class="empty-state">No agents connected. Start ClaudeManager.Agent on a machine to get started.</div>
+    }
+
+    @foreach (var machine in _machines)
+    {
+        <div class="machine-card @(machine.IsOnline ? "online" : "offline")">
+            <div class="machine-card-header">
+                <span class="status-dot @(machine.IsOnline ? "online" : "offline")"></span>
+                <h2 class="machine-name">@machine.DisplayName</h2>
+                <span class="machine-meta">@machine.Platform · @machine.MachineId[..8]</span>
+                @if (machine.IsOnline)
+                {
+                    <button class="btn-sm" @onclick="() => StartNewSession(machine.MachineId)">+ Session</button>
+                }
+            </div>
+
+            @if (!machine.Sessions.Any())
+            {
+                <div class="no-sessions">No sessions</div>
+            }
+            else
+            {
+                <table class="sessions-table">
+                    <thead>
+                        <tr><th>Directory</th><th>Status</th><th>Started</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var session in machine.Sessions.Values.OrderByDescending(s => s.StartedAt))
+                        {
+                            <tr class="session-row @(session.IsProcessRunning ? "running" : "")">
+                                <td><a href="/session/@session.MachineId/@session.SessionId">@session.WorkingDirectory</a></td>
+                                <td>
+                                    <span class="badge @session.Status.ToString().ToLower()">
+                                        @if (session.IsProcessRunning) { <span>Running</span> }
+                                        else { <span>@session.Status</span> }
+                                    </span>
+                                </td>
+                                <td>@session.StartedAt.LocalDateTime.ToString("MM/dd HH:mm")</td>
+                                <td>
+                                    @if (session.Status == SessionStatus.Active)
+                                    {
+                                        <button class="btn-danger-sm" @onclick="() => KillSession(machine.MachineId, session.SessionId)">Kill</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    }
+</div>
+
+@if (_showNewSession)
+{
+    <div class="modal-overlay" @onclick="() => _showNewSession = false">
+        <div class="modal" @onclick:stopPropagation>
+            <h3>New Session</h3>
+            <label>Machine</label>
+            <select @bind="_newSessionMachineId">
+                @foreach (var m in _machines.Where(m => m.IsOnline))
+                {
+                    <option value="@m.MachineId">@m.DisplayName</option>
+                }
+            </select>
+            <label>Working Directory</label>
+            <input @bind="_newSessionWorkingDir" placeholder="e.g. C:\Projects\MyApp" />
+            <label>Initial Prompt</label>
+            <textarea @bind="_newSessionPrompt" rows="4" placeholder="What would you like Claude to do?" />
+            @if (_newSessionError is not null)
+            {
+                <div class="error-msg">@_newSessionError</div>
+            }
+            <div class="modal-actions">
+                <button class="btn-secondary" @onclick="() => _showNewSession = false">Cancel</button>
+                <button class="btn-primary" @onclick="SubmitNewSession" disabled="@_newSessionSubmitting">
+                    @(_newSessionSubmitting ? "Starting..." : "Start")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<MachineAgent> _machines = [];
+
+    private bool   _showNewSession;
+    private string _newSessionMachineId = string.Empty;
+    private string _newSessionWorkingDir = string.Empty;
+    private string _newSessionPrompt = string.Empty;
+    private string? _newSessionError;
+    private bool   _newSessionSubmitting;
+
+    protected override void OnInitialized()
+    {
+        _machines = Store.GetAllMachines().ToList();
+        _newSessionMachineId = _machines.FirstOrDefault(m => m.IsOnline)?.MachineId ?? string.Empty;
+
+        Notifier.AgentConnected       += OnAgentEvent;
+        Notifier.AgentDisconnected    += OnAgentDisconnected;
+        Notifier.SessionStarted       += OnSessionEvent;
+        Notifier.SessionEnded         += OnSessionEnded;
+        Notifier.SessionStatusChanged += OnSessionStatusChanged;
+    }
+
+    private void OnAgentEvent(MachineAgent _)              => Refresh();
+    private void OnAgentDisconnected(string _)             => Refresh();
+    private void OnSessionEvent(ClaudeSession _)           => Refresh();
+    private void OnSessionEnded(string _1, string _2, int _3) => Refresh();
+    private void OnSessionStatusChanged(ClaudeSession _)   => Refresh();
+
+    private void Refresh()
+    {
+        _machines = Store.GetAllMachines().ToList();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void StartNewSession(string machineId)
+    {
+        _newSessionMachineId = machineId;
+        _newSessionWorkingDir = string.Empty;
+        _newSessionPrompt = string.Empty;
+        _newSessionError = null;
+        _showNewSession = true;
+    }
+
+    private async Task SubmitNewSession()
+    {
+        if (string.IsNullOrWhiteSpace(_newSessionMachineId)) { _newSessionError = "Select a machine."; return; }
+        if (string.IsNullOrWhiteSpace(_newSessionWorkingDir)) { _newSessionError = "Enter a working directory."; return; }
+        if (string.IsNullOrWhiteSpace(_newSessionPrompt)) { _newSessionError = "Enter a prompt."; return; }
+
+        _newSessionSubmitting = true;
+        _newSessionError = null;
+
+        var ok = await Commands.StartSessionAsync(new StartSessionRequest(
+            _newSessionMachineId,
+            _newSessionWorkingDir.Trim(),
+            _newSessionPrompt.Trim(),
+            null));
+
+        _newSessionSubmitting = false;
+
+        if (!ok)
+            _newSessionError = "Could not send command — is the agent online?";
+        else
+            _showNewSession = false;
+    }
+
+    private async Task KillSession(string machineId, string sessionId)
+    {
+        await Commands.KillSessionAsync(machineId, sessionId);
+    }
+
+    public void Dispose()
+    {
+        Notifier.AgentConnected       -= OnAgentEvent;
+        Notifier.AgentDisconnected    -= OnAgentDisconnected;
+        Notifier.SessionStarted       -= OnSessionEvent;
+        Notifier.SessionEnded         -= OnSessionEnded;
+        Notifier.SessionStatusChanged -= OnSessionStatusChanged;
+    }
+}

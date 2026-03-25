@@ -1,0 +1,65 @@
+@implements IDisposable
+@inject DashboardNotifier Notifier
+@inject SessionStore Store
+
+<nav class="nav-menu">
+    <div class="nav-brand">Claude Manager</div>
+    <ul class="nav-machines">
+        @foreach (var machine in _machines)
+        {
+            <li class="nav-machine">
+                <span class="status-dot @(machine.IsOnline ? "online" : "offline")"></span>
+                <span class="machine-name">@machine.DisplayName</span>
+                <ul class="nav-sessions">
+                    @foreach (var session in machine.Sessions.Values.OrderByDescending(s => s.StartedAt))
+                    {
+                        <li>
+                            <a href="/session/@session.MachineId/@session.SessionId" class="session-link @(session.IsProcessRunning ? "running" : "")">
+                                @session.WorkingDirectory
+                                @if (session.IsProcessRunning)
+                                {
+                                    <span class="running-indicator">●</span>
+                                }
+                            </a>
+                        </li>
+                    }
+                </ul>
+            </li>
+        }
+    </ul>
+</nav>
+
+@code {
+    private List<MachineAgent> _machines = [];
+
+    protected override void OnInitialized()
+    {
+        _machines = Store.GetAllMachines().ToList();
+        Notifier.AgentConnected    += OnAgentChanged;
+        Notifier.AgentDisconnected += OnAgentChanged;
+        Notifier.SessionStarted    += OnSessionChanged;
+        Notifier.SessionEnded      += OnSessionEnded;
+        Notifier.SessionStatusChanged += OnSessionStatusChanged;
+    }
+
+    private void OnAgentChanged(MachineAgent _)    => Refresh();
+    private void OnAgentChanged(string _)          => Refresh();
+    private void OnSessionChanged(ClaudeSession _) => Refresh();
+    private void OnSessionEnded(string _1, string _2, int _3) => Refresh();
+    private void OnSessionStatusChanged(ClaudeSession _) => Refresh();
+
+    private void Refresh()
+    {
+        _machines = Store.GetAllMachines().ToList();
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Notifier.AgentConnected    -= OnAgentChanged;
+        Notifier.AgentDisconnected -= OnAgentChanged;
+        Notifier.SessionStarted    -= OnSessionChanged;
+        Notifier.SessionEnded      -= OnSessionEnded;
+        Notifier.SessionStatusChanged -= OnSessionStatusChanged;
+    }
+}

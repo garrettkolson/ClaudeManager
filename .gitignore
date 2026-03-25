@@ -1,0 +1,64 @@
+# Build output
+bin/
+obj/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# Rider / JetBrains
+.idea/
+*.sln.iml
+
+# VS Code
+.vscode/
+
+# Test results
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+coverage*/
+
+# Publish output
+publish/
+**/publish/
+
+# Entity Framework migrations (keep migrations, ignore snapshots? No — keep all)
+# Uncomment if you want to ignore the compiled snapshot:
+# **/Migrations/*ModelSnapshot.cs
+
+# User secrets
+secrets.json
+appsettings.Local.json
+appsettings.*.local.json
+
+# Runtime data
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# dotnet tools
+.config/dotnet-tools.json

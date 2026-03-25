@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/shared/">
+    <Project Path="shared/ClaudeManager.Shared/ClaudeManager.Shared.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/ClaudeManager.Agent/ClaudeManager.Agent.csproj" />
+    <Project Path="src/ClaudeManager.Hub/ClaudeManager.Hub.csproj" />
+  </Folder>
+</Solution>
