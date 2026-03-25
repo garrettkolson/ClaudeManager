@@ -187,6 +187,25 @@ public class SessionStore
         });
     }
 
+    /// <summary>
+    /// Ensures a machine from the KnownMachines config is visible in the dashboard
+    /// even before its agent has ever connected. TryAdd semantics: does nothing if
+    /// the machine was already restored from the DB.
+    /// </summary>
+    public void EnsureKnownMachine(string machineId, string displayName, string platform)
+    {
+        _machines.TryAdd(machineId, new MachineAgent
+        {
+            MachineId           = machineId,
+            DisplayName         = displayName,
+            Platform            = platform,
+            SignalRConnectionId = string.Empty,
+            ConnectedAt         = DateTimeOffset.MinValue,
+            LastHeartbeatAt     = DateTimeOffset.MinValue,
+            IsOnline            = false,
+        });
+    }
+
     public void RestoreSessionFromDb(ClaudeSessionEntity entity, IEnumerable<StreamedLine> lines)
     {
         if (!_machines.TryGetValue(entity.MachineId, out var agent)) return;

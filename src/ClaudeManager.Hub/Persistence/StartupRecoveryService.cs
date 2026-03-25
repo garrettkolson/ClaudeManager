@@ -10,16 +10,19 @@ public class StartupRecoveryService : IHostedService
 {
     private readonly IDbContextFactory<ClaudeManagerDbContext> _dbFactory;
     private readonly SessionStore _store;
+    private readonly IReadOnlyList<KnownMachineConfig> _knownMachines;
     private readonly ILogger<StartupRecoveryService> _logger;
 
     public StartupRecoveryService(
         IDbContextFactory<ClaudeManagerDbContext> dbFactory,
         SessionStore store,
+        IReadOnlyList<KnownMachineConfig> knownMachines,
         ILogger<StartupRecoveryService> logger)
     {
-        _dbFactory = dbFactory;
-        _store     = store;
-        _logger    = logger;
+        _dbFactory     = dbFactory;
+        _store         = store;
+        _knownMachines = knownMachines;
+        _logger        = logger;
     }
 
     public async Task StartAsync(CancellationToken ct)
@@ -77,6 +80,15 @@ public class StartupRecoveryService : IHostedService
         }
 
         _logger.LogInformation("Startup recovery complete");
+
+        // Seed machines from KnownMachines config so they appear in the dashboard
+        // even before their agent has ever connected. TryAdd semantics mean DB-restored
+        // machines always take precedence over the config defaults.
+        foreach (var m in _knownMachines)
+            _store.EnsureKnownMachine(m.MachineId, m.DisplayName, m.Platform);
+
+        if (_knownMachines.Count > 0)
+            _logger.LogInformation("Seeded {Count} known machine(s) from configuration", _knownMachines.Count);
     }
 
     public Task StopAsync(CancellationToken ct) => Task.CompletedTask;

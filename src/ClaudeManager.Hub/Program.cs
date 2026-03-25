@@ -1,4 +1,5 @@
 using ClaudeManager.Hub.Hubs;
+using ClaudeManager.Hub.Models;
 using ClaudeManager.Hub.Persistence;
 using ClaudeManager.Hub.Services;
 using Microsoft.EntityFrameworkCore;
@@ -20,6 +21,15 @@ builder.Services.AddDbContextFactory<ClaudeManagerDbContext>(options =>
     options
         .UseSqlite($"Data Source={dbPath}")
         .EnableDetailedErrors(builder.Environment.IsDevelopment()));
+
+// ── Known machines (from config) ──────────────────────────────────────────────
+
+var knownMachines = builder.Configuration
+    .GetSection("KnownMachines")
+    .Get<List<KnownMachineConfig>>() ?? [];
+
+builder.Services.AddSingleton<IReadOnlyList<KnownMachineConfig>>(knownMachines);
+builder.Services.AddSingleton<AgentLaunchService>();
 
 // ── Core services ─────────────────────────────────────────────────────────────
 

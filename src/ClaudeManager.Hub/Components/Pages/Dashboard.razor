@@ -3,6 +3,7 @@
 @inject DashboardNotifier Notifier
 @inject SessionStore Store
 @inject AgentCommandService Commands
+@inject AgentLaunchService Launcher
 
 <PageTitle>Claude Manager</PageTitle>
 
@@ -14,7 +15,7 @@
 
     @if (!_machines.Any())
     {
-        <div class="empty-state">No agents connected. Start ClaudeManager.Agent on a machine to get started.</div>
+        <div class="empty-state">No agents configured. Add machines to the KnownMachines section in appsettings.json, or start ClaudeManager.Agent on any machine to get started.</div>
     }
 
     @foreach (var machine in _machines)
@@ -23,12 +24,32 @@
             <div class="machine-card-header">
                 <span class="status-dot @(machine.IsOnline ? "online" : "offline")"></span>
                 <h2 class="machine-name">@machine.DisplayName</h2>
-                <span class="machine-meta">@machine.Platform · @machine.MachineId[..8]</span>
+                <span class="machine-meta">@machine.Platform · @machine.MachineId[..Math.Min(8, machine.MachineId.Length)]</span>
                 @if (machine.IsOnline)
                 {
                     <button class="btn-sm" @onclick="() => StartNewSession(machine.MachineId)">+ Session</button>
                 }
+                else if (Launcher.HasLaunchConfig(machine.MachineId))
+                {
+                    var state = _launchStates.GetValueOrDefault(machine.MachineId, LaunchState.Idle);
+                    <button class="btn-sm btn-launch @(state == LaunchState.Success ? "success" : state == LaunchState.Failed ? "failed" : "")"
+                            @onclick="() => LaunchAgent(machine.MachineId)"
+                            disabled="@(state == LaunchState.Launching)">
+                        @switch (state)
+                        {
+                            case LaunchState.Launching: <text>Launching...</text> break;
+                            case LaunchState.Success:   <text>Launched</text>    break;
+                            case LaunchState.Failed:    <text>Retry Launch</text> break;
+                            default:                    <text>Launch Agent</text>  break;
+                        }
+                    </button>
+                }
             </div>
+
+            @if (_launchErrors.TryGetValue(machine.MachineId, out var launchErr))
+            {
+                <div class="launch-error">Launch failed: @launchErr</div>
+            }
 
             @if (!machine.Sessions.Any())
             {
@@ -107,23 +128,34 @@
     private string? _newSessionError;
     private bool   _newSessionSubmitting;
 
+    private enum LaunchState { Idle, Launching, Success, Failed }
+    private readonly Dictionary<string, LaunchState> _launchStates = new();
+    private readonly Dictionary<string, string>      _launchErrors = new();
+
     protected override void OnInitialized()
     {
         _machines = Store.GetAllMachines().ToList();
         _newSessionMachineId = _machines.FirstOrDefault(m => m.IsOnline)?.MachineId ?? string.Empty;
 
-        Notifier.AgentConnected       += OnAgentEvent;
+        Notifier.AgentConnected       += OnAgentConnected;
         Notifier.AgentDisconnected    += OnAgentDisconnected;
         Notifier.SessionStarted       += OnSessionEvent;
         Notifier.SessionEnded         += OnSessionEnded;
         Notifier.SessionStatusChanged += OnSessionStatusChanged;
     }
 
-    private void OnAgentEvent(MachineAgent _)              => Refresh();
-    private void OnAgentDisconnected(string _)             => Refresh();
-    private void OnSessionEvent(ClaudeSession _)           => Refresh();
-    private void OnSessionEnded(string _1, string _2, int _3) => Refresh();
-    private void OnSessionStatusChanged(ClaudeSession _)   => Refresh();
+    private void OnAgentConnected(MachineAgent agent)
+    {
+        // Clear any pending launch state — the agent is now online
+        _launchStates.Remove(agent.MachineId);
+        _launchErrors.Remove(agent.MachineId);
+        Refresh();
+    }
+
+    private void OnAgentDisconnected(string _)                => Refresh();
+    private void OnSessionEvent(ClaudeSession _)               => Refresh();
+    private void OnSessionEnded(string _1, string _2, int _3)  => Refresh();
+    private void OnSessionStatusChanged(ClaudeSession _)       => Refresh();
 
     private void Refresh()
     {
@@ -168,9 +200,35 @@
         await Commands.KillSessionAsync(machineId, sessionId);
     }
 
+    private async Task LaunchAgent(string machineId)
+    {
+        _launchStates[machineId] = LaunchState.Launching;
+        _launchErrors.Remove(machineId);
+        StateHasChanged();
+
+        var (success, error) = await Launcher.LaunchAgentAsync(machineId);
+
+        _launchStates[machineId] = success ? LaunchState.Success : LaunchState.Failed;
+        if (!success && error is not null)
+            _launchErrors[machineId] = error;
+        StateHasChanged();
+
+        // Auto-reset success state after 5 s — by then the agent should have connected
+        // and OnAgentConnected will have cleared the state anyway
+        if (success)
+        {
+            await Task.Delay(5000);
+            if (_launchStates.GetValueOrDefault(machineId) == LaunchState.Success)
+            {
+                _launchStates[machineId] = LaunchState.Idle;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+    }
+
     public void Dispose()
     {
-        Notifier.AgentConnected       -= OnAgentEvent;
+        Notifier.AgentConnected       -= OnAgentConnected;
         Notifier.AgentDisconnected    -= OnAgentDisconnected;
         Notifier.SessionStarted       -= OnSessionEvent;
         Notifier.SessionEnded         -= OnSessionEnded;
