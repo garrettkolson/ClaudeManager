@@ -79,6 +79,41 @@
     }
     else
     {
+        <div class="builds-stats">
+            <div class="builds-stat">
+                <span class="builds-stat-value">@_jobs.Count</span>
+                <span class="builds-stat-label">total</span>
+            </div>
+            @if (_jobs.Count(j => j.Status == BuildStatus.Succeeded) is > 0 and var nSuccess)
+            {
+                <div class="builds-stat succeeded">
+                    <span class="builds-stat-value">@nSuccess</span>
+                    <span class="builds-stat-label">succeeded</span>
+                </div>
+            }
+            @if (_jobs.Count(j => j.Status == BuildStatus.Failed) is > 0 and var nFailed)
+            {
+                <div class="builds-stat failed">
+                    <span class="builds-stat-value">@nFailed</span>
+                    <span class="builds-stat-label">failed</span>
+                </div>
+            }
+            @if (_jobs.Count(j => j.Status == BuildStatus.Running) is > 0 and var nRunning)
+            {
+                <div class="builds-stat running">
+                    <span class="builds-stat-value">@nRunning</span>
+                    <span class="builds-stat-label">running</span>
+                </div>
+            }
+            @if (_jobs.Count(j => j.Status == BuildStatus.Waiting) is > 0 and var nWaiting)
+            {
+                <div class="builds-stat waiting">
+                    <span class="builds-stat-value">@nWaiting</span>
+                    <span class="builds-stat-label">waiting</span>
+                </div>
+            }
+        </div>
+
         <table class="builds-table">
             <thead>
                 <tr>

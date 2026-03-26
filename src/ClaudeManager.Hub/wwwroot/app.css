@@ -9,6 +9,7 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 /* ── Nav ── */
 .nav-menu { width: 240px; background: #111; border-right: 1px solid #333; padding: 16px; overflow-y: auto; flex-shrink: 0; }
 .nav-brand { font-size: 16px; font-weight: bold; color: #7cb8ff; margin-bottom: 20px; }
+.nav-badge { display: inline-block; background: #2a4a6a; color: #7cb8ff; font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 10px; margin-left: 6px; vertical-align: middle; }
 .nav-machines { list-style: none; }
 .nav-machine { margin-bottom: 12px; }
 .machine-name { font-weight: bold; }
@@ -150,6 +151,18 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 
 /* ── Builds page ── */
 .builds-page { max-width: 1100px; }
+.builds-stats { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+.builds-stat { background: #1a2233; border: 1px solid #2a3a55; border-radius: 6px; padding: 8px 16px; display: flex; flex-direction: column; align-items: center; min-width: 72px; }
+.builds-stat.succeeded { border-color: #2a4a2a; }
+.builds-stat.failed    { border-color: #4a2a2a; }
+.builds-stat.running   { border-color: #2a3a5a; }
+.builds-stat.waiting   { border-color: #4a3a1a; }
+.builds-stat-value { font-size: 22px; font-weight: 700; color: #cdd6f4; line-height: 1; }
+.builds-stat.succeeded .builds-stat-value { color: #4caf50; }
+.builds-stat.failed    .builds-stat-value { color: #cf6679; }
+.builds-stat.running   .builds-stat-value { color: #7cb8ff; }
+.builds-stat.waiting   .builds-stat-value { color: #e5a050; }
+.builds-stat-label { font-size: 11px; color: #5a6a88; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.04em; }
 .builds-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
 .builds-header h1 { font-size: 22px; color: #7cb8ff; flex: 1; }
 .builds-unconfigured { color: #888; padding: 32px; border: 1px dashed #333; border-radius: 6px; line-height: 1.7; }

@@ -5,7 +5,13 @@
 <nav class="nav-menu">
     <div class="nav-brand">Claude Manager</div>
     <div class="nav-links">
-        <a href="/" class="nav-link">Dashboard</a>
+        <a href="/" class="nav-link">
+            Dashboard
+            @if (ActiveSessionCount > 0)
+            {
+                <span class="nav-badge">@ActiveSessionCount</span>
+            }
+        </a>
         <a href="/wiki" class="nav-link">Wiki</a>
         <a href="/builds" class="nav-link">Builds</a>
     </div>
@@ -36,6 +42,9 @@
 
 @code {
     private List<MachineAgent> _machines = [];
+
+    private int ActiveSessionCount =>
+        _machines.Sum(m => m.Sessions.Values.Count(s => s.Status == SessionStatus.Active));
 
     protected override void OnInitialized()
     {
