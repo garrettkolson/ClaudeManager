@@ -13,5 +13,26 @@ window.claudeManager = {
     scrollToBottom: function (element) {
         if (!element) return;
         element.scrollTop = element.scrollHeight;
+    },
+
+    // ── Browser notifications ──────────────────────────────────────────────
+
+    getNotificationPermission: function () {
+        if (!('Notification' in window)) return 'denied';
+        return Notification.permission;
+    },
+
+    requestNotificationPermission: async function () {
+        if (!('Notification' in window)) return 'denied';
+        return await Notification.requestPermission();
+    },
+
+    // Shows a desktop notification only when the tab is not currently focused.
+    // When the tab is visible the in-app toast is sufficient.
+    showBrowserNotification: function (title, body, tag) {
+        if (!('Notification' in window)) return;
+        if (Notification.permission !== 'granted') return;
+        if (document.visibilityState === 'visible') return;
+        new Notification(title, { body, tag });
     }
 };

@@ -1,0 +1,78 @@
+@implements IDisposable
+@inject NotificationService NotifSvc
+@inject IJSRuntime JS
+
+@if (_toasts.Count > 0 || _showPermissionPrompt)
+{
+    <div class="toast-container">
+        @if (_showPermissionPrompt)
+        {
+            <div class="notif-prompt">
+                <span>Enable desktop notifications for build and session alerts?</span>
+                <button class="btn-secondary-sm" @onclick="RequestPermission">Enable</button>
+                <button class="toast-close" @onclick="DismissPrompt" title="Dismiss">✕</button>
+            </div>
+        }
+        @foreach (var toast in _toasts)
+        {
+            var kindCss = toast.Kind.ToString().ToLowerInvariant();
+            <div class="toast @kindCss">
+                <div class="toast-title">@toast.Title</div>
+                <div class="toast-body">@toast.Body</div>
+                <button class="toast-close" @onclick="() => Dismiss(toast.Id)" title="Dismiss">✕</button>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private readonly List<ToastMessage> _toasts = [];
+    private bool _showPermissionPrompt;
+
+    protected override void OnInitialized()
+    {
+        NotifSvc.ToastRequested += OnToastRequested;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var permission = await JS.InvokeAsync<string>("claudeManager.getNotificationPermission");
+        if (permission == "default")
+        {
+            _showPermissionPrompt = true;
+            StateHasChanged();
+        }
+    }
+
+    private void OnToastRequested(ToastMessage msg)
+    {
+        InvokeAsync(async () =>
+        {
+            _toasts.Add(msg);
+            StateHasChanged();
+
+            await JS.InvokeVoidAsync("claudeManager.showBrowserNotification",
+                msg.Title, msg.Body, msg.Kind.ToString().ToLowerInvariant());
+
+            await Task.Delay(5_000);
+            _toasts.RemoveAll(t => t.Id == msg.Id);
+            StateHasChanged();
+        });
+    }
+
+    private void Dismiss(Guid id)
+    {
+        _toasts.RemoveAll(t => t.Id == id);
+    }
+
+    private async Task RequestPermission()
+    {
+        var result = await JS.InvokeAsync<string>("claudeManager.requestNotificationPermission");
+        _showPermissionPrompt = result == "default"; // still undecided
+    }
+
+    private void DismissPrompt() => _showPermissionPrompt = false;
+
+    public void Dispose() => NotifSvc.ToastRequested -= OnToastRequested;
+}

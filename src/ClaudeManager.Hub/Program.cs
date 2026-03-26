@@ -65,6 +65,7 @@ builder.Services.AddSingleton(sweAfHttp);
 builder.Services.AddSingleton<BuildNotifier>();
 builder.Services.AddSingleton<SweAfService>();
 builder.Services.AddHostedService<SweAfRecoveryService>();
+builder.Services.AddSingleton<NotificationService>();
 
 // ── SWE-AF host service control ───────────────────────────────────────────
 

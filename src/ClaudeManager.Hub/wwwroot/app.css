@@ -196,6 +196,24 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 .webhook-actions { margin-top: 8px; }
 .webhook-success { color: #4caf50; font-size: 13px; padding: 4px 0; }
 
+/* ── Toast notifications ── */
+.toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 900; display: flex; flex-direction: column-reverse; gap: 8px; width: 340px; pointer-events: none; }
+.toast-container > * { pointer-events: auto; }
+.toast { background: #1a2233; border: 1px solid #2a3a55; border-left: 4px solid #5a8aff; border-radius: 6px; padding: 12px 36px 12px 14px; position: relative; animation: toast-slide-in 0.18s ease; }
+.toast.success { border-left-color: #4caf50; }
+.toast.error   { border-left-color: #cf6679; }
+.toast.warning { border-left-color: #e5a050; }
+.toast.info    { border-left-color: #5a8aff; }
+.toast-title { font-size: 13px; font-weight: 600; color: #cdd6f4; margin-bottom: 3px; }
+.toast-body  { font-size: 12px; color: #8899bb; }
+.toast-close { position: absolute; top: 8px; right: 10px; background: none; border: none; color: #5a6a88; cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
+.toast-close:hover { color: #cdd6f4; }
+.notif-prompt { background: #1a2233; border: 1px solid #2a4a6a; border-radius: 6px; padding: 10px 14px 10px 14px; display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8899bb; flex-wrap: wrap; }
+.notif-prompt span { flex: 1; min-width: 0; }
+.btn-secondary-sm { background: #1e3050; color: #7cb8ff; border: 1px solid #2a4a6a; padding: 3px 10px; border-radius: 3px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+.btn-secondary-sm:hover { background: #243a64; }
+@keyframes toast-slide-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: translateX(0); } }
+
 /* ── Blazor error UI ── */
 #blazor-error-ui { background: #5a1a1a; bottom: 0; box-shadow: 0 -1px 2px rgba(0,0,0,0.2); display: none; left: 0; padding: 0.6rem 1.25rem 0.7rem 1.25rem; position: fixed; width: 100%; z-index: 1000; color: #cf6679; }
 #blazor-error-ui .dismiss { cursor: pointer; position: absolute; right: 0.75rem; top: 0.5rem; }
