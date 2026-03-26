@@ -7,52 +7,57 @@ namespace ClaudeManager.Hub.Tests.Services;
 [TestFixture]
 public class SweAfHostServiceTests
 {
-    // ── IsConfigured ──────────────────────────────────────────────────────────
+    // ── IsConfigured / Commands ───────────────────────────────────────────────
 
     [Test]
-    public void IsConfigured_BothCommandsPresent_ReturnsTrue()
+    public void IsConfigured_WithCommands_ReturnsTrue()
     {
-        var svc = Build(startCommand: "start.sh", stopCommand: "stop.sh");
+        var svc = Build([new SweAfHostCommand { Label = "Start", Command = "start.sh" }]);
         svc.IsConfigured.Should().BeTrue();
     }
 
     [Test]
-    public void IsConfigured_MissingStartCommand_ReturnsFalse()
+    public void IsConfigured_EmptyCommandList_ReturnsFalse()
     {
-        var svc = Build(startCommand: "", stopCommand: "stop.sh");
+        var svc = Build([]);
         svc.IsConfigured.Should().BeFalse();
     }
 
     [Test]
-    public void IsConfigured_MissingStopCommand_ReturnsFalse()
+    public void IsConfigured_NullCommandList_ReturnsFalse()
     {
-        var svc = Build(startCommand: "start.sh", stopCommand: "");
+        var svc = Build(null);
         svc.IsConfigured.Should().BeFalse();
     }
 
     [Test]
-    public void IsConfigured_NeitherCommandPresent_ReturnsFalse()
+    public void Commands_ReflectsConfiguredList()
     {
-        var svc = Build(startCommand: null, stopCommand: null);
-        svc.IsConfigured.Should().BeFalse();
+        var cmds = new List<SweAfHostCommand>
+        {
+            new() { Label = "Start", Command = "start.sh" },
+            new() { Label = "Stop",  Command = "stop.sh"  },
+        };
+        var svc = Build(cmds);
+        svc.Commands.Should().HaveCount(2);
+        svc.Commands[0].Label.Should().Be("Start");
+        svc.Commands[1].Label.Should().Be("Stop");
+    }
+
+    [Test]
+    public void Commands_NullConfig_ReturnsEmptyList()
+    {
+        var svc = Build(null);
+        svc.Commands.Should().BeEmpty();
     }
 
     // ── Guard: not configured ─────────────────────────────────────────────────
 
     [Test]
-    public async Task StartAsync_NotConfigured_ReturnsError()
+    public async Task RunAsync_NotConfigured_ReturnsError()
     {
-        var svc = Build(startCommand: null, stopCommand: null);
-        var (ok, err) = await svc.StartAsync();
-        ok.Should().BeFalse();
-        err.Should().NotBeNullOrEmpty();
-    }
-
-    [Test]
-    public async Task StopAsync_NotConfigured_ReturnsError()
-    {
-        var svc = Build(startCommand: null, stopCommand: null);
-        var (ok, err) = await svc.StopAsync();
+        var svc = Build(null);
+        var (ok, err) = await svc.RunAsync("start.sh", "Start");
         ok.Should().BeFalse();
         err.Should().NotBeNullOrEmpty();
     }
@@ -60,18 +65,20 @@ public class SweAfHostServiceTests
     // ── Guard: no SSH auth on remote host ─────────────────────────────────────
 
     [Test]
-    public async Task StartAsync_RemoteHostWithNoAuth_ReturnsError()
+    public async Task RunAsync_RemoteHostWithNoAuth_ReturnsError()
     {
         var config = new SweAfHostConfig
         {
-            Host         = "remote.example.com",
-            SshUser      = "user",
-            StartCommand = "systemctl start agentfield",
-            StopCommand  = "systemctl stop agentfield",
+            Host    = "remote.example.com",
+            SshUser = "user",
+            Commands =
+            [
+                new SweAfHostCommand { Label = "Start", Command = "start.sh" },
+            ],
             // No SshKeyPath or SshPassword
         };
         var svc = new SweAfHostService(config, NullLogger<SweAfHostService>.Instance);
-        var (ok, err) = await svc.StartAsync();
+        var (ok, err) = await svc.RunAsync("start.sh", "Start");
         ok.Should().BeFalse();
         err.Should().Contain("SSH");
     }
@@ -84,36 +91,25 @@ public class SweAfHostServiceTests
         var config = new SweAfHostConfig
         {
             Host             = "localhost",
-            StartCommand     = "start.sh",
-            StopCommand      = "stop.sh",
             AnthropicBaseUrl = "http://localhost:11434",
             AnthropicApiKey  = "local",
+            Commands =
+            [
+                new SweAfHostCommand { Label = "Start", Command = "start.sh" },
+            ],
         };
         new SweAfHostService(config, NullLogger<SweAfHostService>.Instance)
             .IsConfigured.Should().BeTrue();
     }
 
-    // ── InjectEnvVars ─────────────────────────────────────────────────────────
-
-    [Test]
-    public void InjectEnvVars_NeitherSet_CommandUnchanged()
-    {
-        var svc = Build("start.sh", "stop.sh");
-        // Indirectly verify: not configured guard fires before any command runs
-        // The injection logic is exercised in integration; here we just confirm
-        // the service builds without throwing when no overrides are set.
-        svc.IsConfigured.Should().BeTrue();
-    }
-
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static SweAfHostService Build(string? startCommand, string? stopCommand) =>
+    private static SweAfHostService Build(IEnumerable<SweAfHostCommand>? commands) =>
         new SweAfHostService(
             new SweAfHostConfig
             {
-                Host         = "localhost",
-                StartCommand = startCommand ?? string.Empty,
-                StopCommand  = stopCommand  ?? string.Empty,
+                Host     = "localhost",
+                Commands = commands?.ToList(),
             },
             NullLogger<SweAfHostService>.Instance);
 }

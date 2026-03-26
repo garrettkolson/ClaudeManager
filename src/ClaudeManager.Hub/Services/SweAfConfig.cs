@@ -1,12 +1,26 @@
+using System.Text.Json.Serialization;
+
 namespace ClaudeManager.Hub.Services;
 
 /// <summary>
 /// Bound from the "SweAf" section of appsettings.json.
-/// Example:
+///
+/// SWE-AF requires two running services:
+///   - AgentField control plane  (agentfield/control-plane Docker image, port 8080)
+///   - SWE-AF agent node         (python -m swe_af, port 8003)
+///
+/// BaseUrl should point at the control plane (e.g. "http://localhost:8080").
+///
+/// Example (Docker Compose deployment):
 ///   "SweAf": {
-///     "BaseUrl": "http://localhost:8080",
-///     "ApiKey": "your-agentfield-api-key",
-///     "WebhookSecret": "optional-hmac-secret"
+///     "BaseUrl":       "http://localhost:8080",
+///     "ApiKey":        "your-agentfield-api-key",
+///     "WebhookSecret": "optional-hmac-secret",
+///     "Runtime":       "claude_code",
+///     "Models": {
+///       "Default": "sonnet",
+///       "Coder":   "opus"
+///     }
 ///   }
 /// </summary>
 public record SweAfConfig
@@ -16,16 +30,36 @@ public record SweAfConfig
     public string? WebhookSecret { get; init; }
 
     /// <summary>
-    /// Optional Anthropic API base URL passed to AgentField in the build trigger payload.
-    /// Use this to direct SWE-AF's claude_code runtime at a locally-hosted LLM server.
+    /// Runtime backend passed to AgentField in the build trigger payload.
+    /// "claude_code" (default) uses Claude Code; "open_code" uses the OpenCode backend
+    /// for open-source models (DeepSeek, Qwen, Llama, etc.).
     /// </summary>
-    public string? ClaudeBaseUrl { get; init; }
+    public string Runtime { get; init; } = "claude_code";
 
     /// <summary>
-    /// Optional API key passed to AgentField alongside ClaudeBaseUrl.
+    /// Per-role model overrides passed to AgentField in the build trigger payload.
+    /// Null omits the models field and lets AgentField use its defaults.
     /// </summary>
-    public string? ClaudeApiKey { get; init; }
+    public SweAfModelsConfig? Models { get; init; }
 
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(ApiKey);
+}
+
+/// <summary>
+/// Per-role model selection for an AgentField execution.
+/// Values are model IDs: short names ("sonnet", "opus") for Claude, or
+/// "provider/model-id" format ("deepseek/deepseek-chat") for open-source models.
+/// Null properties are omitted from the trigger payload.
+/// </summary>
+public record SweAfModelsConfig
+{
+    /// <summary>Default model used for most tasks.</summary>
+    [JsonPropertyName("default")] public string? Default { get; init; }
+
+    /// <summary>Model used for coding-intensive steps.</summary>
+    [JsonPropertyName("coder")]   public string? Coder   { get; init; }
+
+    /// <summary>Model used for QA / verification steps.</summary>
+    [JsonPropertyName("qa")]      public string? Qa      { get; init; }
 }

@@ -49,14 +49,19 @@ public class SweAfService
                 repo_url = repoUrl,
                 config   = new
                 {
-                    runtime  = "claude_code",
-                    base_url = _config.ClaudeBaseUrl,
-                    api_key  = _config.ClaudeApiKey,
+                    runtime = _config.Runtime,
+                    models  = _config.Models,
                 },
             },
         };
 
-        var resp = await _http.PostAsJsonAsync("/api/v1/execute/async/swe-planner.build", payload);
+        var resp = await _http.PostAsJsonAsync(
+            "/api/v1/execute/async/swe-planner.build",
+            payload,
+            new System.Text.Json.JsonSerializerOptions
+            {
+                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+            });
         resp.EnsureSuccessStatusCode();
 
         var result = await resp.Content.ReadFromJsonAsync<ExecuteResponse>()

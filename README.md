@@ -137,7 +137,7 @@ A shared knowledge base at `/wiki`, readable and writable by both the UI and Cla
 
 Autonomous build orchestration at `/builds`. Requires `SweAf` config; see [Configuration](#hub-configuration) below.
 
-- **Trigger a build** — provide a goal description and a GitHub repo URL. The Hub calls AgentField's `swe-planner.build` agent, which autonomously implements the feature and opens a draft PR.
+- **Trigger a build** — provide a goal description and a GitHub repo URL. The Hub calls AgentField's `swe-planner.build` agent (using the configured `Runtime` and `Models`), which autonomously implements the feature and opens a draft PR.
 - **Live status updates** — AgentField sends observability webhook events; the Hub verifies the HMAC-SHA256 signature and updates job status in real time.
 - **Externally-triggered builds** — the AgentField webhook fires for all executions under the API key, not just Hub-initiated ones. Builds triggered by Jira, CLI, or other sources are automatically discovered and shown in the dashboard.
 - **Recovery** — on startup the Hub polls AgentField for any in-flight jobs to reconcile state missed during downtime.
@@ -195,32 +195,68 @@ Pre-configures machines so they appear in the dashboard before their Agent conne
 
 **`SweAf`** *(optional — enables the Builds page)*
 
+SWE-AF is a two-component system. Both must be running for the Builds page to work:
+
+| Component | What it is | Default port |
+|-----------|------------|--------------|
+| **AgentField control plane** | REST API server (`agentfield/control-plane` Docker image) | 8080 |
+| **SWE-AF agent node** | Python build agent (`python -m swe_af`) | 8003 |
+
+`BaseUrl` must point at the **control plane** (e.g. `http://localhost:8080`).
+
 ```json
 {
   "SweAf": {
-    "BaseUrl":       "https://api.agentfield.com",
+    "BaseUrl":       "http://localhost:8080",
     "ApiKey":        "af_...",
-    "WebhookSecret": "your-webhook-hmac-secret"
+    "WebhookSecret": "your-webhook-hmac-secret",
+    "Runtime":       "claude_code",
+    "Models": {
+      "Default": "sonnet",
+      "Coder":   "opus"
+    }
   }
 }
 ```
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `BaseUrl` | Yes (if using Builds) | AgentField API base URL. |
-| `ApiKey` | Yes (if using Builds) | Bearer token for the AgentField API. |
-| `WebhookSecret` | No | HMAC-SHA256 secret for verifying AgentField webhook payloads. Leave unset to skip signature verification. |
-| `ClaudeBaseUrl` | No | Passed to AgentField in the build trigger payload as `config.base_url`. Use to direct SWE-AF's `claude_code` runtime at a locally-hosted LLM server. |
-| `ClaudeApiKey` | No | Passed to AgentField in the trigger payload as `config.api_key`. Pair with `ClaudeBaseUrl` when the local server requires a different key. |
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `BaseUrl` | Yes | — | AgentField control plane URL (e.g. `http://localhost:8080`). |
+| `ApiKey` | Yes | — | Bearer token for the AgentField API. |
+| `WebhookSecret` | No | — | HMAC-SHA256 secret for verifying webhook payloads. Leave unset to skip signature verification. |
+| `Runtime` | No | `"claude_code"` | `"claude_code"` for Claude backends; `"open_code"` for open-source models (DeepSeek, Qwen, Llama, etc.) via OpenRouter/OpenAI/Google. |
+| `Models.Default` | No | — | Default model for most tasks. Short names (`"sonnet"`, `"opus"`) for Claude; `"provider/model-id"` format for open-source (e.g. `"deepseek/deepseek-chat"`). |
+| `Models.Coder` | No | — | Model for coding-intensive steps. |
+| `Models.Qa` | No | — | Model for QA/verification steps. |
 
 To receive webhook events, register the Hub's endpoint with AgentField:
 ```
-POST https://api.agentfield.com/api/v1/settings/observability-webhook
+POST http://localhost:8080/api/v1/settings/observability-webhook
 { "url": "https://<your-hub>/api/webhooks/agentfield", "secret": "<WebhookSecret>" }
 ```
 
-**`SweAfHost`** *(optional — enables Start/Stop Service buttons on the Builds page)*
+**`SweAfHost`** *(optional — enables service control buttons on the Builds page)*
 
+Each entry in `Commands` becomes one button in the Builds page header. Clicking a button runs the corresponding shell command on the configured host. SWE-AF does not use systemd; the two common deployment modes are:
+
+**Docker Compose (recommended):**
+```json
+{
+  "SweAfHost": {
+    "Host":       "192.168.1.20",
+    "Port":       22,
+    "SshUser":    "ubuntu",
+    "SshKeyPath": "~/.ssh/id_rsa",
+    "Commands": [
+      { "Label": "Start",   "Command": "cd /opt/swe-af && docker compose up -d" },
+      { "Label": "Stop",    "Command": "cd /opt/swe-af && docker compose down" },
+      { "Label": "Restart", "Command": "cd /opt/swe-af && docker compose restart" }
+    ]
+  }
+}
+```
+
+**Bare metal (Python virtual environment):**
 ```json
 {
   "SweAfHost": {
@@ -228,19 +264,22 @@ POST https://api.agentfield.com/api/v1/settings/observability-webhook
     "Port":            22,
     "SshUser":         "ubuntu",
     "SshKeyPath":      "~/.ssh/id_rsa",
-    "StartCommand":    "sudo systemctl start agentfield",
-    "StopCommand":     "sudo systemctl stop agentfield",
     "AnthropicBaseUrl": "http://localhost:11434",
-    "AnthropicApiKey":  "local"
+    "AnthropicApiKey":  "local",
+    "Commands": [
+      { "Label": "Start", "Command": "cd /opt/swe-af && source .venv/bin/activate && nohup python -m swe_af > /tmp/swe-af.log 2>&1 &" },
+      { "Label": "Stop",  "Command": "pkill -f 'python -m swe_af'" }
+    ]
   }
 }
 ```
 
-Uses the same SSH transport as `KnownMachines`. Set `Host` to `"localhost"` to run commands locally. Stop commands that return a non-zero exit code are treated as success when stderr is empty (handles the case where the service was already stopped).
+Uses the same SSH transport as `KnownMachines`. Set `Host` to `"localhost"` to run commands locally via `Process.Start` instead of SSH. Commands that return a non-zero exit code are treated as success when stderr is empty (handles stop-when-already-stopped gracefully).
 
-`AnthropicBaseUrl` and `AnthropicApiKey` control how the AgentField process reaches the LLM:
-- **Localhost:** set directly as environment variables on the child process.
-- **SSH:** prepended as inline shell assignments before the command (e.g. `ANTHROPIC_BASE_URL='...' sudo nohup start.sh`). This works for scripts launched directly but **does not** inject into systemd-managed services — for those, add `Environment=ANTHROPIC_BASE_URL=...` to the `[Service]` section of the unit file instead.
+`AnthropicBaseUrl` and `AnthropicApiKey` set `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` on the SWE-AF process:
+- **Localhost:** set directly on the child process environment.
+- **SSH / bare metal:** prepended as inline shell assignments (e.g. `ANTHROPIC_BASE_URL='...' nohup python -m swe_af &`).
+- **Docker Compose:** inline env vars cannot inject into container environments. Set `ANTHROPIC_BASE_URL` in the `.env` file on the host machine and leave `AnthropicBaseUrl` unset.
 
 ### Agent configuration
 

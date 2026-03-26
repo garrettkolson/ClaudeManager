@@ -11,15 +11,14 @@
 <div class="builds-page">
     <div class="builds-header">
         <h1>Builds</h1>
-        @if (HostSvc.IsConfigured)
+        @foreach (var cmd in HostSvc.Commands)
         {
-            <button class="btn-host-start" @onclick="StartService"
+            var label = cmd.Label;
+            var command = cmd.Command;
+            <button class="btn-host-cmd"
+                    @onclick="() => RunHostCommand(command, label)"
                     disabled="@(_serviceOp is not null)">
-                @(_serviceOp == "starting" ? "Starting…" : "Start Service")
-            </button>
-            <button class="btn-host-stop" @onclick="StopService"
-                    disabled="@(_serviceOp is not null)">
-                @(_serviceOp == "stopping" ? "Stopping…" : "Stop Service")
+                @(_serviceOp == label ? label + "…" : label)
             </button>
         }
         @if (BuildsSvc.IsConfigured)
@@ -179,22 +178,13 @@
 
     // ── Service controls ──────────────────────────────────────────────────────
 
-    private async Task StartService()
+    private async Task RunHostCommand(string command, string label)
     {
-        _serviceOp = "starting"; _serviceError = null;
+        _serviceOp = label; _serviceError = null;
         StateHasChanged();
-        var (ok, err) = await HostSvc.StartAsync();
+        var (ok, err) = await HostSvc.RunAsync(command, label);
         _serviceOp = null;
-        if (!ok) _serviceError = $"Start failed: {err}";
-    }
-
-    private async Task StopService()
-    {
-        _serviceOp = "stopping"; _serviceError = null;
-        StateHasChanged();
-        var (ok, err) = await HostSvc.StopAsync();
-        _serviceOp = null;
-        if (!ok) _serviceError = $"Stop failed: {err}";
+        if (!ok) _serviceError = $"{label} failed: {err}";
     }
 
     // ── Job actions ───────────────────────────────────────────────────────────
