@@ -123,8 +123,11 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 
 /* ── Wiki page ── */
 .wiki-page { max-width: 960px; }
-.wiki-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
-.wiki-header h1 { font-size: 22px; color: #7cb8ff; flex: 1; }
+.wiki-header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+.wiki-header h1 { font-size: 22px; color: #7cb8ff; flex: 1; min-width: 80px; }
+.wiki-search { background: #0f1722; border: 1px solid #2a3a55; border-radius: 4px; color: #cdd6f4; font-size: 13px; padding: 5px 10px; width: 220px; }
+.wiki-search:focus { outline: none; border-color: #5a8aff; }
+.wiki-archived-toggle { font-size: 12px; color: #8899bb; display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
 .wiki-table { width: 100%; border-collapse: collapse; }
 .wiki-table th, .wiki-table td { padding: 8px 12px; text-align: left; font-size: 13px; }
 .wiki-table th { color: #777; font-weight: normal; border-bottom: 1px solid #333; }
@@ -180,6 +183,9 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 .btn-reject-sm  { background: #3a1a1a; color: #cf6679; border: 1px solid #5a2a2a; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
 .btn-reject-sm:hover { background: #5a2020; }
 .btn-reject-sm:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-retry-sm  { background: #1a2a3a; color: #7cb8ff; border: 1px solid #2a4a6a; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
+.btn-retry-sm:hover { background: #1e3a5a; }
+.btn-retry-sm:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn-host-cmd { background: #1a3a4a; color: #7cb8ff; border: 1px solid #2a4a6a; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; }
 .btn-host-cmd:hover { background: #1e4a6a; }
 .btn-host-cmd:disabled { opacity: 0.5; cursor: not-allowed; }

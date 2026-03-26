@@ -6,6 +6,11 @@
 <div class="wiki-page">
     <div class="wiki-header">
         <h1>Wiki</h1>
+        <input class="wiki-search" @bind="_searchQuery" @bind:event="oninput"
+               placeholder="Search titles, tags, content…" />
+        <label class="wiki-archived-toggle">
+            <input type="checkbox" @bind="_showArchived" /> Show archived
+        </label>
         <button class="btn-primary" @onclick="OpenCreate">New Entry</button>
     </div>
 
@@ -19,6 +24,13 @@
     }
     else
     {
+        var visible = FilteredEntries.ToList();
+        @if (visible.Count == 0)
+        {
+            <div class="empty-state">No entries match your search.</div>
+        }
+        else
+        {
         <table class="wiki-table">
             <thead>
                 <tr>
@@ -30,7 +42,7 @@
                 </tr>
             </thead>
             <tbody>
-                @foreach (var entry in _entries)
+                @foreach (var entry in visible)
                 {
                     <tr class="@(entry.IsArchived ? "wiki-row archived" : "wiki-row")">
                         <td>
@@ -55,6 +67,7 @@
                 }
             </tbody>
         </table>
+        }
     }
 </div>
 
@@ -97,6 +110,17 @@
 
 @code {
     private List<WikiEntryEntity>? _entries;
+    private string _searchQuery  = string.Empty;
+    private bool   _showArchived = false;
+
+    private IEnumerable<WikiEntryEntity> FilteredEntries =>
+        (_entries ?? [])
+            .Where(e => _showArchived || !e.IsArchived)
+            .Where(e => string.IsNullOrWhiteSpace(_searchQuery) ||
+                        e.Title.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase) ||
+                        e.Category.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase) ||
+                        (e.Tags?.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                        e.Content.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase));
 
     private bool    _showModal;
     private long?   _editId;
