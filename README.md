@@ -111,6 +111,8 @@ The Agent connects to the Hub and appears in the dashboard automatically. Machin
 The main page shows all machines and their sessions in real time via SignalR.
 
 - **Machine cards** — each machine shows online/offline status, platform icon, and all sessions.
+- **Session filtering** — filter sessions by directory substring and status (Active / Ended / Disconnected).
+- **Nav badge** — the Dashboard nav link shows a count of currently active sessions.
 - **New Session** — opens a modal to start a Claude session on any online Agent, with optional initial prompt.
 - **Kill Session** — stops an active Claude process immediately.
 - **Launch Agent** — appears for machines that have SSH launch config (`KnownMachines`). Starts the Agent remotely without needing a terminal.
@@ -123,12 +125,22 @@ Live session viewer at `/session/{machineId}/{sessionId}`.
 - Oversized content is truncated with an indicator.
 - Follow-up prompt input (Ctrl+Enter to send) when the session is active.
 - Historical sessions load from the database when opened after the fact.
+- **Download transcript** — exports the full session as a plain-text file (`claude-session-{id}-{date}.txt`) with a metadata header and per-line timestamps.
+
+### Notifications
+
+The Hub surfaces status changes as in-app toasts and browser notifications.
+
+- **Build events** — toasts when a job succeeds, fails, is waiting for approval, or is cancelled.
+- **Session events** — toast when a session ends (success or non-zero exit).
+- **Browser notifications** — shown when the tab is not in focus (requires browser permission; a prompt appears on first load).
 
 ### Wiki
 
 A shared knowledge base at `/wiki`, readable and writable by both the UI and Claude sessions via MCP tools.
 
 - **Entries** have a title, category (`project`, `decision`, `bug`, `note`), content, and optional tags.
+- **Search/filter** — filter entries by title, category, tags, or content. Toggle to show archived entries.
 - **Claude can write** to the wiki by calling `wiki_save(title, category, content, tags)` during any session (when `McpServerPath` is configured on the Agent). Existing entries are upserted by title.
 - **Claude can read** the wiki by calling `wiki_list()`, which returns all non-archived entries.
 - The UI supports full CRUD plus archive/restore.
@@ -138,13 +150,16 @@ A shared knowledge base at `/wiki`, readable and writable by both the UI and Cla
 Autonomous build orchestration at `/builds`. Requires `SweAf` config; see [Configuration](#hub-configuration) below.
 
 - **Trigger a build** — provide a goal description and a GitHub repo URL. The Hub calls AgentField's `swe-planner.build` agent (using the configured `Runtime` and `Models`), which autonomously implements the feature and opens a draft PR.
+- **Build stats** — summary bar showing total, succeeded, failed, running, and waiting counts.
+- **Build detail page** — click any build goal to open `/builds/{id}` with full metadata, timeline, PR links, error details, and the raw AgentField execution result.
 - **Live status updates** — AgentField sends observability webhook events; the Hub verifies the HMAC-SHA256 signature and updates job status in real time.
 - **Externally-triggered builds** — the AgentField webhook fires for all executions under the API key, not just Hub-initiated ones. Builds triggered by Jira, CLI, or other sources are automatically discovered and shown in the dashboard.
 - **Recovery** — on startup the Hub polls AgentField for any in-flight jobs to reconcile state missed during downtime.
 - **Job controls** (visible for active jobs):
   - **Cancel** — sends a cancel request; status updates when the resulting webhook arrives.
   - **Approve / Reject** — shown when a job is in `Waiting` state (human-in-the-loop approval gate). Sends the decision back to AgentField.
-- **Host service control** — Start and Stop buttons in the header when `SweAfHost` is configured. Connects via SSH (or locally) and runs the configured service management commands.
+  - **Retry** — re-triggers a failed or cancelled build with the same goal and repository.
+- **Host service control** — configurable command buttons in the header when `SweAfHost` is set up. Connects via SSH (or locally) and runs shell commands to start, stop, or restart the SWE-AF service.
 
 ---
 
@@ -316,11 +331,11 @@ Session history is stored in a SQLite database at:
 
 The database is created automatically on first run.
 
-**Retention:** Sessions older than **30 days** are pruned automatically. The pruning job runs every 24 hours (with a 5-minute delay at startup) and cascade-deletes all associated output lines.
+**Retention:** The pruning job runs every 24 hours (with a 5-minute delay at startup):
+- **Sessions** — pruned after **30 days** of inactivity; cascade-deletes all associated output lines.
+- **Build jobs** — pruned after **90 days** from creation date.
 
 **Startup recovery:** On Hub startup, sessions from the last 30 days are loaded into memory. Any session that was `Active` at the time of the last shutdown is marked `Disconnected`. The last 2000 output lines per session are pre-loaded.
-
-**SWE-AF job history:** Build jobs are retained in the same database and are not pruned.
 
 ---
 
