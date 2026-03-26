@@ -25,8 +25,12 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 .status-dot.offline { background: #666; }
 
 /* ── Dashboard ── */
-.dashboard-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
-.dashboard-header h1 { font-size: 22px; color: #7cb8ff; flex: 1; }
+.dashboard-header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+.dashboard-header h1 { font-size: 22px; color: #7cb8ff; flex: 1; min-width: 100px; }
+.session-search { background: #0f1722; border: 1px solid #2a3a55; border-radius: 4px; color: #cdd6f4; font-size: 13px; padding: 5px 10px; width: 200px; }
+.session-search:focus { outline: none; border-color: #5a8aff; }
+.session-status-select { background: #0f1722; border: 1px solid #2a3a55; border-radius: 4px; color: #cdd6f4; font-size: 13px; padding: 5px 8px; cursor: pointer; }
+.session-status-select:focus { outline: none; border-color: #5a8aff; }
 .empty-state { color: #666; padding: 32px; text-align: center; border: 1px dashed #333; border-radius: 6px; }
 
 /* ── Machine card ── */

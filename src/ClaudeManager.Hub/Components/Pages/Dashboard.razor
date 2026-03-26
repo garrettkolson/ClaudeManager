@@ -10,6 +10,14 @@
 <div class="dashboard">
     <div class="dashboard-header">
         <h1>Dashboard</h1>
+        <input class="session-search" @bind="_filterText" @bind:event="oninput"
+               placeholder="Filter by directory…" />
+        <select class="session-status-select" @bind="_filterStatus">
+            <option value="">All sessions</option>
+            <option value="active">Active</option>
+            <option value="ended">Ended</option>
+            <option value="disconnected">Disconnected</option>
+        </select>
         <button class="btn-primary" @onclick="() => _showNewSession = true">New Session</button>
     </div>
 
@@ -51,9 +59,16 @@
                 <div class="launch-error">Launch failed: @launchErr</div>
             }
 
+            @{
+                var sessions = FilteredSessions(machine).ToList();
+            }
             @if (!machine.Sessions.Any())
             {
                 <div class="no-sessions">No sessions</div>
+            }
+            else if (sessions.Count == 0)
+            {
+                <div class="no-sessions">No sessions match filter</div>
             }
             else
             {
@@ -62,7 +77,7 @@
                         <tr><th>Directory</th><th>Status</th><th>Started</th><th></th></tr>
                     </thead>
                     <tbody>
-                        @foreach (var session in machine.Sessions.Values.OrderByDescending(s => s.StartedAt))
+                        @foreach (var session in sessions)
                         {
                             <tr class="session-row @(session.IsProcessRunning ? "running" : "")">
                                 <td><a href="/session/@session.MachineId/@session.SessionId">@session.WorkingDirectory</a></td>
@@ -120,6 +135,22 @@
 
 @code {
     private List<MachineAgent> _machines = [];
+
+    private string _filterText   = string.Empty;
+    private string _filterStatus = string.Empty;
+
+    private IEnumerable<ClaudeSession> FilteredSessions(MachineAgent machine) =>
+        machine.Sessions.Values
+            .Where(s => string.IsNullOrWhiteSpace(_filterText) ||
+                        s.WorkingDirectory.Contains(_filterText, StringComparison.OrdinalIgnoreCase))
+            .Where(s => _filterStatus switch
+            {
+                "active"       => s.Status == SessionStatus.Active,
+                "ended"        => s.Status == SessionStatus.Ended,
+                "disconnected" => s.Status == SessionStatus.Disconnected,
+                _              => true,
+            })
+            .OrderByDescending(s => s.StartedAt);
 
     private bool   _showNewSession;
     private string _newSessionMachineId = string.Empty;
