@@ -1,5 +1,6 @@
 using ClaudeManager.Hub.Persistence;
 using ClaudeManager.Hub.Persistence.Entities;
+using ClaudeManager.Hub.Services;
 using ClaudeManager.Hub.Tests.Helpers;
 using ClaudeManager.Shared.Dto;
 using FluentAssertions;
@@ -181,5 +182,79 @@ public class DbPruningServiceTests
     {
         var svc = BuildService();
         await svc.Awaiting(s => s.PruneAsync(CancellationToken.None)).Should().NotThrowAsync();
+    }
+
+    // ── Build job retention ───────────────────────────────────────────────────
+
+    [Test]
+    public async Task PruneAsync_StaleJob_IsDeleted()
+    {
+        var staleTime = DateTimeOffset.UtcNow.AddDays(-(DbPruningService.BuildRetentionDays + 1));
+        var id        = await SeedJobAsync(staleTime);
+
+        var svc = BuildService();
+        await svc.PruneAsync(CancellationToken.None);
+
+        await using var db = _factory.CreateDbContext();
+        (await db.SweAfJobs.AnyAsync(j => j.Id == id)).Should().BeFalse();
+    }
+
+    [Test]
+    public async Task PruneAsync_RecentJob_IsKept()
+    {
+        var recentTime = DateTimeOffset.UtcNow.AddDays(-(DbPruningService.BuildRetentionDays - 1));
+        var id         = await SeedJobAsync(recentTime);
+
+        var svc = BuildService();
+        await svc.PruneAsync(CancellationToken.None);
+
+        await using var db = _factory.CreateDbContext();
+        (await db.SweAfJobs.AnyAsync(j => j.Id == id)).Should().BeTrue();
+    }
+
+    [Test]
+    public async Task PruneAsync_MixedJobs_OnlyDeletesStale()
+    {
+        var staleId  = await SeedJobAsync(DateTimeOffset.UtcNow.AddDays(-(DbPruningService.BuildRetentionDays + 5)));
+        var recentId = await SeedJobAsync(DateTimeOffset.UtcNow.AddDays(-1));
+
+        var svc = BuildService();
+        await svc.PruneAsync(CancellationToken.None);
+
+        await using var db = _factory.CreateDbContext();
+        (await db.SweAfJobs.AnyAsync(j => j.Id == staleId)).Should().BeFalse();
+        (await db.SweAfJobs.AnyAsync(j => j.Id == recentId)).Should().BeTrue();
+    }
+
+    [Test]
+    public async Task PruneAsync_NoSessions_StillPrunesStaleJobs()
+    {
+        // Ensure job pruning runs even when there are no sessions to prune
+        var staleTime = DateTimeOffset.UtcNow.AddDays(-(DbPruningService.BuildRetentionDays + 1));
+        var id        = await SeedJobAsync(staleTime);
+
+        var svc = BuildService();
+        await svc.PruneAsync(CancellationToken.None);
+
+        await using var db = _factory.CreateDbContext();
+        (await db.SweAfJobs.AnyAsync(j => j.Id == id)).Should().BeFalse();
+    }
+
+    // ── Build job helpers ─────────────────────────────────────────────────────
+
+    private async Task<long> SeedJobAsync(DateTimeOffset createdAt, BuildStatus status = BuildStatus.Succeeded)
+    {
+        await using var db = _factory.CreateDbContext();
+        var job = new SweAfJobEntity
+        {
+            ExternalJobId = $"ext-{Guid.NewGuid():N}",
+            Goal          = "Test goal",
+            RepoUrl       = "https://github.com/org/repo",
+            Status        = status,
+            CreatedAt     = createdAt,
+        };
+        db.SweAfJobs.Add(job);
+        await db.SaveChangesAsync();
+        return job.Id;
     }
 }
