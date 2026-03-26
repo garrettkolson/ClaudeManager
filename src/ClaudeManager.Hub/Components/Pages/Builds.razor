@@ -1,0 +1,205 @@
+@page "/builds"
+@implements IDisposable
+@inject SweAfService BuildsSvc
+@inject BuildNotifier Notifier
+@using System.Text.Json
+@using ClaudeManager.Hub.Persistence.Entities
+
+<PageTitle>Builds – Claude Manager</PageTitle>
+
+<div class="builds-page">
+    <div class="builds-header">
+        <h1>Builds</h1>
+        @if (BuildsSvc.IsConfigured)
+        {
+            <button class="btn-primary" @onclick="OpenNewBuild">New Build</button>
+        }
+    </div>
+
+    @if (!BuildsSvc.IsConfigured)
+    {
+        <div class="builds-unconfigured">
+            SWE-AF is not configured. Add <code>SweAf:BaseUrl</code> and <code>SweAf:ApiKey</code>
+            to appsettings.json to enable autonomous builds.
+        </div>
+    }
+    else if (_jobs is null)
+    {
+        <div class="loading">Loading…</div>
+    }
+    else if (_jobs.Count == 0)
+    {
+        <div class="empty-state">No builds yet. Start one to let SWE-AF autonomously implement a feature or fix.</div>
+    }
+    else
+    {
+        <table class="builds-table">
+            <thead>
+                <tr>
+                    <th>Goal</th>
+                    <th>Repository</th>
+                    <th>Status</th>
+                    <th>Source</th>
+                    <th>Started</th>
+                    <th>Duration</th>
+                    <th>PRs</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var job in _jobs)
+                {
+                    <tr class="builds-row @StatusCss(job.Status)" title="@job.Goal">
+                        <td class="builds-goal">@Truncate(job.Goal, 55)</td>
+                        <td class="builds-repo">@RepoName(job.RepoUrl)</td>
+                        <td><span class="build-badge @job.Status.ToString().ToLowerInvariant()">@job.Status</span></td>
+                        <td class="builds-source">@(job.TriggeredBy ?? "external")</td>
+                        <td class="builds-time">@job.CreatedAt.LocalDateTime.ToString("MM/dd HH:mm")</td>
+                        <td class="builds-duration">@FormatDuration(job)</td>
+                        <td class="builds-prs">
+                            @foreach (var url in GetPrUrls(job))
+                            {
+                                <a href="@url" target="_blank" class="pr-link">PR ↗</a>
+                            }
+                            @if (job.Status == BuildStatus.Failed && job.ErrorMessage is not null)
+                            {
+                                <span class="build-error-hint" title="@job.ErrorMessage">error</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@if (_showModal)
+{
+    <div class="modal-overlay" @onclick="CloseModal">
+        <div class="modal" @onclick:stopPropagation>
+            <h3>New Build</h3>
+
+            <label>Goal</label>
+            <textarea @bind="_formGoal" rows="4"
+                placeholder="Describe the feature or bug fix to implement…" />
+
+            <label>Repository URL</label>
+            <input @bind="_formRepoUrl" placeholder="https://github.com/org/repo" />
+
+            @if (_modalError is not null)
+            {
+                <div class="error-msg">@_modalError</div>
+            }
+            <div class="modal-actions">
+                <button class="btn-secondary" @onclick="CloseModal">Cancel</button>
+                <button class="btn-primary" @onclick="TriggerBuild" disabled="@_saving">
+                    @(_saving ? "Triggering…" : "Start Build")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<SweAfJobEntity>? _jobs;
+
+    private bool    _showModal;
+    private string  _formGoal    = string.Empty;
+    private string  _formRepoUrl = string.Empty;
+    private string? _modalError;
+    private bool    _saving;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _jobs = await BuildsSvc.GetAllJobsAsync();
+        Notifier.BuildChanged += OnBuildChanged;
+    }
+
+    private void OnBuildChanged(SweAfJobEntity updated)
+    {
+        if (_jobs is null) return;
+        var idx = _jobs.FindIndex(j => j.Id == updated.Id);
+        if (idx >= 0)
+            _jobs[idx] = updated;
+        else
+            _jobs.Insert(0, updated);
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => Notifier.BuildChanged -= OnBuildChanged;
+
+    private void OpenNewBuild()
+    {
+        _formGoal    = string.Empty;
+        _formRepoUrl = string.Empty;
+        _modalError  = null;
+        _saving      = false;
+        _showModal   = true;
+    }
+
+    private void CloseModal() => _showModal = false;
+
+    private async Task TriggerBuild()
+    {
+        if (string.IsNullOrWhiteSpace(_formGoal))    { _modalError = "Goal is required.";           return; }
+        if (string.IsNullOrWhiteSpace(_formRepoUrl)) { _modalError = "Repository URL is required."; return; }
+
+        _saving     = true;
+        _modalError = null;
+
+        try
+        {
+            await BuildsSvc.TriggerBuildAsync(_formGoal.Trim(), _formRepoUrl.Trim());
+            _showModal = false;
+            _jobs = await BuildsSvc.GetAllJobsAsync();
+        }
+        catch (Exception ex)
+        {
+            _modalError = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static string Truncate(string s, int max) =>
+        s.Length <= max ? s : s[..max] + "…";
+
+    private static string RepoName(string url)
+    {
+        try
+        {
+            var uri = new Uri(url);
+            var parts = uri.AbsolutePath.Trim('/').Split('/');
+            return parts.Length >= 2 ? $"{parts[^2]}/{parts[^1]}" : url;
+        }
+        catch { return url; }
+    }
+
+    private static string FormatDuration(SweAfJobEntity job)
+    {
+        var end   = job.CompletedAt ?? DateTimeOffset.UtcNow;
+        var start = job.StartedAt  ?? job.CreatedAt;
+        var span  = end - start;
+        if (span.TotalHours >= 1)   return $"{(int)span.TotalHours}h {span.Minutes}m";
+        if (span.TotalMinutes >= 1) return $"{(int)span.TotalMinutes}m {span.Seconds}s";
+        return $"{(int)span.TotalSeconds}s";
+    }
+
+    private static IEnumerable<string> GetPrUrls(SweAfJobEntity job)
+    {
+        if (job.PrUrls is null) return [];
+        try { return JsonSerializer.Deserialize<string[]>(job.PrUrls) ?? []; }
+        catch { return []; }
+    }
+
+    private static string StatusCss(BuildStatus status) => status switch
+    {
+        BuildStatus.Running   => "running",
+        BuildStatus.Succeeded => "succeeded",
+        BuildStatus.Failed    => "failed",
+        _                     => string.Empty,
+    };
+}

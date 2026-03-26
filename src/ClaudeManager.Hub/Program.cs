@@ -1,3 +1,5 @@
+using System.Net.Http.Headers;
+using System.Text.Json;
 using ClaudeManager.Hub.Hubs;
 using ClaudeManager.Hub.Models;
 using ClaudeManager.Hub.Persistence;
@@ -47,6 +49,23 @@ builder.Services.AddSingleton<WikiService>();
 builder.Services.AddSingleton<IWikiService>(sp => sp.GetRequiredService<WikiService>());
 builder.Services.AddSingleton<AgentCommandService>();
 
+// ── SWE-AF / AgentField ───────────────────────────────────────────────────────
+
+var sweAfConfig = builder.Configuration.GetSection("SweAf").Get<SweAfConfig>() ?? new SweAfConfig();
+builder.Services.AddSingleton(sweAfConfig);
+
+var sweAfHttp = new HttpClient();
+if (sweAfConfig.IsConfigured)
+{
+    sweAfHttp.BaseAddress = new Uri(sweAfConfig.BaseUrl.TrimEnd('/') + "/");
+    sweAfHttp.DefaultRequestHeaders.Authorization =
+        new AuthenticationHeaderValue("Bearer", sweAfConfig.ApiKey);
+}
+builder.Services.AddSingleton(sweAfHttp);
+builder.Services.AddSingleton<BuildNotifier>();
+builder.Services.AddSingleton<SweAfService>();
+builder.Services.AddHostedService<SweAfRecoveryService>();
+
 // ── SignalR ───────────────────────────────────────────────────────────────────
 
 builder.Services.AddSignalR(opts =>
@@ -93,6 +112,26 @@ app.MapPost("/api/wiki/save", async (WikiService wiki, WikiSaveRequest req) =>
     await wiki.UpsertByTitleAsync(req.Title, req.Category, req.Content, req.Tags);
     return Results.Ok();
 }).AddEndpointFilter(AgentSecretFilter(agentSecret));
+
+// ── AgentField observability webhook ──────────────────────────────────────────
+
+app.MapPost("/api/webhooks/agentfield", async (HttpRequest req, SweAfService svc, SweAfConfig cfg) =>
+{
+    using var ms = new MemoryStream();
+    await req.Body.CopyToAsync(ms);
+    var body = ms.ToArray();
+
+    var signature = req.Headers["X-AgentField-Signature"].FirstOrDefault();
+    if (!SweAfService.VerifySignature(cfg.WebhookSecret, body, signature))
+        return Results.Unauthorized();
+
+    var batch = JsonSerializer.Deserialize<ObservabilityBatch>(body,
+        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+    if (batch is null) return Results.BadRequest("Invalid payload");
+
+    await svc.ProcessWebhookBatchAsync(batch);
+    return Results.Ok();
+});
 
 app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");

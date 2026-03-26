@@ -8,7 +8,8 @@ public class ClaudeManagerDbContext : DbContext
     public DbSet<MachineAgentEntity> MachineAgents { get; set; } = default!;
     public DbSet<ClaudeSessionEntity> ClaudeSessions { get; set; } = default!;
     public DbSet<StreamedLineEntity> StreamedLines { get; set; } = default!;
-    public DbSet<WikiEntryEntity> WikiEntries { get; set; } = default!;
+    public DbSet<WikiEntryEntity>  WikiEntries { get; set; } = default!;
+    public DbSet<SweAfJobEntity>  SweAfJobs   { get; set; } = default!;
 
     public ClaudeManagerDbContext(DbContextOptions<ClaudeManagerDbContext> options)
         : base(options) { }

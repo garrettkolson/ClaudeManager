@@ -141,6 +141,34 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 .wiki-actions { display: flex; gap: 6px; white-space: nowrap; }
 .wiki-field-hint { color: #666; font-weight: normal; }
 
+/* ── Builds page ── */
+.builds-page { max-width: 1100px; }
+.builds-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
+.builds-header h1 { font-size: 22px; color: #7cb8ff; flex: 1; }
+.builds-unconfigured { color: #888; padding: 32px; border: 1px dashed #333; border-radius: 6px; line-height: 1.7; }
+.builds-table { width: 100%; border-collapse: collapse; }
+.builds-table th, .builds-table td { padding: 8px 12px; text-align: left; font-size: 13px; }
+.builds-table th { color: #777; font-weight: normal; border-bottom: 1px solid #333; }
+.builds-table td { border-bottom: 1px solid #2a2a2a; }
+.builds-row.running td { background: rgba(90, 170, 255, 0.04); }
+.builds-row.failed  td { background: rgba(207, 102, 121, 0.04); }
+.builds-goal { max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.builds-repo { color: #aaa; }
+.builds-source { color: #666; font-size: 12px; }
+.builds-time { color: #777; font-size: 12px; white-space: nowrap; }
+.builds-duration { color: #777; font-size: 12px; white-space: nowrap; }
+.builds-prs { display: flex; flex-wrap: wrap; gap: 4px; }
+.pr-link { color: #7cb8ff; text-decoration: none; font-size: 12px; }
+.pr-link:hover { text-decoration: underline; }
+.build-error-hint { color: #cf6679; font-size: 12px; cursor: default; }
+.build-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: bold; text-transform: uppercase; }
+.build-badge.queued    { background: #2a2a2a; color: #888; }
+.build-badge.running   { background: #1a2a3a; color: #7cb8ff; }
+.build-badge.waiting   { background: #2a2a1a; color: #e5c07b; }
+.build-badge.succeeded { background: #1a3a1a; color: #4caf50; }
+.build-badge.failed    { background: #3a1a1a; color: #cf6679; }
+.build-badge.cancelled { background: #2a2a2a; color: #666; }
+
 /* ── Blazor error UI ── */
 #blazor-error-ui { background: #5a1a1a; bottom: 0; box-shadow: 0 -1px 2px rgba(0,0,0,0.2); display: none; left: 0; padding: 0.6rem 1.25rem 0.7rem 1.25rem; position: fixed; width: 100%; z-index: 1000; color: #cf6679; }
 #blazor-error-ui .dismiss { cursor: pointer; position: absolute; right: 0.75rem; top: 0.5rem; }
