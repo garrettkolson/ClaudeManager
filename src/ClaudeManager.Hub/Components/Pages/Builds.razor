@@ -96,7 +96,9 @@
                 @foreach (var job in _jobs)
                 {
                     <tr class="builds-row @StatusCss(job.Status)" title="@job.Goal">
-                        <td class="builds-goal">@Truncate(job.Goal, 55)</td>
+                        <td class="builds-goal">
+                            <a href="/builds/@job.Id" class="build-goal-link">@Truncate(job.Goal, 55)</a>
+                        </td>
                         <td class="builds-repo">@RepoName(job.RepoUrl)</td>
                         <td><span class="build-badge @job.Status.ToString().ToLowerInvariant()">@job.Status</span></td>
                         <td class="builds-source">@(job.TriggeredBy ?? "external")</td>

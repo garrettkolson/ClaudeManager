@@ -140,6 +140,48 @@ public class SweAfService
 
     // ── Query ─────────────────────────────────────────────────────────────────
 
+    public async Task<SweAfJobEntity?> GetJobAsync(long jobId, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        return await db.SweAfJobs.FindAsync([jobId], ct);
+    }
+
+    /// <summary>
+    /// Fetches live execution detail from the AgentField control plane.
+    /// Returns <see langword="null"/> when SWE-AF is not configured or the request fails.
+    /// </summary>
+    public async Task<BuildExecutionDetail?> FetchExecutionDetailAsync(
+        string externalJobId, CancellationToken ct = default)
+    {
+        if (!_config.IsConfigured) return null;
+        try
+        {
+            var resp = await _http.GetAsync($"/api/v1/executions/{externalJobId}", ct);
+            if (!resp.IsSuccessStatusCode) return null;
+
+            var detail = await resp.Content.ReadFromJsonAsync<ExecutionStatusResponse>(
+                cancellationToken: ct);
+            if (detail is null) return null;
+
+            return new BuildExecutionDetail(
+                Status:     detail.Status,
+                ResultJson: detail.Result is { ValueKind: not JsonValueKind.Null }
+                    ? JsonSerializer.Serialize(detail.Result,
+                        new JsonSerializerOptions { WriteIndented = true })
+                    : null,
+                Error:      detail.Error,
+                InputJson:  detail.Input is { ValueKind: not JsonValueKind.Null }
+                    ? JsonSerializer.Serialize(detail.Input,
+                        new JsonSerializerOptions { WriteIndented = true })
+                    : null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to fetch execution detail for {Id}", externalJobId);
+            return null;
+        }
+    }
+
     public async Task<List<SweAfJobEntity>> GetAllJobsAsync()
     {
         await using var db = await _dbFactory.CreateDbContextAsync();

@@ -1,0 +1,257 @@
+@page "/builds/{JobId:long}"
+@implements IDisposable
+@inject SweAfService BuildsSvc
+@inject BuildNotifier Notifier
+@using System.Text.Json
+@using ClaudeManager.Hub.Persistence.Entities
+
+<PageTitle>Build — Claude Manager</PageTitle>
+
+<div class="build-detail">
+
+    <div class="build-detail-header">
+        <a href="/builds" class="back-link">← Builds</a>
+        @if (_job is not null)
+        {
+            <h2 class="build-detail-goal">@_job.Goal</h2>
+        }
+    </div>
+
+    @if (_job is null && _loading)
+    {
+        <div class="loading">Loading…</div>
+    }
+    else if (_job is null)
+    {
+        <div class="empty-state">Build not found.</div>
+    }
+    else
+    {
+        <div class="build-detail-meta">
+            <div class="build-detail-meta-item">
+                <span class="build-detail-label">Status</span>
+                <span class="build-badge @_job.Status.ToString().ToLowerInvariant()">@_job.Status</span>
+            </div>
+            <div class="build-detail-meta-item">
+                <span class="build-detail-label">Repository</span>
+                <a href="@_job.RepoUrl" target="_blank" class="build-detail-link">@RepoName(_job.RepoUrl)</a>
+            </div>
+            <div class="build-detail-meta-item">
+                <span class="build-detail-label">Source</span>
+                <span>@(_job.TriggeredBy ?? "external")</span>
+            </div>
+            <div class="build-detail-meta-item">
+                <span class="build-detail-label">Job ID</span>
+                <span class="build-detail-id">@_job.ExternalJobId</span>
+            </div>
+        </div>
+
+        <div class="build-detail-timeline">
+            <div class="build-detail-timeline-row">
+                <span class="build-detail-label">Created</span>
+                <span>@_job.CreatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
+            </div>
+            @if (_job.StartedAt is not null)
+            {
+                <div class="build-detail-timeline-row">
+                    <span class="build-detail-label">Started</span>
+                    <span>@_job.StartedAt.Value.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                </div>
+            }
+            @if (_job.CompletedAt is not null)
+            {
+                <div class="build-detail-timeline-row">
+                    <span class="build-detail-label">Completed</span>
+                    <span>@_job.CompletedAt.Value.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                </div>
+            }
+            <div class="build-detail-timeline-row">
+                <span class="build-detail-label">Duration</span>
+                <span>@FormatDuration(_job)</span>
+            </div>
+        </div>
+
+        @* ── Actions ── *@
+        @if (_job.Status is BuildStatus.Queued or BuildStatus.Running or BuildStatus.Waiting
+             or BuildStatus.Failed or BuildStatus.Cancelled)
+        {
+            <div class="build-detail-actions">
+                @if (_job.Status is BuildStatus.Queued or BuildStatus.Running or BuildStatus.Waiting)
+                {
+                    <button class="btn-cancel-sm" @onclick="CancelJob" disabled="@_actionBusy">Cancel</button>
+                }
+                @if (_job.Status == BuildStatus.Waiting)
+                {
+                    <button class="btn-approve-sm" @onclick="() => ApproveJob(true)"  disabled="@_actionBusy">Approve</button>
+                    <button class="btn-reject-sm"  @onclick="() => ApproveJob(false)" disabled="@_actionBusy">Reject</button>
+                }
+                @if (_job.Status is BuildStatus.Failed or BuildStatus.Cancelled)
+                {
+                    <button class="btn-retry-sm" @onclick="RetryJob" disabled="@_actionBusy">Retry</button>
+                }
+                @if (_actionError is not null)
+                {
+                    <span class="build-action-error">@_actionError</span>
+                }
+            </div>
+        }
+
+        @* ── Pull requests ── *@
+        @if (GetPrUrls(_job).ToList() is { Count: > 0 } prs)
+        {
+            <div class="build-detail-section">
+                <h3>Pull Requests</h3>
+                <div class="build-detail-prs">
+                    @foreach (var url in prs)
+                    {
+                        <a href="@url" target="_blank" class="build-detail-pr-link">@url ↗</a>
+                    }
+                </div>
+            </div>
+        }
+
+        @* ── Error ── *@
+        @if (_job.ErrorMessage is not null)
+        {
+            <div class="build-detail-section">
+                <h3>Error</h3>
+                <pre class="build-detail-pre error">@_job.ErrorMessage</pre>
+            </div>
+        }
+
+        @* ── AgentField result ── *@
+        <div class="build-detail-section">
+            <div class="build-detail-section-header">
+                <h3>AgentField Result</h3>
+                <button class="btn-secondary-sm" @onclick="RefreshDetail" disabled="@_detailLoading">
+                    @(_detailLoading ? "Loading…" : "Refresh")
+                </button>
+            </div>
+            @if (_detailError is not null)
+            {
+                <div class="build-detail-fetch-error">@_detailError</div>
+            }
+            else if (_detail is null && !_detailLoading)
+            {
+                <div class="build-detail-fetch-error">Not available — SWE-AF may not be configured or reachable.</div>
+            }
+            else if (_detail?.ResultJson is not null)
+            {
+                <pre class="build-detail-pre">@_detail.ResultJson</pre>
+            }
+            else if (_detail is not null)
+            {
+                <div class="build-detail-fetch-error">No result data yet.</div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public long JobId { get; set; }
+
+    private SweAfJobEntity?      _job;
+    private BuildExecutionDetail? _detail;
+    private bool   _loading       = true;
+    private bool   _detailLoading = false;
+    private string? _detailError;
+    private bool   _actionBusy;
+    private string? _actionError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _job     = await BuildsSvc.GetJobAsync(JobId);
+        _loading = false;
+        Notifier.BuildChanged += OnBuildChanged;
+
+        if (_job is not null)
+            await RefreshDetail();
+    }
+
+    private void OnBuildChanged(SweAfJobEntity updated)
+    {
+        if (updated.Id != JobId) return;
+        _job = updated;
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => Notifier.BuildChanged -= OnBuildChanged;
+
+    // ── AgentField detail ──────────────────────────────────────────────────
+
+    private async Task RefreshDetail()
+    {
+        if (_job is null) return;
+        _detailLoading = true;
+        _detailError   = null;
+        StateHasChanged();
+
+        _detail = await BuildsSvc.FetchExecutionDetailAsync(_job.ExternalJobId);
+        _detailLoading = false;
+
+        if (_detail is null)
+            _detailError = "Could not fetch execution detail from AgentField.";
+    }
+
+    // ── Actions ───────────────────────────────────────────────────────────
+
+    private async Task CancelJob()
+    {
+        _actionBusy  = true;
+        _actionError = null;
+        StateHasChanged();
+        var (ok, err) = await BuildsSvc.CancelJobAsync(JobId);
+        _actionBusy = false;
+        if (!ok) _actionError = err ?? "Cancel failed.";
+    }
+
+    private async Task ApproveJob(bool approved)
+    {
+        _actionBusy  = true;
+        _actionError = null;
+        StateHasChanged();
+        var (ok, err) = await BuildsSvc.ApproveJobAsync(JobId, approved);
+        _actionBusy = false;
+        if (!ok) _actionError = err ?? "Request failed.";
+    }
+
+    private async Task RetryJob()
+    {
+        _actionBusy  = true;
+        _actionError = null;
+        StateHasChanged();
+        var (ok, err) = await BuildsSvc.RetryJobAsync(JobId);
+        _actionBusy = false;
+        if (!ok) _actionError = err ?? "Retry failed.";
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+    private static string RepoName(string url)
+    {
+        try
+        {
+            var uri   = new Uri(url);
+            var parts = uri.AbsolutePath.Trim('/').Split('/');
+            return parts.Length >= 2 ? $"{parts[^2]}/{parts[^1]}" : url;
+        }
+        catch { return url; }
+    }
+
+    private static string FormatDuration(SweAfJobEntity job)
+    {
+        var end   = job.CompletedAt ?? DateTimeOffset.UtcNow;
+        var start = job.StartedAt   ?? job.CreatedAt;
+        var span  = end - start;
+        if (span.TotalHours   >= 1) return $"{(int)span.TotalHours}h {span.Minutes}m";
+        if (span.TotalMinutes >= 1) return $"{(int)span.TotalMinutes}m {span.Seconds}s";
+        return $"{(int)span.TotalSeconds}s";
+    }
+
+    private static IEnumerable<string> GetPrUrls(SweAfJobEntity job)
+    {
+        if (job.PrUrls is null) return [];
+        try { return JsonSerializer.Deserialize<string[]>(job.PrUrls) ?? []; }
+        catch { return []; }
+    }
+}

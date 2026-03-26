@@ -594,6 +594,81 @@ public class SweAfServiceTests
         err.Should().Contain("400");
     }
 
+    // ── GetJobAsync ───────────────────────────────────────────────────────────
+
+    [Test]
+    public async Task GetJobAsync_ExistingJob_ReturnsJob()
+    {
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.SweAfJobs.Add(new SweAfJobEntity
+            {
+                ExternalJobId = "ext-get-1",
+                Goal          = "Fetch me",
+                RepoUrl       = "https://github.com/org/repo",
+                Status        = BuildStatus.Succeeded,
+                CreatedAt     = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var svc = CreateService(MockHttp(HttpStatusCode.OK).Object);
+        await using var db2 = _dbFactory.CreateDbContext();
+        var seeded = await db2.SweAfJobs.SingleAsync();
+
+        var job = await svc.GetJobAsync(seeded.Id);
+        job.Should().NotBeNull();
+        job!.Goal.Should().Be("Fetch me");
+    }
+
+    [Test]
+    public async Task GetJobAsync_NotFound_ReturnsNull()
+    {
+        var svc = CreateService(MockHttp(HttpStatusCode.OK).Object);
+        var job = await svc.GetJobAsync(999);
+        job.Should().BeNull();
+    }
+
+    // ── FetchExecutionDetailAsync ─────────────────────────────────────────────
+
+    [Test]
+    public async Task FetchExecutionDetailAsync_Success_ReturnsDetail()
+    {
+        var body = new
+        {
+            execution_id = "ext-fd-1",
+            status       = "succeeded",
+            result       = new { pr_urls = new[] { "https://github.com/org/repo/pull/1" } },
+            error        = (string?)null,
+        };
+        var svc    = CreateService(MockHttp(HttpStatusCode.OK, body).Object);
+        var detail = await svc.FetchExecutionDetailAsync("ext-fd-1");
+
+        detail.Should().NotBeNull();
+        detail!.Status.Should().Be("succeeded");
+        detail.ResultJson.Should().NotBeNullOrWhiteSpace();
+        detail.ResultJson.Should().Contain("pr_urls");
+    }
+
+    [Test]
+    public async Task FetchExecutionDetailAsync_HttpError_ReturnsNull()
+    {
+        var svc    = CreateService(MockHttp(HttpStatusCode.NotFound).Object);
+        var detail = await svc.FetchExecutionDetailAsync("missing");
+        detail.Should().BeNull();
+    }
+
+    [Test]
+    public async Task FetchExecutionDetailAsync_NullResult_ResultJsonIsNull()
+    {
+        var body = new { execution_id = "ext-fd-2", status = "running" };
+        var svc    = CreateService(MockHttp(HttpStatusCode.OK, body).Object);
+        var detail = await svc.FetchExecutionDetailAsync("ext-fd-2");
+
+        detail.Should().NotBeNull();
+        detail!.ResultJson.Should().BeNull();
+    }
+
     // ── RetryJobAsync ─────────────────────────────────────────────────────────
 
     [Test]
