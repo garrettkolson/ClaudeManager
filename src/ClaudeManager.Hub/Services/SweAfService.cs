@@ -86,6 +86,59 @@ public class SweAfService
         return all.OrderByDescending(j => j.CreatedAt).ToList();
     }
 
+    // ── Job control ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Sends a cancel request to AgentField. The local job status will be updated
+    /// asynchronously when the resulting <c>execution_cancelled</c> webhook event arrives.
+    /// </summary>
+    public async Task<(bool Success, string? Error)> CancelJobAsync(
+        long jobId, CancellationToken ct = default)
+    {
+        await using var db  = await _dbFactory.CreateDbContextAsync(ct);
+        var job = await db.SweAfJobs.FindAsync([jobId], ct);
+        if (job is null) return (false, "Job not found.");
+
+        var resp = await _http.PostAsync(
+            $"/api/v1/executions/{job.ExternalJobId}/cancel", content: null, ct);
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Cancel request for {JobId} returned {Status}",
+                jobId, (int)resp.StatusCode);
+            return (false, $"AgentField returned {(int)resp.StatusCode}.");
+        }
+
+        _logger.LogInformation("Cancel request sent for {ExternalJobId}", job.ExternalJobId);
+        return (true, null);
+    }
+
+    /// <summary>
+    /// Sends an approval decision to AgentField for a job currently in the
+    /// <see cref="BuildStatus.Waiting"/> state.
+    /// </summary>
+    public async Task<(bool Success, string? Error)> ApproveJobAsync(
+        long jobId, bool approved, CancellationToken ct = default)
+    {
+        await using var db  = await _dbFactory.CreateDbContextAsync(ct);
+        var job = await db.SweAfJobs.FindAsync([jobId], ct);
+        if (job is null) return (false, "Job not found.");
+
+        var payload = new { execution_id = job.ExternalJobId, approved };
+        var resp    = await _http.PostAsJsonAsync("/api/v1/webhooks/approval-response", payload, ct);
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Approval response for {JobId} returned {Status}",
+                jobId, (int)resp.StatusCode);
+            return (false, $"AgentField returned {(int)resp.StatusCode}.");
+        }
+
+        _logger.LogInformation("Approval ({Approved}) sent for {ExternalJobId}",
+            approved, job.ExternalJobId);
+        return (true, null);
+    }
+
     // ── Webhook processing ────────────────────────────────────────────────────
 
     public async Task ProcessWebhookBatchAsync(ObservabilityBatch batch)

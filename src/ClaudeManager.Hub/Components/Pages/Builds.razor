@@ -1,6 +1,7 @@
 @page "/builds"
 @implements IDisposable
 @inject SweAfService BuildsSvc
+@inject SweAfHostService HostSvc
 @inject BuildNotifier Notifier
 @using System.Text.Json
 @using ClaudeManager.Hub.Persistence.Entities
@@ -10,11 +11,27 @@
 <div class="builds-page">
     <div class="builds-header">
         <h1>Builds</h1>
+        @if (HostSvc.IsConfigured)
+        {
+            <button class="btn-host-start" @onclick="StartService"
+                    disabled="@(_serviceOp is not null)">
+                @(_serviceOp == "starting" ? "Starting…" : "Start Service")
+            </button>
+            <button class="btn-host-stop" @onclick="StopService"
+                    disabled="@(_serviceOp is not null)">
+                @(_serviceOp == "stopping" ? "Stopping…" : "Stop Service")
+            </button>
+        }
         @if (BuildsSvc.IsConfigured)
         {
             <button class="btn-primary" @onclick="OpenNewBuild">New Build</button>
         }
     </div>
+
+    @if (_serviceError is not null)
+    {
+        <div class="error-msg builds-error">@_serviceError</div>
+    }
 
     @if (!BuildsSvc.IsConfigured)
     {
@@ -43,6 +60,7 @@
                     <th>Started</th>
                     <th>Duration</th>
                     <th>PRs</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -63,6 +81,33 @@
                             @if (job.Status == BuildStatus.Failed && job.ErrorMessage is not null)
                             {
                                 <span class="build-error-hint" title="@job.ErrorMessage">error</span>
+                            }
+                        </td>
+                        <td class="builds-actions">
+                            @if (job.Status is BuildStatus.Queued or BuildStatus.Running or BuildStatus.Waiting)
+                            {
+                                <button class="btn-cancel-sm"
+                                        @onclick="() => CancelJob(job.Id)"
+                                        disabled="@_actionInProgress.GetValueOrDefault(job.Id)">
+                                    Cancel
+                                </button>
+                            }
+                            @if (job.Status == BuildStatus.Waiting)
+                            {
+                                <button class="btn-approve-sm"
+                                        @onclick="() => ApproveJob(job.Id, true)"
+                                        disabled="@_actionInProgress.GetValueOrDefault(job.Id)">
+                                    Approve
+                                </button>
+                                <button class="btn-reject-sm"
+                                        @onclick="() => ApproveJob(job.Id, false)"
+                                        disabled="@_actionInProgress.GetValueOrDefault(job.Id)">
+                                    Reject
+                                </button>
+                            }
+                            @if (_actionError.TryGetValue(job.Id, out var actionErr) && actionErr is not null)
+                            {
+                                <span class="build-action-error">@actionErr</span>
                             }
                         </td>
                     </tr>
@@ -108,6 +153,11 @@
     private string? _modalError;
     private bool    _saving;
 
+    private string? _serviceOp;
+    private string? _serviceError;
+    private Dictionary<long, bool>    _actionInProgress = new();
+    private Dictionary<long, string?> _actionError      = new();
+
     protected override async Task OnInitializedAsync()
     {
         _jobs = await BuildsSvc.GetAllJobsAsync();
@@ -126,6 +176,50 @@
     }
 
     public void Dispose() => Notifier.BuildChanged -= OnBuildChanged;
+
+    // ── Service controls ──────────────────────────────────────────────────────
+
+    private async Task StartService()
+    {
+        _serviceOp = "starting"; _serviceError = null;
+        StateHasChanged();
+        var (ok, err) = await HostSvc.StartAsync();
+        _serviceOp = null;
+        if (!ok) _serviceError = $"Start failed: {err}";
+    }
+
+    private async Task StopService()
+    {
+        _serviceOp = "stopping"; _serviceError = null;
+        StateHasChanged();
+        var (ok, err) = await HostSvc.StopAsync();
+        _serviceOp = null;
+        if (!ok) _serviceError = $"Stop failed: {err}";
+    }
+
+    // ── Job actions ───────────────────────────────────────────────────────────
+
+    private async Task CancelJob(long jobId)
+    {
+        _actionInProgress[jobId] = true;
+        _actionError.Remove(jobId);
+        StateHasChanged();
+        var (ok, err) = await BuildsSvc.CancelJobAsync(jobId);
+        _actionInProgress[jobId] = false;
+        if (!ok) _actionError[jobId] = err ?? "Cancel failed.";
+    }
+
+    private async Task ApproveJob(long jobId, bool approved)
+    {
+        _actionInProgress[jobId] = true;
+        _actionError.Remove(jobId);
+        StateHasChanged();
+        var (ok, err) = await BuildsSvc.ApproveJobAsync(jobId, approved);
+        _actionInProgress[jobId] = false;
+        if (!ok) _actionError[jobId] = err ?? "Request failed.";
+    }
+
+    // ── New build modal ───────────────────────────────────────────────────────
 
     private void OpenNewBuild()
     {
@@ -171,7 +265,7 @@
     {
         try
         {
-            var uri = new Uri(url);
+            var uri   = new Uri(url);
             var parts = uri.AbsolutePath.Trim('/').Split('/');
             return parts.Length >= 2 ? $"{parts[^2]}/{parts[^1]}" : url;
         }

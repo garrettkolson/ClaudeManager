@@ -66,6 +66,13 @@ builder.Services.AddSingleton<BuildNotifier>();
 builder.Services.AddSingleton<SweAfService>();
 builder.Services.AddHostedService<SweAfRecoveryService>();
 
+// ── SWE-AF host service control ───────────────────────────────────────────
+
+var sweAfHostConfig = builder.Configuration
+    .GetSection("SweAfHost").Get<SweAfHostConfig>() ?? new SweAfHostConfig();
+builder.Services.AddSingleton(sweAfHostConfig);
+builder.Services.AddSingleton<SweAfHostService>();
+
 // ── SignalR ───────────────────────────────────────────────────────────────────
 
 builder.Services.AddSignalR(opts =>

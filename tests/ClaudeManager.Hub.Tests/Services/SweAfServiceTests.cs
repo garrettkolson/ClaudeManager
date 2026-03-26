@@ -328,6 +328,216 @@ public class SweAfServiceTests
         job.CompletedAt.Should().NotBeNull();
     }
 
+    // ── CancelJobAsync ────────────────────────────────────────────────────────
+
+    [Test]
+    public async Task CancelJobAsync_JobNotFound_ReturnsFalse()
+    {
+        var svc = CreateService(MockHttp(HttpStatusCode.OK).Object);
+        var (ok, err) = await svc.CancelJobAsync(999);
+        ok.Should().BeFalse();
+        err.Should().NotBeNullOrEmpty();
+    }
+
+    [Test]
+    public async Task CancelJobAsync_PostsToCorrectEndpoint()
+    {
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.SweAfJobs.Add(new SweAfJobEntity
+            {
+                ExternalJobId = "exec-cancel-1",
+                Goal          = "G",
+                RepoUrl       = "https://github.com/org/r",
+                Status        = BuildStatus.Running,
+                CreatedAt     = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        HttpRequestMessage? captured = null;
+        var handlerMock = new Mock<HttpMessageHandler>();
+        handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK));
+
+        var svc = CreateService(handlerMock.Object);
+        await using var db2 = _dbFactory.CreateDbContext();
+        var job = await db2.SweAfJobs.SingleAsync();
+
+        var (ok, _) = await svc.CancelJobAsync(job.Id);
+
+        ok.Should().BeTrue();
+        captured!.Method.Should().Be(HttpMethod.Post);
+        captured.RequestUri!.AbsolutePath.Should().Be("/api/v1/executions/exec-cancel-1/cancel");
+    }
+
+    [Test]
+    public async Task CancelJobAsync_HttpError_ReturnsFalse()
+    {
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.SweAfJobs.Add(new SweAfJobEntity
+            {
+                ExternalJobId = "exec-cancel-err",
+                Goal          = "G",
+                RepoUrl       = "https://github.com/org/r",
+                Status        = BuildStatus.Running,
+                CreatedAt     = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var svc = CreateService(MockHttp(HttpStatusCode.InternalServerError).Object);
+        await using var db2 = _dbFactory.CreateDbContext();
+        var job = await db2.SweAfJobs.SingleAsync();
+
+        var (ok, err) = await svc.CancelJobAsync(job.Id);
+        ok.Should().BeFalse();
+        err.Should().Contain("500");
+    }
+
+    [Test]
+    public async Task CancelJobAsync_DoesNotUpdateDbStatus()
+    {
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.SweAfJobs.Add(new SweAfJobEntity
+            {
+                ExternalJobId = "exec-cancel-nowrite",
+                Goal          = "G",
+                RepoUrl       = "https://github.com/org/r",
+                Status        = BuildStatus.Running,
+                CreatedAt     = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var svc = CreateService(MockHttp(HttpStatusCode.OK).Object);
+        await using var db2 = _dbFactory.CreateDbContext();
+        var job = await db2.SweAfJobs.SingleAsync();
+
+        await svc.CancelJobAsync(job.Id);
+
+        await using var verify = _dbFactory.CreateDbContext();
+        var refetched = await verify.SweAfJobs.SingleAsync();
+        refetched.Status.Should().Be(BuildStatus.Running);
+    }
+
+    // ── ApproveJobAsync ───────────────────────────────────────────────────────
+
+    [Test]
+    public async Task ApproveJobAsync_JobNotFound_ReturnsFalse()
+    {
+        var svc = CreateService(MockHttp(HttpStatusCode.OK).Object);
+        var (ok, err) = await svc.ApproveJobAsync(999, approved: true);
+        ok.Should().BeFalse();
+        err.Should().NotBeNullOrEmpty();
+    }
+
+    [Test]
+    public async Task ApproveJobAsync_PostsToCorrectEndpointWithApprovedTrue()
+    {
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.SweAfJobs.Add(new SweAfJobEntity
+            {
+                ExternalJobId = "exec-approve-1",
+                Goal          = "G",
+                RepoUrl       = "https://github.com/org/r",
+                Status        = BuildStatus.Waiting,
+                CreatedAt     = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        HttpRequestMessage? captured = null;
+        var handlerMock = new Mock<HttpMessageHandler>();
+        handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK));
+
+        var svc = CreateService(handlerMock.Object);
+        await using var db2 = _dbFactory.CreateDbContext();
+        var job = await db2.SweAfJobs.SingleAsync();
+
+        var (ok, _) = await svc.ApproveJobAsync(job.Id, approved: true);
+
+        ok.Should().BeTrue();
+        captured!.Method.Should().Be(HttpMethod.Post);
+        captured.RequestUri!.AbsolutePath.Should().Be("/api/v1/webhooks/approval-response");
+
+        var bodyJson = await captured.Content!.ReadAsStringAsync();
+        bodyJson.Should().Contain("\"execution_id\":\"exec-approve-1\"");
+        bodyJson.Should().Contain("\"approved\":true");
+    }
+
+    [Test]
+    public async Task ApproveJobAsync_PostsApprovedFalseForReject()
+    {
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.SweAfJobs.Add(new SweAfJobEntity
+            {
+                ExternalJobId = "exec-reject-1",
+                Goal          = "G",
+                RepoUrl       = "https://github.com/org/r",
+                Status        = BuildStatus.Waiting,
+                CreatedAt     = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        HttpRequestMessage? captured = null;
+        var handlerMock = new Mock<HttpMessageHandler>();
+        handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK));
+
+        var svc = CreateService(handlerMock.Object);
+        await using var db2 = _dbFactory.CreateDbContext();
+        var job = await db2.SweAfJobs.SingleAsync();
+
+        await svc.ApproveJobAsync(job.Id, approved: false);
+
+        var bodyJson = await captured!.Content!.ReadAsStringAsync();
+        bodyJson.Should().Contain("\"approved\":false");
+    }
+
+    [Test]
+    public async Task ApproveJobAsync_HttpError_ReturnsFalse()
+    {
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.SweAfJobs.Add(new SweAfJobEntity
+            {
+                ExternalJobId = "exec-approve-err",
+                Goal          = "G",
+                RepoUrl       = "https://github.com/org/r",
+                Status        = BuildStatus.Waiting,
+                CreatedAt     = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var svc = CreateService(MockHttp(HttpStatusCode.BadRequest).Object);
+        await using var db2 = _dbFactory.CreateDbContext();
+        var job = await db2.SweAfJobs.SingleAsync();
+
+        var (ok, err) = await svc.ApproveJobAsync(job.Id, approved: true);
+        ok.Should().BeFalse();
+        err.Should().Contain("400");
+    }
+
     [Test]
     public async Task ProcessWebhookBatchAsync_NotifiesOnStateChange()
     {
