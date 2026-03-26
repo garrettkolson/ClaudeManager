@@ -7,6 +7,7 @@
 @inject IJSRuntime JS
 @using ClaudeManager.Hub.Persistence
 @using Microsoft.EntityFrameworkCore
+@using System.Text
 
 <PageTitle>Session — @SessionId[..Math.Min(SessionId.Length, 8)]</PageTitle>
 
@@ -25,6 +26,10 @@
                 @if (_loadedFromDb)
                 {
                     <span class="history-badge">Loaded from history</span>
+                }
+                @if (_lines.Count > 0)
+                {
+                    <button class="btn-secondary" @onclick="DownloadTranscript">Download</button>
                 }
             }
         </div>
@@ -253,6 +258,42 @@
         }
 
         return json;
+    }
+
+    private async Task DownloadTranscript()
+    {
+        if (_session is null || _lines.Count == 0) return;
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"Session: {_session.SessionId}");
+        sb.AppendLine($"Directory: {_session.WorkingDirectory}");
+        sb.AppendLine($"Machine: {MachineId}");
+        if (_session.StartedAt != default)
+            sb.AppendLine($"Started: {_session.StartedAt.LocalDateTime:yyyy-MM-dd HH:mm:ss}");
+        if (_session.EndedAt.HasValue)
+            sb.AppendLine($"Ended: {_session.EndedAt.Value.LocalDateTime:yyyy-MM-dd HH:mm:ss}");
+        if (!string.IsNullOrWhiteSpace(_session.InitialPrompt))
+            sb.AppendLine($"Initial Prompt: {_session.InitialPrompt}");
+        sb.AppendLine(new string('-', 60));
+        sb.AppendLine();
+
+        foreach (var line in _lines)
+        {
+            var time    = line.Timestamp.LocalDateTime.ToString("HH:mm:ss");
+            var kind    = GetKindLabel(line.Kind);
+            var content = GetDisplayContent(line);
+            sb.AppendLine($"[{time}] [{kind}] {content}");
+        }
+
+        var date     = (_session.StartedAt != default ? _session.StartedAt : DateTimeOffset.UtcNow).LocalDateTime;
+        var shortId  = SessionId[..Math.Min(SessionId.Length, 8)];
+        var filename = $"claude-session-{shortId}-{date:yyyyMMdd}.txt";
+
+        try
+        {
+            await JS.InvokeVoidAsync("claudeManager.downloadText", filename, sb.ToString());
+        }
+        catch { /* ignore JS interop failures */ }
     }
 
     private static string Unescape(string s) =>
