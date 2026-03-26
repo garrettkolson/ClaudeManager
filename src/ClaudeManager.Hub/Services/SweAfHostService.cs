@@ -26,6 +26,25 @@ public class SweAfHostService
     public Task<(bool Success, string? Error)> StopAsync(CancellationToken ct = default)
         => ExecuteCommandAsync(_config.StopCommand, "stop", ct);
 
+    /// <summary>
+    /// Prepends configured Anthropic env vars as inline shell assignments before the command.
+    /// Works for direct-process invocations (e.g. nohup scripts). For systemd services, set
+    /// Environment= in the unit file instead — inline env vars are not passed through systemctl.
+    /// </summary>
+    private string InjectEnvVars(string command)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(_config.AnthropicBaseUrl))
+            parts.Add($"ANTHROPIC_BASE_URL={QuoteForShell(_config.AnthropicBaseUrl)}");
+        if (!string.IsNullOrWhiteSpace(_config.AnthropicApiKey))
+            parts.Add($"ANTHROPIC_API_KEY={QuoteForShell(_config.AnthropicApiKey)}");
+
+        return parts.Count == 0 ? command : string.Join(" ", parts) + " " + command;
+    }
+
+    private static string QuoteForShell(string value) =>
+        "'" + value.Replace("'", "'\\''") + "'";
+
     // ── Internal ──────────────────────────────────────────────────────────────
 
     private async Task<(bool, string?)> ExecuteCommandAsync(
@@ -65,6 +84,12 @@ public class SweAfHostService
                 };
             }
 
+            // Inject env overrides directly onto the child process environment
+            if (!string.IsNullOrWhiteSpace(_config.AnthropicBaseUrl))
+                psi.Environment["ANTHROPIC_BASE_URL"] = _config.AnthropicBaseUrl;
+            if (!string.IsNullOrWhiteSpace(_config.AnthropicApiKey))
+                psi.Environment["ANTHROPIC_API_KEY"] = _config.AnthropicApiKey;
+
             using var proc = Process.Start(psi);
             proc?.WaitForExit(10_000);
             _logger.LogInformation("SWE-AF host {Op} completed locally", op);
@@ -93,7 +118,7 @@ public class SweAfHostService
             await Task.Run(() => client.Connect(), ct);
             _logger.LogInformation("SSH connected to {Host} for SWE-AF host {Op}", _config.Host, op);
 
-            using var cmd = client.RunCommand(command);
+            using var cmd = client.RunCommand(InjectEnvVars(command));
             client.Disconnect();
 
             // Non-zero exit is only a hard failure when stderr is also non-empty.

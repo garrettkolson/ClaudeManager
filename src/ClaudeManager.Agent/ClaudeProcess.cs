@@ -16,6 +16,7 @@ public sealed class ClaudeProcess : IClaudeProcess
     private readonly string _prompt;
     private readonly string? _resumeSessionId;
     private readonly string? _mcpConfigPath;
+    private readonly IReadOnlyDictionary<string, string>? _extraEnv;
     private readonly ILogger<ClaudeProcess> _logger;
 
     private Process? _process;
@@ -34,13 +35,15 @@ public sealed class ClaudeProcess : IClaudeProcess
         string prompt,
         string? resumeSessionId,
         string? mcpConfigPath,
-        ILogger<ClaudeProcess> logger)
+        ILogger<ClaudeProcess> logger,
+        IReadOnlyDictionary<string, string>? extraEnv = null)
     {
         _binary           = binary;
         _workingDirectory = workingDirectory;
         _prompt           = prompt;
         _resumeSessionId  = resumeSessionId;
         _mcpConfigPath    = mcpConfigPath;
+        _extraEnv         = extraEnv;
         _logger           = logger;
     }
 
@@ -62,6 +65,10 @@ public sealed class ClaudeProcess : IClaudeProcess
             },
             EnableRaisingEvents = true,
         };
+
+        if (_extraEnv is not null)
+            foreach (var (key, value) in _extraEnv)
+                _process.StartInfo.Environment[key] = value;
 
         _process.Start();
         IsRunning = true;

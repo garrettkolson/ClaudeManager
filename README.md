@@ -210,6 +210,8 @@ Pre-configures machines so they appear in the dashboard before their Agent conne
 | `BaseUrl` | Yes (if using Builds) | AgentField API base URL. |
 | `ApiKey` | Yes (if using Builds) | Bearer token for the AgentField API. |
 | `WebhookSecret` | No | HMAC-SHA256 secret for verifying AgentField webhook payloads. Leave unset to skip signature verification. |
+| `ClaudeBaseUrl` | No | Passed to AgentField in the build trigger payload as `config.base_url`. Use to direct SWE-AF's `claude_code` runtime at a locally-hosted LLM server. |
+| `ClaudeApiKey` | No | Passed to AgentField in the trigger payload as `config.api_key`. Pair with `ClaudeBaseUrl` when the local server requires a different key. |
 
 To receive webhook events, register the Hub's endpoint with AgentField:
 ```
@@ -222,17 +224,23 @@ POST https://api.agentfield.com/api/v1/settings/observability-webhook
 ```json
 {
   "SweAfHost": {
-    "Host":         "192.168.1.20",
-    "Port":         22,
-    "SshUser":      "ubuntu",
-    "SshKeyPath":   "~/.ssh/id_rsa",
-    "StartCommand": "sudo systemctl start agentfield",
-    "StopCommand":  "sudo systemctl stop agentfield"
+    "Host":            "192.168.1.20",
+    "Port":            22,
+    "SshUser":         "ubuntu",
+    "SshKeyPath":      "~/.ssh/id_rsa",
+    "StartCommand":    "sudo systemctl start agentfield",
+    "StopCommand":     "sudo systemctl stop agentfield",
+    "AnthropicBaseUrl": "http://localhost:11434",
+    "AnthropicApiKey":  "local"
   }
 }
 ```
 
 Uses the same SSH transport as `KnownMachines`. Set `Host` to `"localhost"` to run commands locally. Stop commands that return a non-zero exit code are treated as success when stderr is empty (handles the case where the service was already stopped).
+
+`AnthropicBaseUrl` and `AnthropicApiKey` control how the AgentField process reaches the LLM:
+- **Localhost:** set directly as environment variables on the child process.
+- **SSH:** prepended as inline shell assignments before the command (e.g. `ANTHROPIC_BASE_URL='...' sudo nohup start.sh`). This works for scripts launched directly but **does not** inject into systemd-managed services — for those, add `Environment=ANTHROPIC_BASE_URL=...` to the `[Service]` section of the unit file instead.
 
 ### Agent configuration
 
@@ -246,6 +254,8 @@ All settings go in `src/ClaudeManager.Agent/appsettings.json` under the `"Agent"
 | `ClaudeBinaryPath` | No | (PATH) | Absolute path to the `claude` binary. |
 | `DefaultWorkingDirectory` | No | User home | Default `cwd` for new sessions. |
 | `McpServerPath` | No | — | Path to `ClaudeManager.McpServer` executable. Enables `wiki_save` / `wiki_list` MCP tools in every session. |
+| `ClaudeBaseUrl` | No | — | Sets `ANTHROPIC_BASE_URL` on every `claude` child process. Use to point Claude at a locally-hosted LLM server. |
+| `ClaudeApiKey` | No | — | Sets `ANTHROPIC_API_KEY` on every `claude` child process. Typically paired with `ClaudeBaseUrl` when the local server uses a different key (e.g. `"local"`). |
 
 ---
 

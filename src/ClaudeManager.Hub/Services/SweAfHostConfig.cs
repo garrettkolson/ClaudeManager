@@ -31,6 +31,17 @@ public record SweAfHostConfig
     /// <summary>Shell command to stop the AgentField service (e.g. "sudo systemctl stop agentfield").</summary>
     public string  StopCommand  { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Optional Anthropic API base URL set as ANTHROPIC_BASE_URL in the environment when
+    /// running the start/stop commands. For direct-process invocation (e.g. nohup scripts),
+    /// this is prepended as an inline env assignment. For systemd-managed services, configure
+    /// the variable in the unit file's [Service] Environment= directive instead.
+    /// </summary>
+    public string? AnthropicBaseUrl { get; init; }
+
+    /// <summary>Optional API key set as ANTHROPIC_API_KEY alongside AnthropicBaseUrl.</summary>
+    public string? AnthropicApiKey  { get; init; }
+
     /// <summary>True when both start and stop commands are present.</summary>
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(StartCommand) &&

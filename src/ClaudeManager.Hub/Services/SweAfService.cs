@@ -47,7 +47,12 @@ public class SweAfService
             {
                 goal,
                 repo_url = repoUrl,
-                config   = new { runtime = "claude_code" },
+                config   = new
+                {
+                    runtime  = "claude_code",
+                    base_url = _config.ClaudeBaseUrl,
+                    api_key  = _config.ClaudeApiKey,
+                },
             },
         };
 

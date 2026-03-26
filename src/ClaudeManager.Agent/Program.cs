@@ -81,6 +81,14 @@ if (config.McpServerPath is not null)
     }
 }
 
+// ── LLM endpoint overrides ────────────────────────────────────────────────────
+
+var extraEnv = new Dictionary<string, string>();
+if (!string.IsNullOrWhiteSpace(config.ClaudeBaseUrl))
+    extraEnv["ANTHROPIC_BASE_URL"] = config.ClaudeBaseUrl;
+if (!string.IsNullOrWhiteSpace(config.ClaudeApiKey))
+    extraEnv["ANTHROPIC_API_KEY"] = config.ClaudeApiKey;
+
 // ── Run ───────────────────────────────────────────────────────────────────────
 
 using var agentHost = Host.CreateDefaultBuilder(args)
@@ -90,7 +98,8 @@ using var agentHost = Host.CreateDefaultBuilder(args)
         services.AddSingleton<IProcessRunner, ProcessRunner>();
         services.AddSingleton<ClaudeValidator>();
         services.AddSingleton<IClaudeProcessFactory>(sp =>
-            new ClaudeProcessFactory(binary, sp.GetRequiredService<ILoggerFactory>(), mcpConfigPath));
+            new ClaudeProcessFactory(binary, sp.GetRequiredService<ILoggerFactory>(), mcpConfigPath,
+                extraEnv.Count > 0 ? extraEnv : null));
         services.AddSingleton(sp =>
             new SessionProcessManager(
                 sp.GetRequiredService<IClaudeProcessFactory>(),

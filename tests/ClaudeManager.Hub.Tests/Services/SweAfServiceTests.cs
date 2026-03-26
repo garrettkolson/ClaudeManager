@@ -173,6 +173,68 @@ public class SweAfServiceTests
     }
 
     [Test]
+    public async Task TriggerBuildAsync_WhenClaudeBaseUrlConfigured_IncludesInPayload()
+    {
+        HttpRequestMessage? captured = null;
+        var handlerMock = new Mock<HttpMessageHandler>();
+        handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new { execution_id = "exec-1" }),
+            });
+
+        var config = new SweAfConfig
+        {
+            BaseUrl      = "https://af.test",
+            ApiKey       = "key",
+            ClaudeBaseUrl = "http://localhost:11434",
+        };
+        var http = new HttpClient(handlerMock.Object) { BaseAddress = new Uri("https://af.test/") };
+        var svc  = new SweAfService(http, config, _dbFactory, _notifier,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<SweAfService>.Instance);
+
+        await svc.TriggerBuildAsync("Goal", "https://github.com/org/repo");
+
+        var body = await captured!.Content!.ReadAsStringAsync();
+        body.Should().Contain("http://localhost:11434");
+    }
+
+    [Test]
+    public async Task TriggerBuildAsync_WhenClaudeApiKeyConfigured_IncludesInPayload()
+    {
+        HttpRequestMessage? captured = null;
+        var handlerMock = new Mock<HttpMessageHandler>();
+        handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new { execution_id = "exec-2" }),
+            });
+
+        var config = new SweAfConfig
+        {
+            BaseUrl     = "https://af.test",
+            ApiKey      = "key",
+            ClaudeApiKey = "local",
+        };
+        var http = new HttpClient(handlerMock.Object) { BaseAddress = new Uri("https://af.test/") };
+        var svc  = new SweAfService(http, config, _dbFactory, _notifier,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<SweAfService>.Instance);
+
+        await svc.TriggerBuildAsync("Goal", "https://github.com/org/repo");
+
+        var body = await captured!.Content!.ReadAsStringAsync();
+        body.Should().Contain("\"api_key\":\"local\"");
+    }
+
+    [Test]
     public async Task TriggerBuildAsync_HttpError_Throws()
     {
         var handler = MockHttp(HttpStatusCode.InternalServerError);
