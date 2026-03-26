@@ -24,8 +24,38 @@
         @if (BuildsSvc.IsConfigured)
         {
             <button class="btn-primary" @onclick="OpenNewBuild">New Build</button>
+            <button class="btn-secondary" @onclick="ToggleWebhookPanel">Webhook</button>
         }
     </div>
+
+    @if (_showWebhookPanel)
+    {
+        <div class="webhook-panel">
+            <h4>Register observability webhook</h4>
+            <p class="webhook-hint">
+                Register this Hub's webhook endpoint with AgentField so it receives live build status events.
+            </p>
+            <div class="webhook-form">
+                <label>Endpoint URL</label>
+                <input @bind="_webhookUrl" placeholder="https://your-hub/api/webhooks/agentfield" />
+                <label>HMAC Secret <span class="webhook-optional">(optional)</span></label>
+                <input @bind="_webhookSecret" type="password" placeholder="Leave blank to disable signature verification" />
+                @if (_webhookError is not null)
+                {
+                    <div class="error-msg">@_webhookError</div>
+                }
+                @if (_webhookSuccess)
+                {
+                    <div class="webhook-success">Webhook registered successfully.</div>
+                }
+                <div class="webhook-actions">
+                    <button class="btn-primary" @onclick="RegisterWebhook" disabled="@_webhookSaving">
+                        @(_webhookSaving ? "Registering…" : "Register")
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
 
     @if (_serviceError is not null)
     {
@@ -157,6 +187,13 @@
     private Dictionary<long, bool>    _actionInProgress = new();
     private Dictionary<long, string?> _actionError      = new();
 
+    private bool    _showWebhookPanel;
+    private string  _webhookUrl    = string.Empty;
+    private string  _webhookSecret = string.Empty;
+    private string? _webhookError;
+    private bool    _webhookSuccess;
+    private bool    _webhookSaving;
+
     protected override async Task OnInitializedAsync()
     {
         _jobs = await BuildsSvc.GetAllJobsAsync();
@@ -175,6 +212,46 @@
     }
 
     public void Dispose() => Notifier.BuildChanged -= OnBuildChanged;
+
+    // ── Webhook panel ─────────────────────────────────────────────────────────
+
+    private void ToggleWebhookPanel()
+    {
+        _showWebhookPanel = !_showWebhookPanel;
+        if (_showWebhookPanel)
+        {
+            // Pre-populate from config each time the panel opens
+            var baseUrl = BuildsSvc.HubPublicUrl?.TrimEnd('/');
+            _webhookUrl    = baseUrl is not null
+                ? $"{baseUrl}/api/webhooks/agentfield"
+                : string.Empty;
+            _webhookSecret = BuildsSvc.WebhookSecret ?? string.Empty;
+            _webhookError   = null;
+            _webhookSuccess = false;
+        }
+    }
+
+    private async Task RegisterWebhook()
+    {
+        if (string.IsNullOrWhiteSpace(_webhookUrl))
+        {
+            _webhookError = "Endpoint URL is required.";
+            return;
+        }
+
+        _webhookSaving  = true;
+        _webhookError   = null;
+        _webhookSuccess = false;
+
+        var secret = string.IsNullOrWhiteSpace(_webhookSecret) ? null : _webhookSecret.Trim();
+        var (ok, err) = await BuildsSvc.RegisterWebhookAsync(_webhookUrl.Trim(), secret);
+
+        _webhookSaving = false;
+        if (ok)
+            _webhookSuccess = true;
+        else
+            _webhookError = err ?? "Registration failed.";
+    }
 
     // ── Service controls ──────────────────────────────────────────────────────
 

@@ -42,6 +42,15 @@ public record SweAfConfig
     /// </summary>
     public SweAfModelsConfig? Models { get; init; }
 
+    /// <summary>
+    /// Optional public URL of this Hub instance (e.g. "https://hub.example.com").
+    /// When set, the Builds page pre-populates the webhook registration URL as
+    /// <c>{HubPublicUrl}/api/webhooks/agentfield</c>.
+    /// Leave unset if the Hub URL is not yet known — the field remains editable.
+    /// Do NOT include a trailing slash.
+    /// </summary>
+    public string? HubPublicUrl { get; init; }
+
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(ApiKey);
 }

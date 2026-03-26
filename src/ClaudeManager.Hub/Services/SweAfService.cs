@@ -18,6 +18,7 @@ public class SweAfService
 
     public bool    IsConfigured  => _config.IsConfigured;
     public string? WebhookSecret => _config.WebhookSecret;
+    public string? HubPublicUrl  => _config.HubPublicUrl;
 
     public SweAfService(
         HttpClient http,
@@ -31,6 +32,32 @@ public class SweAfService
         _dbFactory = dbFactory;
         _notifier  = notifier;
         _logger    = logger;
+    }
+
+    // ── Webhook registration ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Registers (or updates) the observability webhook on the AgentField control plane.
+    /// After registration, AgentField will POST execution events to <paramref name="url"/>.
+    /// </summary>
+    public async Task<(bool Success, string? Error)> RegisterWebhookAsync(
+        string url, string? secret, CancellationToken ct = default)
+    {
+        object payload = string.IsNullOrWhiteSpace(secret)
+            ? new { url }
+            : new { url, secret };
+
+        var resp = await _http.PostAsJsonAsync(
+            "/api/v1/settings/observability-webhook", payload, ct);
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Webhook registration returned {Status}", (int)resp.StatusCode);
+            return (false, $"AgentField returned {(int)resp.StatusCode}.");
+        }
+
+        _logger.LogInformation("Observability webhook registered: {Url}", url);
+        return (true, null);
     }
 
     // ── Trigger ───────────────────────────────────────────────────────────────

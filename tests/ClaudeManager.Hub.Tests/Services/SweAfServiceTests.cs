@@ -594,6 +594,45 @@ public class SweAfServiceTests
         err.Should().Contain("400");
     }
 
+    // ── RegisterWebhookAsync ──────────────────────────────────────────────────
+
+    [Test]
+    public async Task RegisterWebhookAsync_Success_ReturnsTrue()
+    {
+        var svc = CreateService(MockHttp(HttpStatusCode.OK).Object);
+        var (ok, err) = await svc.RegisterWebhookAsync("https://hub/api/webhooks/agentfield", "secret");
+        ok.Should().BeTrue();
+        err.Should().BeNull();
+    }
+
+    [Test]
+    public async Task RegisterWebhookAsync_PostsToCorrectEndpoint()
+    {
+        HttpRequestMessage? captured = null;
+        var handlerMock = new Mock<HttpMessageHandler>();
+        handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK));
+
+        var svc = CreateService(handlerMock.Object);
+        await svc.RegisterWebhookAsync("https://hub/api/webhooks/agentfield", null);
+
+        captured!.RequestUri!.AbsolutePath.Should().Be("/api/v1/settings/observability-webhook");
+        captured.Method.Should().Be(HttpMethod.Post);
+    }
+
+    [Test]
+    public async Task RegisterWebhookAsync_HttpError_ReturnsFalse()
+    {
+        var svc = CreateService(MockHttp(HttpStatusCode.BadRequest).Object);
+        var (ok, err) = await svc.RegisterWebhookAsync("https://hub/api/webhooks/agentfield", null);
+        ok.Should().BeFalse();
+        err.Should().Contain("400");
+    }
+
     [Test]
     public async Task ProcessWebhookBatchAsync_NotifiesOnStateChange()
     {

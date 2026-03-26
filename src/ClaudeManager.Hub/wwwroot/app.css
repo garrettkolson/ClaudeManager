@@ -184,6 +184,18 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 .btn-host-cmd:hover { background: #1e4a6a; }
 .btn-host-cmd:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* ── Webhook panel ── */
+.webhook-panel { background: #1a2233; border: 1px solid #2a3a55; border-radius: 6px; padding: 18px 20px; margin-bottom: 16px; }
+.webhook-panel h4 { margin: 0 0 6px; font-size: 14px; color: #cdd6f4; }
+.webhook-hint { margin: 0 0 14px; font-size: 12px; color: #8899bb; }
+.webhook-form { display: flex; flex-direction: column; gap: 6px; max-width: 560px; }
+.webhook-form label { font-size: 12px; color: #8899bb; margin-top: 4px; }
+.webhook-form input { background: #0f1722; border: 1px solid #2a3a55; border-radius: 4px; color: #cdd6f4; font-size: 13px; padding: 6px 10px; }
+.webhook-form input:focus { outline: none; border-color: #5a8aff; }
+.webhook-optional { color: #5a6a88; font-style: italic; }
+.webhook-actions { margin-top: 8px; }
+.webhook-success { color: #4caf50; font-size: 13px; padding: 4px 0; }
+
 /* ── Blazor error UI ── */
 #blazor-error-ui { background: #5a1a1a; bottom: 0; box-shadow: 0 -1px 2px rgba(0,0,0,0.2); display: none; left: 0; padding: 0.6rem 1.25rem 0.7rem 1.25rem; position: fixed; width: 100%; z-index: 1000; color: #cf6679; }
 #blazor-error-ui .dismiss { cursor: pointer; position: absolute; right: 0.75rem; top: 0.5rem; }

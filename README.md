@@ -207,10 +207,11 @@ SWE-AF is a two-component system. Both must be running for the Builds page to wo
 ```json
 {
   "SweAf": {
-    "BaseUrl":       "http://localhost:8080",
-    "ApiKey":        "af_...",
-    "WebhookSecret": "your-webhook-hmac-secret",
-    "Runtime":       "claude_code",
+    "BaseUrl":        "http://localhost:8080",
+    "ApiKey":         "af_...",
+    "WebhookSecret":  "your-webhook-hmac-secret",
+    "HubPublicUrl":   "https://hub.example.com",
+    "Runtime":        "claude_code",
     "Models": {
       "Default": "sonnet",
       "Coder":   "opus"
@@ -224,12 +225,13 @@ SWE-AF is a two-component system. Both must be running for the Builds page to wo
 | `BaseUrl` | Yes | — | AgentField control plane URL (e.g. `http://localhost:8080`). |
 | `ApiKey` | Yes | — | Bearer token for the AgentField API. |
 | `WebhookSecret` | No | — | HMAC-SHA256 secret for verifying webhook payloads. Leave unset to skip signature verification. |
+| `HubPublicUrl` | No | — | Public URL of this Hub (e.g. `https://hub.example.com`). Pre-populates the webhook registration form on the Builds page. |
 | `Runtime` | No | `"claude_code"` | `"claude_code"` for Claude backends; `"open_code"` for open-source models (DeepSeek, Qwen, Llama, etc.) via OpenRouter/OpenAI/Google. |
 | `Models.Default` | No | — | Default model for most tasks. Short names (`"sonnet"`, `"opus"`) for Claude; `"provider/model-id"` format for open-source (e.g. `"deepseek/deepseek-chat"`). |
 | `Models.Coder` | No | — | Model for coding-intensive steps. |
 | `Models.Qa` | No | — | Model for QA/verification steps. |
 
-To receive webhook events, register the Hub's endpoint with AgentField:
+To receive webhook events, click **Webhook** on the Builds page and enter the Hub's public URL. This registers `{HubPublicUrl}/api/webhooks/agentfield` with the AgentField control plane. You can also register manually:
 ```
 POST http://localhost:8080/api/v1/settings/observability-webhook
 { "url": "https://<your-hub>/api/webhooks/agentfield", "secret": "<WebhookSecret>" }
