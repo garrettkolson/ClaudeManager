@@ -134,6 +134,14 @@
                                     Reject
                                 </button>
                             }
+                            @if (job.Status is BuildStatus.Failed or BuildStatus.Cancelled)
+                            {
+                                <button class="btn-retry-sm"
+                                        @onclick="() => RetryJob(job.Id)"
+                                        disabled="@_actionInProgress.GetValueOrDefault(job.Id)">
+                                    Retry
+                                </button>
+                            }
                             @if (_actionError.TryGetValue(job.Id, out var actionErr) && actionErr is not null)
                             {
                                 <span class="build-action-error">@actionErr</span>
@@ -284,6 +292,16 @@
         var (ok, err) = await BuildsSvc.ApproveJobAsync(jobId, approved);
         _actionInProgress[jobId] = false;
         if (!ok) _actionError[jobId] = err ?? "Request failed.";
+    }
+
+    private async Task RetryJob(long jobId)
+    {
+        _actionInProgress[jobId] = true;
+        _actionError.Remove(jobId);
+        StateHasChanged();
+        var (ok, err) = await BuildsSvc.RetryJobAsync(jobId);
+        _actionInProgress[jobId] = false;
+        if (!ok) _actionError[jobId] = err ?? "Retry failed.";
     }
 
     // ── New build modal ───────────────────────────────────────────────────────

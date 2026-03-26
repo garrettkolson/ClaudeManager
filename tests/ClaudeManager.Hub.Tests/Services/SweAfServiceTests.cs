@@ -594,6 +594,76 @@ public class SweAfServiceTests
         err.Should().Contain("400");
     }
 
+    // ── RetryJobAsync ─────────────────────────────────────────────────────────
+
+    [Test]
+    public async Task RetryJobAsync_JobNotFound_ReturnsFalse()
+    {
+        var svc = CreateService(MockHttp(HttpStatusCode.OK).Object);
+        var (ok, err) = await svc.RetryJobAsync(999);
+        ok.Should().BeFalse();
+        err.Should().NotBeNullOrEmpty();
+    }
+
+    [Test]
+    public async Task RetryJobAsync_Success_CreatesNewJobWithSameGoalAndRepo()
+    {
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.SweAfJobs.Add(new SweAfJobEntity
+            {
+                ExternalJobId = "orig-1",
+                Goal          = "Fix the bug",
+                RepoUrl       = "https://github.com/org/repo",
+                Status        = BuildStatus.Failed,
+                CreatedAt     = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var handler = MockHttp(HttpStatusCode.OK, new { execution_id = "retry-1" });
+        var svc = CreateService(handler.Object);
+        await using var db2 = _dbFactory.CreateDbContext();
+        var orig = await db2.SweAfJobs.SingleAsync();
+
+        var (ok, err) = await svc.RetryJobAsync(orig.Id);
+
+        ok.Should().BeTrue();
+        err.Should().BeNull();
+
+        await using var verify = _dbFactory.CreateDbContext();
+        var jobs = await verify.SweAfJobs.ToListAsync();
+        jobs.Should().HaveCount(2);
+        var retried = jobs.Single(j => j.ExternalJobId == "retry-1");
+        retried.Goal.Should().Be("Fix the bug");
+        retried.RepoUrl.Should().Be("https://github.com/org/repo");
+    }
+
+    [Test]
+    public async Task RetryJobAsync_HttpError_ReturnsFalse()
+    {
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.SweAfJobs.Add(new SweAfJobEntity
+            {
+                ExternalJobId = "orig-err",
+                Goal          = "G",
+                RepoUrl       = "https://github.com/org/repo",
+                Status        = BuildStatus.Failed,
+                CreatedAt     = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var svc = CreateService(MockHttp(HttpStatusCode.InternalServerError).Object);
+        await using var db2 = _dbFactory.CreateDbContext();
+        var job = await db2.SweAfJobs.SingleAsync();
+
+        var (ok, err) = await svc.RetryJobAsync(job.Id);
+        ok.Should().BeFalse();
+        err.Should().NotBeNullOrEmpty();
+    }
+
     // ── RegisterWebhookAsync ──────────────────────────────────────────────────
 
     [Test]

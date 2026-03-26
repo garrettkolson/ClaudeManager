@@ -34,6 +34,30 @@ public class SweAfService
         _logger    = logger;
     }
 
+    // ── Retry ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Re-triggers a failed or cancelled build with the same goal and repository URL.
+    /// </summary>
+    public async Task<(bool Success, string? Error)> RetryJobAsync(
+        long jobId, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var job = await db.SweAfJobs.FindAsync([jobId], ct);
+        if (job is null) return (false, "Job not found.");
+
+        try
+        {
+            await TriggerBuildAsync(job.Goal, job.RepoUrl);
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Retry failed for job {JobId}", jobId);
+            return (false, ex.Message);
+        }
+    }
+
     // ── Webhook registration ─────────────────────────────────────────────────
 
     /// <summary>
