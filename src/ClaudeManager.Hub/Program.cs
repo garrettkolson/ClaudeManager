@@ -133,8 +133,16 @@ app.MapPost("/api/webhooks/agentfield", async (HttpRequest req, SweAfService svc
     if (!SweAfService.VerifySignature(cfg.WebhookSecret, body, signature))
         return Results.Unauthorized();
 
-    var batch = JsonSerializer.Deserialize<ObservabilityBatch>(body,
-        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+    ObservabilityBatch? batch;
+    try
+    {
+        batch = JsonSerializer.Deserialize<ObservabilityBatch>(body,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+    }
+    catch (JsonException)
+    {
+        return Results.BadRequest("Invalid payload");
+    }
     if (batch is null) return Results.BadRequest("Invalid payload");
 
     await svc.ProcessWebhookBatchAsync(batch);

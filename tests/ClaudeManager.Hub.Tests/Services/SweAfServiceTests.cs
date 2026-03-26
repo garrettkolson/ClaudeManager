@@ -778,6 +778,22 @@ public class SweAfServiceTests
         err.Should().Contain("400");
     }
 
+    // ── SeedJob helper ────────────────────────────────────────────────────────
+
+    private async Task SeedJob(string externalId, BuildStatus status)
+    {
+        await using var db = _dbFactory.CreateDbContext();
+        db.SweAfJobs.Add(new SweAfJobEntity
+        {
+            ExternalJobId = externalId,
+            Goal          = "Goal",
+            RepoUrl       = "https://github.com/org/repo",
+            Status        = status,
+            CreatedAt     = DateTimeOffset.UtcNow,
+        });
+        await db.SaveChangesAsync();
+    }
+
     [Test]
     public async Task ProcessWebhookBatchAsync_NotifiesOnStateChange()
     {
@@ -802,5 +818,162 @@ public class SweAfServiceTests
 
         notified.Should().NotBeNull();
         notified!.Status.Should().Be(BuildStatus.Running);
+    }
+
+    // ── ProcessWebhookBatchAsync – additional event types ─────────────────────
+
+    [Test]
+    public async Task ProcessWebhookBatchAsync_ExecutionCancelled_SetsCancelled()
+    {
+        await SeedJob("exec-cancel-ev", BuildStatus.Running);
+        var svc = CreateService(MockHttp(HttpStatusCode.OK).Object);
+        await svc.ProcessWebhookBatchAsync(MakeBatch("execution_cancelled", "exec-cancel-ev"));
+
+        await using var db = _dbFactory.CreateDbContext();
+        (await db.SweAfJobs.SingleAsync()).Status.Should().Be(BuildStatus.Cancelled);
+    }
+
+    [Test]
+    public async Task ProcessWebhookBatchAsync_ExecutionWaiting_SetsWaiting()
+    {
+        await SeedJob("exec-wait-ev", BuildStatus.Running);
+        var svc = CreateService(MockHttp(HttpStatusCode.OK).Object);
+        await svc.ProcessWebhookBatchAsync(MakeBatch("execution_waiting", "exec-wait-ev"));
+
+        await using var db = _dbFactory.CreateDbContext();
+        (await db.SweAfJobs.SingleAsync()).Status.Should().Be(BuildStatus.Waiting);
+    }
+
+    [Test]
+    public async Task ProcessWebhookBatchAsync_ExecutionPaused_SetsWaiting()
+    {
+        await SeedJob("exec-paused-ev", BuildStatus.Running);
+        var svc = CreateService(MockHttp(HttpStatusCode.OK).Object);
+        await svc.ProcessWebhookBatchAsync(MakeBatch("execution_paused", "exec-paused-ev"));
+
+        await using var db = _dbFactory.CreateDbContext();
+        (await db.SweAfJobs.SingleAsync()).Status.Should().Be(BuildStatus.Waiting);
+    }
+
+    [Test]
+    public async Task ProcessWebhookBatchAsync_ExecutionUpdated_AppliesStatusFromPayload()
+    {
+        await SeedJob("exec-upd-ev", BuildStatus.Running);
+        var svc   = CreateService(MockHttp(HttpStatusCode.OK).Object);
+        var batch = MakeBatch("execution_updated", "exec-upd-ev", extra: new { status = "waiting" });
+        await svc.ProcessWebhookBatchAsync(batch);
+
+        await using var db = _dbFactory.CreateDbContext();
+        (await db.SweAfJobs.SingleAsync()).Status.Should().Be(BuildStatus.Waiting);
+    }
+
+    [Test]
+    public async Task ProcessWebhookBatchAsync_SinglePullRequestUrl_Parsed()
+    {
+        await SeedJob("exec-pr-single", BuildStatus.Running);
+
+        var dict = new Dictionary<string, object?>
+        {
+            ["target"]       = "swe-planner.build",
+            ["execution_id"] = "exec-pr-single",
+            ["result"]       = new { pull_request_url = "https://github.com/org/repo/pull/42" },
+        };
+        var data  = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(dict));
+        var evt   = new ObservabilityEvent("execution_completed", "test", DateTimeOffset.UtcNow, data);
+        var batch = new ObservabilityBatch("b1", 1, [evt], DateTimeOffset.UtcNow);
+
+        var svc = CreateService(MockHttp(HttpStatusCode.OK).Object);
+        await svc.ProcessWebhookBatchAsync(batch);
+
+        await using var db = _dbFactory.CreateDbContext();
+        var job = await db.SweAfJobs.SingleAsync();
+        job.Status.Should().Be(BuildStatus.Succeeded);
+        job.PrUrls.Should().Contain("https://github.com/org/repo/pull/42");
+    }
+
+    // ── FetchExecutionDetailAsync – additional coverage ────────────────────────
+
+    [Test]
+    public async Task FetchExecutionDetailAsync_WithInputField_InputJsonIsPopulated()
+    {
+        var body = new
+        {
+            execution_id = "ext-fd-input",
+            status       = "running",
+            input        = new { goal = "Fix it", repo_url = "https://github.com/org/repo" },
+        };
+        var svc    = CreateService(MockHttp(HttpStatusCode.OK, body).Object);
+        var detail = await svc.FetchExecutionDetailAsync("ext-fd-input");
+
+        detail.Should().NotBeNull();
+        detail!.InputJson.Should().NotBeNullOrWhiteSpace();
+        detail.InputJson.Should().Contain("goal");
+    }
+
+    [Test]
+    public async Task FetchExecutionDetailAsync_WithErrorField_ErrorIsPopulated()
+    {
+        var body = new { execution_id = "ext-fd-err", status = "failed", error = "Build blew up" };
+        var svc    = CreateService(MockHttp(HttpStatusCode.OK, body).Object);
+        var detail = await svc.FetchExecutionDetailAsync("ext-fd-err");
+
+        detail.Should().NotBeNull();
+        detail!.Error.Should().Be("Build blew up");
+    }
+
+    // ── ReconcileAsync ────────────────────────────────────────────────────────
+
+    [Test]
+    public async Task ReconcileAsync_RunningJob_UpdatedToSucceeded()
+    {
+        await SeedJob("ext-recon-1", BuildStatus.Running);
+
+        var body = new { execution_id = "ext-recon-1", status = "succeeded" };
+        var svc  = CreateService(MockHttp(HttpStatusCode.OK, body).Object);
+        await svc.ReconcileAsync(["ext-recon-1"]);
+
+        await using var db = _dbFactory.CreateDbContext();
+        var job = await db.SweAfJobs.SingleAsync();
+        job.Status.Should().Be(BuildStatus.Succeeded);
+        job.CompletedAt.Should().NotBeNull();
+    }
+
+    [Test]
+    public async Task ReconcileAsync_StatusUnchanged_DoesNotNotify()
+    {
+        await SeedJob("ext-recon-2", BuildStatus.Running);
+
+        var body = new { execution_id = "ext-recon-2", status = "running" };
+        var svc  = CreateService(MockHttp(HttpStatusCode.OK, body).Object);
+
+        SweAfJobEntity? notified = null;
+        _notifier.BuildChanged += j => notified = j;
+
+        await svc.ReconcileAsync(["ext-recon-2"]);
+
+        notified.Should().BeNull();
+    }
+
+    [Test]
+    public async Task ReconcileAsync_HttpError_IsSkipped()
+    {
+        await SeedJob("ext-recon-3", BuildStatus.Running);
+
+        var svc = CreateService(MockHttp(HttpStatusCode.NotFound).Object);
+        await svc.Invoking(s => s.ReconcileAsync(["ext-recon-3"]))
+            .Should().NotThrowAsync();
+
+        await using var db = _dbFactory.CreateDbContext();
+        (await db.SweAfJobs.SingleAsync()).Status.Should().Be(BuildStatus.Running);
+    }
+
+    [Test]
+    public async Task ReconcileAsync_JobNotInDb_IsSkipped()
+    {
+        // No job seeded — should not throw or crash
+        var body = new { execution_id = "ext-recon-missing", status = "succeeded" };
+        var svc  = CreateService(MockHttp(HttpStatusCode.OK, body).Object);
+        await svc.Invoking(s => s.ReconcileAsync(["ext-recon-missing"]))
+            .Should().NotThrowAsync();
     }
 }

@@ -15,7 +15,7 @@ namespace ClaudeManager.Integration.Tests;
 /// A temporary SQLite file replaces the production database path so <c>MigrateAsync</c> works
 /// and test data is isolated from production.
 /// </summary>
-public sealed class HubWebApplicationFactory : WebApplicationFactory<Program>
+public class HubWebApplicationFactory : WebApplicationFactory<Program>
 {
     public const string TestSecret = "integration-test-secret";
 
