@@ -81,6 +81,9 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("ProxyPort")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("SshKeyPath")
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");

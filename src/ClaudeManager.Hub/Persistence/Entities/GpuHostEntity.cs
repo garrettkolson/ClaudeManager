@@ -32,5 +32,11 @@ public class GpuHostEntity
     [MaxLength(500)]
     public string? SshPassword { get; set; }
 
+    /// <summary>
+    /// Host port for the nginx reverse proxy container. Null means the proxy is not configured.
+    /// The nginx container listens on this port and routes to per-model vLLM upstreams.
+    /// </summary>
+    public int? ProxyPort { get; set; }
+
     public DateTimeOffset AddedAt { get; set; }
 }
