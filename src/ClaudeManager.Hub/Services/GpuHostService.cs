@@ -26,6 +26,12 @@ public class GpuHostService
         return await db.GpuHosts.FindAsync(id);
     }
 
+    public async Task<GpuHostEntity?> GetByHostIdAsync(string hostId)
+    {
+        await using var db = _dbFactory.CreateDbContext();
+        return await db.GpuHosts.FirstOrDefaultAsync(h => h.HostId == hostId);
+    }
+
     public async Task<GpuHostEntity> AddAsync(GpuHostEntity host)
     {
         host.AddedAt = DateTimeOffset.UtcNow;

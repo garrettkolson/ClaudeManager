@@ -51,6 +51,9 @@ builder.Services.AddSingleton<AgentCommandService>();
 builder.Services.AddSingleton<GpuHostService>();
 builder.Services.AddSingleton<HubSecretService>();
 builder.Services.AddSingleton<LlmGpuDiscoveryService>();
+builder.Services.AddSingleton<LlmDeploymentNotifier>();
+builder.Services.AddSingleton<LlmInstanceService>();
+builder.Services.AddSingleton<LlmDeploymentService>();
 
 // ── SWE-AF / AgentField ───────────────────────────────────────────────────────
 

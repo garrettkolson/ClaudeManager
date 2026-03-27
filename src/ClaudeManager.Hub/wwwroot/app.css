@@ -302,3 +302,32 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 .llm-gpu-table td { color: #aaa; border-bottom: 1px solid #1a2233; }
 .btn-danger-sm { background: #3a1a1a; color: #cf6679; border: 1px solid #5a2a2a; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
 .btn-danger-sm:hover { background: #5a2020; }
+
+/* ── LLM Deployments ── */
+.llm-deploy-table { width: 100%; border-collapse: collapse; }
+.llm-deploy-table th, .llm-deploy-table td { padding: 8px 12px; text-align: left; font-size: 13px; }
+.llm-deploy-table th { color: #777; font-weight: normal; border-bottom: 1px solid #333; }
+.llm-deploy-row td { border-bottom: 1px solid #2a2a2a; }
+.llm-deploy-model { max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #cdd6f4; }
+.llm-deploy-actions { display: flex; gap: 6px; white-space: nowrap; align-items: center; }
+.llm-deploy-error-row td { padding: 0 12px 8px; }
+.llm-deploy-error { margin: 0; }
+.llm-status-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: bold; text-transform: uppercase; }
+.llm-status-badge.stopped  { background: #2a2a2a; color: #888; }
+.llm-status-badge.starting { background: #1a2a3a; color: #7cb8ff; }
+.llm-status-badge.running  { background: #1a3a1a; color: #4caf50; }
+.llm-status-badge.error    { background: #3a1a1a; color: #cf6679; }
+.btn-start-sm { background: #1a3a1a; color: #4caf50; border: 1px solid #2a5a2a; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
+.btn-start-sm:hover { background: #234e23; }
+.btn-start-sm:disabled { opacity: 0.45; cursor: not-allowed; }
+.llm-logs-row td { background: #0a1020; padding: 8px 12px 12px; }
+.llm-logs-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.llm-logs-pre { background: #060d18; border: 1px solid #1e2e44; border-radius: 4px; padding: 10px; font-size: 11px; color: #8899bb; white-space: pre-wrap; word-break: break-word; max-height: 400px; overflow-y: auto; margin: 0; font-family: monospace; }
+/* GPU picker in deployment form */
+.llm-gpu-picker { display: flex; flex-direction: column; gap: 6px; }
+.llm-gpu-checkboxes { display: flex; flex-direction: column; gap: 4px; }
+.llm-gpu-checkbox-label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #cdd6f4; cursor: pointer; }
+.llm-gpu-checkbox-label input[type="checkbox"] { accent-color: #5a8aff; }
+.llm-gpu-error { margin: 0 0 6px; }
+.llm-vram-hint { font-size: 12px; color: #8899bb; white-space: nowrap; }
+.llm-hint { font-size: 12px; color: #5a6a88; font-style: italic; }
