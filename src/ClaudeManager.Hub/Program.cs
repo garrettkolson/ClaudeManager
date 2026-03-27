@@ -48,6 +48,9 @@ builder.Services.AddHostedService<DbPruningService>();
 builder.Services.AddSingleton<WikiService>();
 builder.Services.AddSingleton<IWikiService>(sp => sp.GetRequiredService<WikiService>());
 builder.Services.AddSingleton<AgentCommandService>();
+builder.Services.AddSingleton<GpuHostService>();
+builder.Services.AddSingleton<HubSecretService>();
+builder.Services.AddSingleton<LlmGpuDiscoveryService>();
 
 // ── SWE-AF / AgentField ───────────────────────────────────────────────────────
 

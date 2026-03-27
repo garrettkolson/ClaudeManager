@@ -1,0 +1,328 @@
+@page "/llm"
+@inject GpuHostService GpuSvc
+@inject HubSecretService SecretSvc
+@inject LlmGpuDiscoveryService DiscoverySvc
+@using ClaudeManager.Hub.Persistence.Entities
+@using ClaudeManager.Hub.Services
+
+<PageTitle>LLM Servers – Claude Manager</PageTitle>
+
+<div class="llm-page">
+    <h1>LLM Servers</h1>
+
+    @* ── Global Settings ─────────────────────────────────────────────────── *@
+
+    <section class="llm-section">
+        <h2>Global Settings</h2>
+        <div class="llm-settings-form">
+            <label class="llm-label">HuggingFace API Token</label>
+            <div class="llm-input-row">
+                <input type="password"
+                       class="llm-input"
+                       @bind="_hfToken"
+                       placeholder="hf_…  (leave blank to clear)" />
+                <button class="btn-primary" @onclick="SaveHfToken" disabled="@_savingToken">
+                    @(_savingToken ? "Saving…" : "Save")
+                </button>
+            </div>
+            @if (_tokenSaved)
+            {
+                <div class="llm-success">Token saved.</div>
+            }
+            @if (_tokenError is not null)
+            {
+                <div class="error-msg">@_tokenError</div>
+            }
+        </div>
+    </section>
+
+    @* ── GPU Hosts ───────────────────────────────────────────────────────── *@
+
+    <section class="llm-section">
+        <div class="llm-section-header">
+            <h2>GPU Hosts</h2>
+            <button class="btn-primary" @onclick="() => _showAddForm = !_showAddForm">
+                @(_showAddForm ? "Cancel" : "Add Host")
+            </button>
+        </div>
+
+        @if (_showAddForm)
+        {
+            <div class="llm-add-form">
+                <h3>New GPU Host</h3>
+                <div class="llm-form-grid">
+                    <label class="llm-label">Display Name *</label>
+                    <input class="llm-input" @bind="_form.DisplayName" placeholder="My GPU Server" />
+
+                    <label class="llm-label">Host *</label>
+                    <input class="llm-input" @bind="_form.Host" placeholder="192.168.1.50 or localhost" />
+
+                    <label class="llm-label">SSH Port</label>
+                    <input class="llm-input" @bind="_form.SshPort" type="number" />
+
+                    <label class="llm-label">SSH User</label>
+                    <input class="llm-input" @bind="_form.SshUser" placeholder="ubuntu" />
+
+                    <label class="llm-label">SSH Key Path</label>
+                    <input class="llm-input" @bind="_form.SshKeyPath" placeholder="~/.ssh/id_rsa" />
+
+                    <label class="llm-label">SSH Password</label>
+                    <input class="llm-input" type="password" @bind="_form.SshPassword"
+                           placeholder="Alternative to key auth" />
+                </div>
+                @if (_addError is not null)
+                {
+                    <div class="error-msg">@_addError</div>
+                }
+                <div class="llm-form-actions">
+                    <button class="btn-primary" @onclick="AddHost" disabled="@_addingHost">
+                        @(_addingHost ? "Adding…" : "Add Host")
+                    </button>
+                </div>
+            </div>
+        }
+
+        @if (_hosts is null)
+        {
+            <div class="loading">Loading…</div>
+        }
+        else if (_hosts.Count == 0)
+        {
+            <div class="empty-state">No GPU hosts configured yet. Add one to get started.</div>
+        }
+        else
+        {
+            <table class="llm-hosts-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Host</th>
+                        <th>SSH</th>
+                        <th>Added</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var host in _hosts)
+                    {
+                        var hostRef = host;
+                        <tr class="llm-host-row">
+                            <td>@host.DisplayName</td>
+                            <td class="llm-host-addr">@host.Host</td>
+                            <td class="llm-host-ssh">@host.SshUser@@@host.Host:@host.SshPort</td>
+                            <td class="llm-host-added">@host.AddedAt.LocalDateTime.ToString("MM/dd/yy")</td>
+                            <td class="llm-host-actions">
+                                <button class="btn-sm"
+                                        @onclick="() => ToggleInspect(hostRef)"
+                                        disabled="@(_inspectingId == hostRef.Id)">
+                                    @if (_inspectingId == hostRef.Id)
+                                    {
+                                        <span>Inspecting…</span>
+                                    }
+                                    else if (_gpuResults.ContainsKey(hostRef.Id))
+                                    {
+                                        <span>Hide GPUs</span>
+                                    }
+                                    else
+                                    {
+                                        <span>Inspect GPUs</span>
+                                    }
+                                </button>
+                                <button class="btn-sm btn-danger-sm"
+                                        @onclick="() => DeleteHost(hostRef)">Remove</button>
+                            </td>
+                        </tr>
+                        @if (_gpuErrors.TryGetValue(host.Id, out var gpuErr))
+                        {
+                            <tr class="llm-gpu-row">
+                                <td colspan="5"><div class="error-msg">@gpuErr</div></td>
+                            </tr>
+                        }
+                        else if (_gpuResults.TryGetValue(host.Id, out var gpus))
+                        {
+                            <tr class="llm-gpu-row">
+                                <td colspan="5">
+                                    <table class="llm-gpu-table">
+                                        <thead>
+                                            <tr>
+                                                <th>#</th>
+                                                <th>GPU</th>
+                                                <th>VRAM Total</th>
+                                                <th>VRAM Free</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var gpu in gpus)
+                                            {
+                                                <tr>
+                                                    <td>@gpu.Index</td>
+                                                    <td>@gpu.Name</td>
+                                                    <td>@FormatVram(gpu.MemoryTotalMb)</td>
+                                                    <td>@FormatVram(gpu.MemoryFreeMb)</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+</div>
+
+@code {
+    // ── State ─────────────────────────────────────────────────────────────────
+
+    private List<GpuHostEntity>? _hosts;
+
+    // Global settings
+    private string? _hfToken;
+    private bool    _savingToken;
+    private bool    _tokenSaved;
+    private string? _tokenError;
+
+    // Add-host form
+    private bool         _showAddForm;
+    private bool         _addingHost;
+    private string?      _addError;
+    private GpuHostForm  _form = new();
+
+    // GPU inspection
+    private long?                                    _inspectingId;
+    private Dictionary<long, IReadOnlyList<GpuInfo>> _gpuResults = new();
+    private Dictionary<long, string>                 _gpuErrors  = new();
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    protected override async Task OnInitializedAsync()
+    {
+        _hosts    = await GpuSvc.GetAllAsync();
+        _hfToken  = await SecretSvc.GetAsync(HubSecretService.HuggingFaceTokenKey);
+    }
+
+    // ── Global settings ───────────────────────────────────────────────────────
+
+    private async Task SaveHfToken()
+    {
+        _savingToken = true;
+        _tokenSaved  = false;
+        _tokenError  = null;
+        try
+        {
+            await SecretSvc.SetAsync(HubSecretService.HuggingFaceTokenKey,
+                string.IsNullOrWhiteSpace(_hfToken) ? null : _hfToken.Trim());
+            _tokenSaved = true;
+        }
+        catch (Exception ex)
+        {
+            _tokenError = ex.Message;
+        }
+        finally
+        {
+            _savingToken = false;
+        }
+    }
+
+    // ── GPU Hosts CRUD ────────────────────────────────────────────────────────
+
+    private async Task AddHost()
+    {
+        _addError = null;
+        if (string.IsNullOrWhiteSpace(_form.DisplayName))
+        {
+            _addError = "Display name is required.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_form.Host))
+        {
+            _addError = "Host is required.";
+            return;
+        }
+
+        _addingHost = true;
+        try
+        {
+            var entity = new GpuHostEntity
+            {
+                DisplayName = _form.DisplayName.Trim(),
+                Host        = _form.Host.Trim(),
+                SshPort     = _form.SshPort,
+                SshUser     = NullIfEmpty(_form.SshUser),
+                SshKeyPath  = NullIfEmpty(_form.SshKeyPath),
+                SshPassword = NullIfEmpty(_form.SshPassword),
+            };
+            await GpuSvc.AddAsync(entity);
+            _hosts = await GpuSvc.GetAllAsync();
+            _form  = new GpuHostForm();
+            _showAddForm = false;
+        }
+        catch (Exception ex)
+        {
+            _addError = ex.Message;
+        }
+        finally
+        {
+            _addingHost = false;
+        }
+    }
+
+    private async Task DeleteHost(GpuHostEntity host)
+    {
+        await GpuSvc.DeleteAsync(host.Id);
+        _gpuResults.Remove(host.Id);
+        _gpuErrors.Remove(host.Id);
+        _hosts = await GpuSvc.GetAllAsync();
+    }
+
+    // ── GPU Inspection ────────────────────────────────────────────────────────
+
+    private async Task ToggleInspect(GpuHostEntity host)
+    {
+        if (_gpuResults.ContainsKey(host.Id))
+        {
+            _gpuResults.Remove(host.Id);
+            _gpuErrors.Remove(host.Id);
+            return;
+        }
+
+        _inspectingId = host.Id;
+        _gpuErrors.Remove(host.Id);
+        try
+        {
+            var (gpus, error) = await DiscoverySvc.DiscoverAsync(host);
+            if (error is not null)
+                _gpuErrors[host.Id] = error;
+            else
+                _gpuResults[host.Id] = gpus;
+        }
+        finally
+        {
+            _inspectingId = null;
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static string? NullIfEmpty(string? s) =>
+        string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    private static string FormatVram(int mb) =>
+        mb >= 1024
+            ? $"{mb / 1024.0:F1} GB"
+            : $"{mb} MB";
+
+    // ── Form model ────────────────────────────────────────────────────────────
+
+    private sealed class GpuHostForm
+    {
+        public string  DisplayName { get; set; } = "";
+        public string  Host        { get; set; } = "";
+        public int     SshPort     { get; set; } = 22;
+        public string? SshUser     { get; set; }
+        public string? SshKeyPath  { get; set; }
+        public string? SshPassword { get; set; }
+    }
+}

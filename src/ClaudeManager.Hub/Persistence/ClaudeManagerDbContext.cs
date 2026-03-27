@@ -10,6 +10,8 @@ public class ClaudeManagerDbContext : DbContext
     public DbSet<StreamedLineEntity> StreamedLines { get; set; } = default!;
     public DbSet<WikiEntryEntity>  WikiEntries { get; set; } = default!;
     public DbSet<SweAfJobEntity>  SweAfJobs   { get; set; } = default!;
+    public DbSet<GpuHostEntity>   GpuHosts    { get; set; } = default!;
+    public DbSet<HubSecretEntity> HubSecrets  { get; set; } = default!;
 
     public ClaudeManagerDbContext(DbContextOptions<ClaudeManagerDbContext> options)
         : base(options) { }
@@ -39,5 +41,9 @@ public class ClaudeManagerDbContext : DbContext
 
         mb.Entity<StreamedLineEntity>()
             .HasIndex(l => l.SessionId);
+
+        mb.Entity<GpuHostEntity>()
+            .HasIndex(h => h.HostId)
+            .IsUnique();
     }
 }
