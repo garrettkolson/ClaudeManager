@@ -5,6 +5,7 @@
 @inject LlmGpuDiscoveryService DiscoverySvc
 @inject LlmDeploymentService DeploymentSvc
 @inject LlmDeploymentNotifier Notifier
+@inject ModelConfigFetcher ModelConfigFetcher
 @using ClaudeManager.Hub.Persistence.Entities
 @using ClaudeManager.Hub.Services
 
@@ -246,9 +247,31 @@
                         }
                     </div>
 
+                    <label class="llm-label">Max Context</label>
+                    <div class="llm-context-estimate-row">
+                        <button class="btn-sm" type="button"
+                                @onclick="EstimateContextAsync"
+                                disabled="@(_estimatingContext || string.IsNullOrWhiteSpace(_deployForm.ModelId))">
+                            @(_estimatingContext ? "Fetching…" : "Estimate")
+                        </button>
+                        @if (_contextEstimateError is not null)
+                        {
+                            <span class="llm-hint error-text">@_contextEstimateError</span>
+                        }
+                        else if (_estimatedMaxContext.HasValue)
+                        {
+                            <span class="llm-hint">
+                                Native: @MaxContextEstimator.FormatTokens(_nativeMaxContext!.Value) |
+                                Recommended: @MaxContextEstimator.FormatTokens(_estimatedMaxContext.Value)
+                            </span>
+                        }
+                        <input class="llm-input llm-maxlen-input" @bind="_deployForm.MaxModelLen" type="number"
+                               placeholder="leave blank for vLLM default" />
+                    </div>
+
                     <label class="llm-label">Extra Args</label>
                     <input class="llm-input" @bind="_deployForm.ExtraArgs"
-                           placeholder="--max-model-len 4096 --dtype float16" />
+                           placeholder="--dtype float16" />
 
                     <label class="llm-label">HF Token Override</label>
                     <input class="llm-input" type="password" @bind="_deployForm.HfTokenOverride"
@@ -294,7 +317,13 @@
                             <td class="llm-deploy-model" title="@dep.ModelId">@TruncateModel(dep.ModelId)</td>
                             <td>@dep.GpuIndices</td>
                             <td>@dep.HostPort</td>
-                            <td><span class="llm-image-tag @dep.ImageTag">@dep.ImageTag</span></td>
+                            <td>
+                                <span class="llm-image-tag @dep.ImageTag">@dep.ImageTag</span>
+                                @if (dep.MaxModelLen.HasValue)
+                                {
+                                    <span class="llm-hint" title="--max-model-len">@MaxContextEstimator.FormatTokens(dep.MaxModelLen.Value)</span>
+                                }
+                            </td>
                             <td><span class="llm-status-badge @dep.Status.ToString().ToLower()">@dep.Status</span></td>
                             <td class="llm-deploy-actions">
                                 @if (dep.Status is LlmDeploymentStatus.Stopped or LlmDeploymentStatus.Error)
@@ -387,6 +416,12 @@
     private IReadOnlyList<GpuInfo>? _formGpus;
     private bool    _inspectingFormGpus;
     private string? _formGpuError;
+
+    // Context estimation
+    private bool    _estimatingContext;
+    private long?   _estimatedMaxContext;
+    private long?   _nativeMaxContext;
+    private string? _contextEstimateError;
 
     // Action busy-state (by deployment ID)
     private HashSet<long> _busyIds = [];
@@ -547,14 +582,18 @@
                 quantization:    _deployForm.Quantization,
                 imageTag:        _deployForm.ImageTag,
                 extraArgs:       _deployForm.ExtraArgs,
-                hfTokenOverride: _deployForm.HfTokenOverride);
+                hfTokenOverride: _deployForm.HfTokenOverride,
+                maxModelLen:     _deployForm.MaxModelLen);
 
             _deployments ??= [];
             _deployments.Add(d);
-            _deployForm      = new DeploymentForm();
-            _formGpus        = null;
-            _formGpuError    = null;
-            _showDeployForm  = false;
+            _deployForm            = new DeploymentForm();
+            _formGpus              = null;
+            _formGpuError          = null;
+            _estimatedMaxContext   = null;
+            _nativeMaxContext      = null;
+            _contextEstimateError  = null;
+            _showDeployForm        = false;
         }
         catch (Exception ex) { _deployAddError = ex.Message; }
         finally { _addingDeployment = false; }
@@ -594,6 +633,62 @@
             if (_viewingLogsId == dep.Id) _viewingLogsId = null;
         }
         finally { _busyIds.Remove(dep.Id); }
+    }
+
+    // ── Context estimation ────────────────────────────────────────────────────
+
+    private async Task EstimateContextAsync()
+    {
+        _estimatingContext    = true;
+        _estimatedMaxContext  = null;
+        _nativeMaxContext     = null;
+        _contextEstimateError = null;
+
+        try
+        {
+            var hfToken = !string.IsNullOrWhiteSpace(_deployForm.HfTokenOverride)
+                ? _deployForm.HfTokenOverride
+                : await SecretSvc.GetAsync(HubSecretService.HuggingFaceTokenKey);
+
+            var (config, fetchError) = await ModelConfigFetcher.FetchAsync(_deployForm.ModelId.Trim(), hfToken);
+
+            if (fetchError is not null)
+            {
+                _contextEstimateError = fetchError;
+                return;
+            }
+
+            _nativeMaxContext = config!.MaxPositionEmbeddings;
+
+            if (_deployForm.ParamsBillions is > 0 && _formGpus is not null && _deployForm.SelectedGpuIndices.Count > 0)
+            {
+                var selectedGpus   = _formGpus.Where(g => _deployForm.SelectedGpuIndices.Contains(g.Index)).ToList();
+                var totalVramGb    = selectedGpus.Sum(g => g.MemoryTotalMb) / 1024.0;
+                var recommendation = MaxContextEstimator.Estimate(
+                    config, totalVramGb, _deployForm.ParamsBillions.Value, _deployForm.Quantization);
+
+                if (recommendation.HasValue)
+                {
+                    _estimatedMaxContext    = recommendation;
+                    _deployForm.MaxModelLen = (int)Math.Min(recommendation.Value, int.MaxValue);
+                }
+                else
+                {
+                    _contextEstimateError = "Not enough VRAM for model weights. Check your GPU selection and parameter count.";
+                }
+            }
+            else if (_deployForm.ParamsBillions is null or <= 0)
+            {
+                _contextEstimateError = "Enter the model's parameter count (B) to get a VRAM-based recommendation. Native max: "
+                    + MaxContextEstimator.FormatTokens(_nativeMaxContext.Value) + ".";
+            }
+            else
+            {
+                _contextEstimateError = "Select at least one GPU to get a VRAM-based recommendation. Native max: "
+                    + MaxContextEstimator.FormatTokens(_nativeMaxContext.Value) + ".";
+            }
+        }
+        finally { _estimatingContext = false; }
     }
 
     // ── Logs ──────────────────────────────────────────────────────────────────
@@ -659,6 +754,7 @@
         public string  ImageTag        { get; set; } = "latest";
         public string  Quantization    { get; set; } = "none";
         public double? ParamsBillions  { get; set; }
+        public int?    MaxModelLen     { get; set; }
         public string? ExtraArgs       { get; set; }
         public string? HfTokenOverride { get; set; }
     }

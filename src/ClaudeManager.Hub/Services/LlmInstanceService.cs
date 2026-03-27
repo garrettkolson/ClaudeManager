@@ -115,6 +115,10 @@ public class LlmInstanceService
         if (deployment.Quantization is not "none")
             sb.Append($" --quantization {deployment.Quantization}");
 
+        // Pre-computed max context length
+        if (deployment.MaxModelLen.HasValue)
+            sb.Append($" --max-model-len {deployment.MaxModelLen.Value}");
+
         // Extra user-supplied args
         if (!string.IsNullOrWhiteSpace(deployment.ExtraArgs))
             sb.Append($" {deployment.ExtraArgs.Trim()}");
