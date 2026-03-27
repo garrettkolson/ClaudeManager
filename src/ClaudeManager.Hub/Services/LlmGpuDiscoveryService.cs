@@ -123,7 +123,7 @@ public class LlmGpuDiscoveryService
 
     // ── Parsing ───────────────────────────────────────────────────────────────
 
-    private static IReadOnlyList<GpuInfo> Parse(string stdout)
+    internal static IReadOnlyList<GpuInfo> Parse(string stdout)
     {
         var results = new List<GpuInfo>();
         foreach (var line in stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
