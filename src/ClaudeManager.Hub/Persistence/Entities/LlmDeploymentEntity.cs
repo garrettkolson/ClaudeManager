@@ -1,0 +1,57 @@
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+using ClaudeManager.Hub.Services;
+
+namespace ClaudeManager.Hub.Persistence.Entities;
+
+[Table("LlmDeployments")]
+public class LlmDeploymentEntity
+{
+    [Key]
+    [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
+    public long Id { get; set; }
+
+    /// <summary>Unique human-readable slug.</summary>
+    [MaxLength(100)]
+    public string DeploymentId { get; set; } = default!;
+
+    /// <summary>References GpuHostEntity.HostId.</summary>
+    [MaxLength(100)]
+    public string HostId { get; set; } = default!;
+
+    /// <summary>HuggingFace model ID, e.g. "meta-llama/Llama-3.1-8B-Instruct".</summary>
+    [MaxLength(500)]
+    public string ModelId { get; set; } = default!;
+
+    /// <summary>Comma-separated GPU indices, e.g. "0" or "0,1".</summary>
+    [MaxLength(200)]
+    public string GpuIndices { get; set; } = default!;
+
+    /// <summary>Port exposed on the GPU host (mapped to container port 8000).</summary>
+    public int HostPort { get; set; }
+
+    /// <summary>Quantization mode: "none", "awq", or "gptq".</summary>
+    [MaxLength(50)]
+    public string Quantization { get; set; } = "none";
+
+    /// <summary>Additional vLLM CLI arguments, e.g. "--max-model-len 4096 --dtype float16".</summary>
+    [MaxLength(1000)]
+    public string? ExtraArgs { get; set; }
+
+    /// <summary>Per-deployment HuggingFace token; overrides the global Hub secret when set.</summary>
+    [MaxLength(500)]
+    public string? HfTokenOverride { get; set; }
+
+    public LlmDeploymentStatus Status { get; set; }
+
+    /// <summary>Docker container ID returned by "docker run -d".</summary>
+    [MaxLength(100)]
+    public string? ContainerId { get; set; }
+
+    /// <summary>Last error message when Status = Error.</summary>
+    [MaxLength(2000)]
+    public string? ErrorMessage { get; set; }
+
+    public DateTimeOffset CreatedAt  { get; set; }
+    public DateTimeOffset? StartedAt { get; set; }
+}
