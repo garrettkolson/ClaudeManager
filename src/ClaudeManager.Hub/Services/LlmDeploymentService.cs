@@ -14,6 +14,7 @@ public class LlmDeploymentService
     private readonly GpuHostService         _gpuHosts;
     private readonly HubSecretService       _secrets;
     private readonly LlmDeploymentNotifier  _notifier;
+    private readonly NginxProxyService      _nginxProxy;
     private readonly ILogger<LlmDeploymentService> _logger;
 
     public LlmDeploymentService(
@@ -22,14 +23,16 @@ public class LlmDeploymentService
         GpuHostService        gpuHosts,
         HubSecretService      secrets,
         LlmDeploymentNotifier notifier,
+        NginxProxyService     nginxProxy,
         ILogger<LlmDeploymentService> logger)
     {
-        _dbFactory = dbFactory;
-        _instance  = instance;
-        _gpuHosts  = gpuHosts;
-        _secrets   = secrets;
-        _notifier  = notifier;
-        _logger    = logger;
+        _dbFactory  = dbFactory;
+        _instance   = instance;
+        _gpuHosts   = gpuHosts;
+        _secrets    = secrets;
+        _notifier   = notifier;
+        _nginxProxy = nginxProxy;
+        _logger     = logger;
     }
 
     // ── CRUD ──────────────────────────────────────────────────────────────────
@@ -111,20 +114,20 @@ public class LlmDeploymentService
             ? deployment.HfTokenOverride
             : await _secrets.GetAsync(HubSecretService.HuggingFaceTokenKey);
 
-        // Transition to Starting
+        // Transition to Starting (no nginx refresh needed — container not yet running)
         await SetStatusAsync(deployment, LlmDeploymentStatus.Starting, containerId: null, error: null);
 
         var (containerId, error) = await _instance.StartContainerAsync(host, deployment, hfToken, ct);
 
         if (error is not null)
         {
-            await SetStatusAsync(deployment, LlmDeploymentStatus.Error, containerId: null, error: error);
+            await SetStatusAsync(deployment, LlmDeploymentStatus.Error, containerId: null, error: error, ct);
             return error;
         }
 
         deployment.ContainerId = containerId;
         deployment.StartedAt   = DateTimeOffset.UtcNow;
-        await SetStatusAsync(deployment, LlmDeploymentStatus.Running, containerId, error: null);
+        await SetStatusAsync(deployment, LlmDeploymentStatus.Running, containerId, error: null, ct);
         return null;
     }
 
@@ -139,7 +142,7 @@ public class LlmDeploymentService
 
         if (deployment.ContainerId is null)
         {
-            await SetStatusAsync(deployment, LlmDeploymentStatus.Stopped, containerId: null, error: null);
+            await SetStatusAsync(deployment, LlmDeploymentStatus.Stopped, containerId: null, error: null, ct);
             return null;
         }
 
@@ -150,7 +153,8 @@ public class LlmDeploymentService
 
         await SetStatusAsync(deployment, LlmDeploymentStatus.Stopped,
             containerId: null,
-            error: error is not null ? $"Stop warning: {error}" : null);
+            error: error is not null ? $"Stop warning: {error}" : null,
+            ct);
 
         return error;
     }
@@ -181,18 +185,19 @@ public class LlmDeploymentService
     }
 
     private async Task SetStatusAsync(LlmDeploymentEntity deployment,
-        LlmDeploymentStatus status, string? containerId, string? error)
+        LlmDeploymentStatus status, string? containerId, string? error,
+        CancellationToken ct = default)
     {
         await using var db = _dbFactory.CreateDbContext();
-        var entity = await db.LlmDeployments.FindAsync(deployment.Id);
+        var entity = await db.LlmDeployments.FindAsync([deployment.Id], ct);
         if (entity is null) return;
 
-        entity.Status      = status;
+        entity.Status       = status;
         entity.ErrorMessage = error;
         if (containerId is not null) entity.ContainerId = containerId;
         if (status == LlmDeploymentStatus.Stopped) entity.ContainerId = null;
 
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(ct);
 
         // Reflect changes back to the in-memory reference for the caller
         deployment.Status       = entity.Status;
@@ -200,5 +205,24 @@ public class LlmDeploymentService
         deployment.ContainerId  = entity.ContainerId;
 
         _notifier.NotifyChanged(entity);
+
+        // Update the nginx proxy config whenever the running set may have changed.
+        // Errors are non-fatal — logged as warnings so they don't block the deployment operation.
+        await RefreshNginxConfigAsync(deployment.HostId, ct);
+    }
+
+    private async Task RefreshNginxConfigAsync(string hostId, CancellationToken ct)
+    {
+        var host = await _gpuHosts.GetByHostIdAsync(hostId);
+        if (host?.ProxyPort is null) return;
+
+        await using var db = _dbFactory.CreateDbContext();
+        var running = await db.LlmDeployments
+            .Where(d => d.HostId == hostId && d.Status == LlmDeploymentStatus.Running)
+            .ToListAsync(ct);
+
+        var error = await _nginxProxy.ApplyConfigAsync(host, running, ct);
+        if (error is not null)
+            _logger.LogWarning("Nginx proxy update failed for host {HostId}: {Error}", hostId, error);
     }
 }

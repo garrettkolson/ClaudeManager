@@ -28,8 +28,10 @@ public class LlmDeploymentServiceTests
         _notifier     = new LlmDeploymentNotifier();
         _instanceMock = new Mock<LlmInstanceService>(NullLogger<LlmInstanceService>.Instance);
 
+        var nginxProxy = new NginxProxyService(NullLogger<NginxProxyService>.Instance);
+
         _svc = new LlmDeploymentService(
-            factory, _instanceMock.Object, _gpuHosts, _secrets, _notifier,
+            factory, _instanceMock.Object, _gpuHosts, _secrets, _notifier, nginxProxy,
             NullLogger<LlmDeploymentService>.Instance);
     }
 

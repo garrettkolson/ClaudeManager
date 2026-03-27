@@ -6,6 +6,7 @@
 @inject LlmDeploymentService DeploymentSvc
 @inject LlmDeploymentNotifier Notifier
 @inject ModelConfigFetcher ModelConfigFetcher
+@inject NginxProxyService NginxSvc
 @using ClaudeManager.Hub.Persistence.Entities
 @using ClaudeManager.Hub.Services
 
@@ -67,6 +68,13 @@
                     <label class="llm-label">SSH Password</label>
                     <input class="llm-input" type="password" @bind="_hostForm.SshPassword"
                            placeholder="Alternative to key auth" />
+
+                    <label class="llm-label">Proxy Port</label>
+                    <div class="llm-input-row">
+                        <input class="llm-input" @bind="_hostForm.ProxyPort" type="number"
+                               placeholder="e.g. 8080 (leave blank to disable proxy)" />
+                        <span class="llm-hint">nginx load-balancer port on this host</span>
+                    </div>
                 </div>
                 @if (_addHostError is not null) { <div class="error-msg">@_addHostError</div> }
                 <div class="llm-form-actions">
@@ -93,6 +101,7 @@
                         <th>Name</th>
                         <th>Host</th>
                         <th>SSH</th>
+                        <th>Proxy</th>
                         <th>Added</th>
                         <th></th>
                     </tr>
@@ -101,33 +110,81 @@
                     @foreach (var host in _hosts)
                     {
                         var hostRef = host;
+                        var (proxyStatus, proxyError, _) = NginxSvc.GetCachedStatus(host.HostId);
                         <tr class="llm-host-row">
                             <td>@host.DisplayName</td>
                             <td class="llm-host-addr">@host.Host</td>
                             <td class="llm-host-ssh">@host.SshUser@@@host.Host:@host.SshPort</td>
+                            <td class="llm-proxy-cell">
+                                @if (host.ProxyPort.HasValue)
+                                {
+                                    <span class="llm-proxy-badge @proxyStatus.ToString().ToLower()" title="@proxyError">
+                                        :@host.ProxyPort — @proxyStatus
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="llm-hint">—</span>
+                                }
+                            </td>
                             <td class="llm-host-added">@host.AddedAt.LocalDateTime.ToString("MM/dd/yy")</td>
                             <td class="llm-host-actions">
                                 <button class="btn-sm"
                                         @onclick="() => ToggleInspect(hostRef)"
                                         disabled="@(_inspectingId == hostRef.Id)">
-                                    @if (_inspectingId == hostRef.Id)        { <span>Inspecting…</span> }
+                                    @if (_inspectingId == hostRef.Id)            { <span>Inspecting…</span> }
                                     else if (_gpuResults.ContainsKey(hostRef.Id)) { <span>Hide GPUs</span> }
-                                    else                                     { <span>Inspect GPUs</span> }
+                                    else                                          { <span>Inspect GPUs</span> }
                                 </button>
+                                @if (hostRef.ProxyPort.HasValue)
+                                {
+                                    <button class="btn-sm"
+                                            @onclick="() => ApplyNginxConfig(hostRef)"
+                                            disabled="@_nginxBusyHosts.Contains(hostRef.Id)">
+                                        @(_nginxBusyHosts.Contains(hostRef.Id) ? "Applying…" : "Apply Proxy")
+                                    </button>
+                                    <button class="btn-sm"
+                                            @onclick="() => ToggleNginxConfig(hostRef)">
+                                        @(_viewingNginxConfigId == hostRef.Id ? "Hide Config" : "View Config")
+                                    </button>
+                                }
                                 <button class="btn-sm btn-danger-sm"
                                         @onclick="() => DeleteHost(hostRef)">Remove</button>
                             </td>
                         </tr>
+                        @if (_nginxConfigError.TryGetValue(host.Id, out var nginxErr))
+                        {
+                            <tr class="llm-gpu-row">
+                                <td colspan="6"><div class="error-msg">Proxy: @nginxErr</div></td>
+                            </tr>
+                        }
+                        @if (_viewingNginxConfigId == host.Id)
+                        {
+                            <tr class="llm-gpu-row">
+                                <td colspan="6">
+                                    <div class="llm-nginx-config-header">
+                                        <span class="llm-hint">Generated nginx config (not yet applied)</span>
+                                        @if (host.ProxyPort.HasValue)
+                                        {
+                                            <span class="llm-hint">
+                                                Endpoint: <code>http://@host.Host:@host.ProxyPort/{model-slug}/v1</code>
+                                            </span>
+                                        }
+                                    </div>
+                                    <pre class="llm-logs-pre">@GenerateNginxConfigForHost(host)</pre>
+                                </td>
+                            </tr>
+                        }
                         @if (_gpuErrors.TryGetValue(host.Id, out var gpuErr))
                         {
                             <tr class="llm-gpu-row">
-                                <td colspan="5"><div class="error-msg">@gpuErr</div></td>
+                                <td colspan="6"><div class="error-msg">@gpuErr</div></td>
                             </tr>
                         }
                         else if (_gpuResults.TryGetValue(host.Id, out var gpus))
                         {
                             <tr class="llm-gpu-row">
-                                <td colspan="5">
+                                <td colspan="6">
                                     <table class="llm-gpu-table">
                                         <thead>
                                             <tr><th>#</th><th>GPU</th><th>VRAM Total</th><th>VRAM Free</th></tr>
@@ -417,6 +474,11 @@
     private bool    _inspectingFormGpus;
     private string? _formGpuError;
 
+    // Nginx proxy state (per host)
+    private HashSet<long>           _nginxBusyHosts   = [];
+    private Dictionary<long, string> _nginxConfigError = new();
+    private long?                   _viewingNginxConfigId;
+
     // Context estimation
     private bool    _estimatingContext;
     private long?   _estimatedMaxContext;
@@ -491,6 +553,7 @@
                 SshUser     = NullIfBlank(_hostForm.SshUser),
                 SshKeyPath  = NullIfBlank(_hostForm.SshKeyPath),
                 SshPassword = NullIfBlank(_hostForm.SshPassword),
+                ProxyPort   = _hostForm.ProxyPort > 0 ? _hostForm.ProxyPort : null,
             });
             _hosts       = await GpuSvc.GetAllAsync();
             _hostForm    = new HostForm();
@@ -635,6 +698,39 @@
         finally { _busyIds.Remove(dep.Id); }
     }
 
+    // ── Nginx proxy ───────────────────────────────────────────────────────────
+
+    private async Task ApplyNginxConfig(GpuHostEntity host)
+    {
+        _nginxBusyHosts.Add(host.Id);
+        _nginxConfigError.Remove(host.Id);
+        try
+        {
+            var running = (_deployments ?? [])
+                .Where(d => d.HostId == host.HostId && d.Status == LlmDeploymentStatus.Running)
+                .ToList();
+
+            var error = await NginxSvc.ApplyConfigAsync(host, running);
+            if (error is not null)
+                _nginxConfigError[host.Id] = error;
+        }
+        finally { _nginxBusyHosts.Remove(host.Id); }
+    }
+
+    private void ToggleNginxConfig(GpuHostEntity host)
+    {
+        _viewingNginxConfigId = _viewingNginxConfigId == host.Id ? null : host.Id;
+    }
+
+    private string GenerateNginxConfigForHost(GpuHostEntity host)
+    {
+        if (host.ProxyPort is null) return "No proxy port configured.";
+        var running = (_deployments ?? [])
+            .Where(d => d.HostId == host.HostId && d.Status == LlmDeploymentStatus.Running)
+            .ToList();
+        return NginxProxyService.GenerateConfig(running, host.ProxyPort.Value);
+    }
+
     // ── Context estimation ────────────────────────────────────────────────────
 
     private async Task EstimateContextAsync()
@@ -742,6 +838,7 @@
         public string? SshUser     { get; set; }
         public string? SshKeyPath  { get; set; }
         public string? SshPassword { get; set; }
+        public int?    ProxyPort   { get; set; }
     }
 
     private sealed class DeploymentForm
