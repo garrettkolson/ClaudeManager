@@ -46,6 +46,12 @@ public class LlmDeploymentEntity
     [MaxLength(500)]
     public string? HfTokenOverride { get; set; }
 
+    /// <summary>
+    /// The max_model_len to pass to vLLM. When null the vLLM default is used.
+    /// Set from pre-deployment context estimation based on available VRAM.
+    /// </summary>
+    public int? MaxModelLen { get; set; }
+
     public LlmDeploymentStatus Status { get; set; }
 
     /// <summary>Docker container ID returned by "docker run -d".</summary>

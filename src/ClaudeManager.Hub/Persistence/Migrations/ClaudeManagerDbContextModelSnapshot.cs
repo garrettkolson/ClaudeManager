@@ -154,6 +154,9 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("MaxModelLen")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("HostId")
                         .IsRequired()
                         .HasMaxLength(100)
