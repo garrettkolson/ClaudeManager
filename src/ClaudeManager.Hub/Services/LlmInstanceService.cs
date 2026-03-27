@@ -105,7 +105,8 @@ public class LlmInstanceService
             sb.Append($" -e HUGGING_FACE_HUB_TOKEN={hfToken}");
 
         // vLLM image
-        sb.Append(" vllm/vllm-openai:latest");
+        var tag = string.IsNullOrWhiteSpace(deployment.ImageTag) ? "latest" : deployment.ImageTag;
+        sb.Append($" vllm/vllm-openai:{tag}");
 
         // Model
         sb.Append($" --model {deployment.ModelId}");

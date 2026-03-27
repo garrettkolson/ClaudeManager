@@ -162,6 +162,11 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                     b.Property<int>("HostPort")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("ImageTag")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("ModelId")
                         .IsRequired()
                         .HasMaxLength(500)

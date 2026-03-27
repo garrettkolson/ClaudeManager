@@ -331,3 +331,5 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 .llm-gpu-error { margin: 0 0 6px; }
 .llm-vram-hint { font-size: 12px; color: #8899bb; white-space: nowrap; }
 .llm-hint { font-size: 12px; color: #5a6a88; font-style: italic; }
+.llm-image-tag { font-size: 11px; color: #8899bb; font-family: monospace; }
+.llm-image-tag.nightly { color: #e5a050; }

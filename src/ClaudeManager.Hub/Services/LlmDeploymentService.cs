@@ -45,17 +45,19 @@ public class LlmDeploymentService
 
     public async Task<LlmDeploymentEntity> CreateAsync(
         string hostId, string modelId, string gpuIndices, int hostPort,
-        string quantization = "none", string? extraArgs = null, string? hfTokenOverride = null)
+        string quantization = "none", string imageTag = "latest",
+        string? extraArgs = null, string? hfTokenOverride = null)
     {
         var entity = new LlmDeploymentEntity
         {
-            DeploymentId   = Guid.NewGuid().ToString("N")[..12],
-            HostId         = hostId,
-            ModelId        = modelId.Trim(),
-            GpuIndices     = gpuIndices.Trim(),
-            HostPort       = hostPort,
-            Quantization   = quantization,
-            ExtraArgs      = string.IsNullOrWhiteSpace(extraArgs) ? null : extraArgs.Trim(),
+            DeploymentId    = Guid.NewGuid().ToString("N")[..12],
+            HostId          = hostId,
+            ModelId         = modelId.Trim(),
+            GpuIndices      = gpuIndices.Trim(),
+            HostPort        = hostPort,
+            Quantization    = quantization,
+            ImageTag        = string.IsNullOrWhiteSpace(imageTag) ? "latest" : imageTag.Trim(),
+            ExtraArgs       = string.IsNullOrWhiteSpace(extraArgs) ? null : extraArgs.Trim(),
             HfTokenOverride = string.IsNullOrWhiteSpace(hfTokenOverride) ? null : hfTokenOverride.Trim(),
             Status         = LlmDeploymentStatus.Stopped,
             CreatedAt      = DateTimeOffset.UtcNow,

@@ -223,6 +223,12 @@
                     <input class="llm-input" @bind="_deployForm.HostPort" type="number"
                            placeholder="8000" />
 
+                    <label class="llm-label">vLLM Image</label>
+                    <select class="llm-input" @bind="_deployForm.ImageTag">
+                        <option value="latest">latest (stable)</option>
+                        <option value="nightly">nightly (cutting edge)</option>
+                    </select>
+
                     <label class="llm-label">Quantization</label>
                     <select class="llm-input" @bind="_deployForm.Quantization">
                         <option value="none">none (fp16)</option>
@@ -274,6 +280,7 @@
                         <th>Model</th>
                         <th>GPUs</th>
                         <th>Port</th>
+                        <th>Image</th>
                         <th>Status</th>
                         <th></th>
                     </tr>
@@ -287,6 +294,7 @@
                             <td class="llm-deploy-model" title="@dep.ModelId">@TruncateModel(dep.ModelId)</td>
                             <td>@dep.GpuIndices</td>
                             <td>@dep.HostPort</td>
+                            <td><span class="llm-image-tag @dep.ImageTag">@dep.ImageTag</span></td>
                             <td><span class="llm-status-badge @dep.Status.ToString().ToLower()">@dep.Status</span></td>
                             <td class="llm-deploy-actions">
                                 @if (dep.Status is LlmDeploymentStatus.Stopped or LlmDeploymentStatus.Error)
@@ -316,13 +324,13 @@
                         @if (dep.ErrorMessage is not null && dep.Status == LlmDeploymentStatus.Error)
                         {
                             <tr class="llm-deploy-error-row">
-                                <td colspan="6"><div class="error-msg llm-deploy-error">@dep.ErrorMessage</div></td>
+                                <td colspan="7"><div class="error-msg llm-deploy-error">@dep.ErrorMessage</div></td>
                             </tr>
                         }
                         @if (_viewingLogsId == dep.Id)
                         {
                             <tr class="llm-logs-row">
-                                <td colspan="6">
+                                <td colspan="7">
                                     @if (_loadingLogs)
                                     {
                                         <div class="loading">Loading logs…</div>
@@ -537,6 +545,7 @@
                 gpuIndices:      gpuIndices,
                 hostPort:        _deployForm.HostPort,
                 quantization:    _deployForm.Quantization,
+                imageTag:        _deployForm.ImageTag,
                 extraArgs:       _deployForm.ExtraArgs,
                 hfTokenOverride: _deployForm.HfTokenOverride);
 
@@ -647,6 +656,7 @@
         public string  GpuIndicesText  { get; set; } = "";
         public List<int> SelectedGpuIndices { get; set; } = [];
         public int     HostPort        { get; set; } = 8000;
+        public string  ImageTag        { get; set; } = "latest";
         public string  Quantization    { get; set; } = "none";
         public double? ParamsBillions  { get; set; }
         public string? ExtraArgs       { get; set; }

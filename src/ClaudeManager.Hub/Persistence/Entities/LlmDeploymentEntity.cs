@@ -34,6 +34,10 @@ public class LlmDeploymentEntity
     [MaxLength(50)]
     public string Quantization { get; set; } = "none";
 
+    /// <summary>Docker image tag: "latest" (stable) or "nightly" (cutting edge).</summary>
+    [MaxLength(50)]
+    public string ImageTag { get; set; } = "latest";
+
     /// <summary>Additional vLLM CLI arguments, e.g. "--max-model-len 4096 --dtype float16".</summary>
     [MaxLength(1000)]
     public string? ExtraArgs { get; set; }
