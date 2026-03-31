@@ -6,6 +6,7 @@ namespace ClaudeManager.Hub.Services;
 
 /// <summary>
 /// Orchestrates vLLM deployment lifecycle: CRUD, start/stop, and log retrieval.
+/// Also triggers LLM proxy config updates via LlmDeploymentNotifier.
 /// </summary>
 public class LlmDeploymentService
 {
@@ -15,6 +16,7 @@ public class LlmDeploymentService
     private readonly HubSecretService       _secrets;
     private readonly LlmDeploymentNotifier  _notifier;
     private readonly NginxProxyService      _nginxProxy;
+    private readonly LlmProxyConfigService  _proxyConfig;
     private readonly ILogger<LlmDeploymentService> _logger;
 
     public LlmDeploymentService(
@@ -24,6 +26,7 @@ public class LlmDeploymentService
         HubSecretService      secrets,
         LlmDeploymentNotifier notifier,
         NginxProxyService     nginxProxy,
+        LlmProxyConfigService proxyConfig,
         ILogger<LlmDeploymentService> logger)
     {
         _dbFactory  = dbFactory;
@@ -32,6 +35,7 @@ public class LlmDeploymentService
         _secrets    = secrets;
         _notifier   = notifier;
         _nginxProxy = nginxProxy;
+        _proxyConfig = proxyConfig;
         _logger     = logger;
     }
 
@@ -126,7 +130,59 @@ public class LlmDeploymentService
         }
 
         deployment.ContainerId = containerId;
-        deployment.StartedAt   = DateTimeOffset.UtcNow;
+
+        // (C) Startup health poll — wait for vLLM to be ready before marking Running
+        _logger.LogInformation(
+            "Waiting for vLLM startup health check on deployment {Id}...", deployment.Id);
+
+        var startupCt = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        startupCt.CancelAfter(TimeSpan.FromSeconds(120)); // 2 minute timeout for model load
+
+        var healthPollInterval = TimeSpan.FromSeconds(2);
+        var startTime = DateTimeOffset.UtcNow;
+        var isHealthy = false;
+
+        while (!isHealthy && !startupCt.Token.IsCancellationRequested)
+        {
+            try
+            {
+                isHealthy = await _instance.CheckHealthAsync(host, deployment.HostPort, startupCt.Token);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug("Health poll failed during startup: {Error}", ex.Message);
+            }
+
+            if (!isHealthy)
+            {
+                await Task.Delay(healthPollInterval, startupCt.Token);
+            }
+        }
+
+        if (!isHealthy)
+        {
+            var elapsed = (DateTimeOffset.UtcNow - startTime).TotalSeconds;
+            _logger.LogWarning(
+                "Startup health check timed out after {Elapsed}s for deployment {Id}",
+                elapsed, deployment.Id);
+
+            // Clean up the container
+            await _instance.StopContainerAsync(host, containerId, ct);
+
+            await SetStatusAsync(deployment, LlmDeploymentStatus.Error,
+                containerId: null,
+                error: $"Startup health check failed after {elapsed:F0}s",
+                ct);
+            return $"Startup health check failed after {elapsed:F0}s";
+        }
+
+        _logger.LogInformation(
+            "vLLM startup health check passed in {Elapsed:F0}s for deployment {Id}",
+            (DateTimeOffset.UtcNow - startTime).TotalSeconds, deployment.Id);
+
+        deployment.StartedAt = DateTimeOffset.UtcNow;
+        deployment.RestartCount = 0; // Reset on manual start
+        deployment.LastHealthCheckAt = DateTimeOffset.UtcNow;
         await SetStatusAsync(deployment, LlmDeploymentStatus.Running, containerId, error: null, ct);
         return null;
     }
@@ -197,6 +253,10 @@ public class LlmDeploymentService
         if (containerId is not null) entity.ContainerId = containerId;
         if (status == LlmDeploymentStatus.Stopped) entity.ContainerId = null;
 
+        // Also save RestartCount and LastHealthCheckAt if they were set by the caller
+        entity.RestartCount = deployment.RestartCount;
+        entity.LastHealthCheckAt = deployment.LastHealthCheckAt;
+
         await db.SaveChangesAsync(ct);
 
         // Reflect changes back to the in-memory reference for the caller
@@ -224,5 +284,8 @@ public class LlmDeploymentService
         var error = await _nginxProxy.ApplyConfigAsync(host, running, ct);
         if (error is not null)
             _logger.LogWarning("Nginx proxy update failed for host {HostId}: {Error}", hostId, error);
+
+        // Notify that the proxy config may have changed (for REST cache refresh + SignalR broadcast)
+        _proxyConfig.InvalidateCache();
     }
 }

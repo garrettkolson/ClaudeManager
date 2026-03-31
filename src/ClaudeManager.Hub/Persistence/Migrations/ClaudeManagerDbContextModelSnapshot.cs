@@ -157,9 +157,6 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
-                    b.Property<int?>("MaxModelLen")
-                        .HasColumnType("INTEGER");
-
                     b.Property<string>("HostId")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -173,6 +170,12 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTimeOffset?>("LastHealthCheckAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("MaxModelLen")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("ModelId")
                         .IsRequired()
                         .HasMaxLength(500)
@@ -182,6 +185,9 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("TEXT");
+
+                    b.Property<int>("RestartCount")
+                        .HasColumnType("INTEGER");
 
                     b.Property<DateTimeOffset?>("StartedAt")
                         .HasColumnType("TEXT");

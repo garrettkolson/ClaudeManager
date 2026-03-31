@@ -1,3 +1,4 @@
+using System.Net.Http;
 using ClaudeManager.Hub.Persistence.Entities;
 using ClaudeManager.Hub.Services;
 using FluentAssertions;
@@ -12,7 +13,7 @@ public class LlmInstanceServiceTests
 
     [SetUp]
     public void SetUp() =>
-        _svc = new LlmInstanceService(NullLogger<LlmInstanceService>.Instance);
+        _svc = new LlmInstanceService(NullLogger<LlmInstanceService>.Instance, new HttpClient());
 
     // ── BuildDockerRunCommand ──────────────────────────────────────────────────
 

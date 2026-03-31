@@ -1,8 +1,10 @@
+using ClaudeManager.Hub.Hubs;
 using ClaudeManager.Hub.Persistence.Entities;
 using ClaudeManager.Hub.Services;
 using ClaudeManager.Hub.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -26,12 +28,15 @@ public class LlmDeploymentServiceTests
         _gpuHosts     = new GpuHostService(factory);
         _secrets      = new HubSecretService(factory);
         _notifier     = new LlmDeploymentNotifier();
-        _instanceMock = new Mock<LlmInstanceService>(NullLogger<LlmInstanceService>.Instance);
+        _instanceMock = new Mock<LlmInstanceService>(NullLogger<LlmInstanceService>.Instance, new HttpClient());
 
         var nginxProxy = new NginxProxyService(NullLogger<NginxProxyService>.Instance);
+        var proxyConfigSvc = new LlmProxyConfigService(
+            _gpuHosts, factory, new Mock<IHubContext<AgentHub>>().Object,
+            NullLogger<LlmProxyConfigService>.Instance);
 
         _svc = new LlmDeploymentService(
-            factory, _instanceMock.Object, _gpuHosts, _secrets, _notifier, nginxProxy,
+            factory, _instanceMock.Object, _gpuHosts, _secrets, _notifier, nginxProxy, proxyConfigSvc,
             NullLogger<LlmDeploymentService>.Instance);
     }
 
@@ -214,6 +219,14 @@ public class LlmDeploymentServiceTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(("abc123containerId", null));
 
+        // Mock health check to pass immediately
+        _instanceMock
+            .Setup(m => m.CheckHealthAsync(
+                It.IsAny<GpuHostEntity>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
         var error = await _svc.StartAsync(d.Id);
 
         error.Should().BeNull();
@@ -261,6 +274,14 @@ public class LlmDeploymentServiceTests
                 (_, _, token, _) => capturedToken = token)
             .ReturnsAsync(("cid", null));
 
+        // Mock health check to pass immediately
+        _instanceMock
+            .Setup(m => m.CheckHealthAsync(
+                It.IsAny<GpuHostEntity>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
         await _svc.StartAsync(d.Id);
 
         capturedToken.Should().Be("hf_override");
@@ -283,6 +304,14 @@ public class LlmDeploymentServiceTests
             .Callback<GpuHostEntity, LlmDeploymentEntity, string?, CancellationToken>(
                 (_, _, token, _) => capturedToken = token)
             .ReturnsAsync(("cid", null));
+
+        // Mock health check to pass immediately
+        _instanceMock
+            .Setup(m => m.CheckHealthAsync(
+                It.IsAny<GpuHostEntity>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         await _svc.StartAsync(d.Id);
 
@@ -322,6 +351,15 @@ public class LlmDeploymentServiceTests
             .Setup(m => m.StartContainerAsync(It.IsAny<GpuHostEntity>(), It.IsAny<LlmDeploymentEntity>(),
                 It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(("cid123", null));
+
+        // Mock health check to pass immediately
+        _instanceMock
+            .Setup(m => m.CheckHealthAsync(
+                It.IsAny<GpuHostEntity>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
         await _svc.StartAsync(d.Id);
 
         _instanceMock
@@ -348,6 +386,14 @@ public class LlmDeploymentServiceTests
             .Setup(m => m.StartContainerAsync(It.IsAny<GpuHostEntity>(), It.IsAny<LlmDeploymentEntity>(),
                 It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(("cid", null));
+
+        // Mock health check to pass immediately
+        _instanceMock
+            .Setup(m => m.CheckHealthAsync(
+                It.IsAny<GpuHostEntity>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         LlmDeploymentEntity? notified = null;
         _notifier.DeploymentChanged += e => notified = e;

@@ -17,6 +17,15 @@ public class AgentHub : SignalRHub
         _logger = logger;
     }
 
+    /// <summary>
+    /// Broadcasts the current LLM proxy config to all connected agents.
+    /// Called from Program.cs after nginx config changes.
+    /// </summary>
+    public async Task BroadcastLlmProxyConfig(LlmProxyConfig config)
+    {
+        await Clients.All.SendAsync("llm-proxy-config", config);
+    }
+
     public override async Task OnConnectedAsync()
     {
         _logger.LogInformation("Agent connected: {ConnectionId}", Context.ConnectionId);

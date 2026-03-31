@@ -7,6 +7,7 @@
 @inject LlmDeploymentNotifier Notifier
 @inject ModelConfigFetcher ModelConfigFetcher
 @inject NginxProxyService NginxSvc
+@inject Microsoft.JSInterop.IJSRuntime JSRuntime
 @using ClaudeManager.Hub.Persistence.Entities
 @using ClaudeManager.Hub.Services
 
@@ -121,6 +122,12 @@
                                     <span class="llm-proxy-badge @proxyStatus.ToString().ToLower()" title="@proxyError">
                                         :@host.ProxyPort — @proxyStatus
                                     </span>
+                                    <button class="btn-xs btn-copy"
+                                            @onclick="() => CopyProxyEndpoint(hostRef)"
+                                            title="Copy proxy URL to clipboard"
+                                            type="button">
+                                        @(_copiedToClipboard?.Url == $"http://{host.Host}:{host.ProxyPort}" ? "✓ Copied!" : "Copy URL")
+                                    </button>
                                 }
                                 else
                                 {
@@ -479,6 +486,9 @@
     private Dictionary<long, string> _nginxConfigError = new();
     private long?                   _viewingNginxConfigId;
 
+    // Clipboard feedback
+    private (string Url, DateTimeOffset At)? _copiedToClipboard;
+
     // Context estimation
     private bool    _estimatingContext;
     private long?   _estimatedMaxContext;
@@ -729,6 +739,24 @@
             .Where(d => d.HostId == host.HostId && d.Status == LlmDeploymentStatus.Running)
             .ToList();
         return NginxProxyService.GenerateConfig(running, host.ProxyPort.Value);
+    }
+
+    private async Task CopyProxyEndpoint(GpuHostEntity host)
+    {
+        var url = $"http://{host.Host}:{host.ProxyPort}";
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", url);
+            _copiedToClipboard = (url, DateTimeOffset.UtcNow);
+            await InvokeAsync(StateHasChanged);
+            await Task.Delay(2000);
+            _copiedToClipboard = null;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+            // Clipboard API may fail in some browsers; ignore for now
+        }
     }
 
     // ── Context estimation ────────────────────────────────────────────────────

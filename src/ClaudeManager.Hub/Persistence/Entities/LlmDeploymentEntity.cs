@@ -64,4 +64,10 @@ public class LlmDeploymentEntity
 
     public DateTimeOffset CreatedAt  { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
+
+    /// <summary>Number of auto-restarts since last manual start (reset on manual start).</summary>
+    public int RestartCount { get; set; }
+
+    /// <summary>When health was last verified by the health check service.</summary>
+    public DateTimeOffset? LastHealthCheckAt { get; set; }
 }

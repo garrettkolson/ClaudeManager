@@ -52,9 +52,13 @@ builder.Services.AddSingleton<GpuHostService>();
 builder.Services.AddSingleton<HubSecretService>();
 builder.Services.AddSingleton<LlmGpuDiscoveryService>();
 builder.Services.AddSingleton<LlmDeploymentNotifier>();
+builder.Services.AddHttpClient(); // For LlmInstanceService health checks
 builder.Services.AddSingleton<LlmInstanceService>();
 builder.Services.AddSingleton<NginxProxyService>();
+builder.Services.AddSingleton<LlmProxyConfigService>();
 builder.Services.AddSingleton<LlmDeploymentService>();
+builder.Services.AddSingleton<LlmDeploymentHealthService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<LlmDeploymentHealthService>());
 builder.Services.AddHttpClient<ModelConfigFetcher>();
 
 // ── SWE-AF / AgentField ───────────────────────────────────────────────────────
@@ -127,6 +131,14 @@ app.MapPost("/api/wiki/save", async (WikiService wiki, WikiSaveRequest req) =>
 {
     await wiki.UpsertByTitleAsync(req.Title, req.Category, req.Content, req.Tags);
     return Results.Ok();
+}).AddEndpointFilter(AgentSecretFilter(agentSecret));
+
+// ── LLM proxy config (for agents to fetch at startup) ────────────────────────
+
+app.MapGet("/api/llm-config", async (LlmProxyConfigService svc) =>
+{
+    var config = await svc.GetConfigAsync();
+    return Results.Ok(config);
 }).AddEndpointFilter(AgentSecretFilter(agentSecret));
 
 // ── AgentField observability webhook ──────────────────────────────────────────

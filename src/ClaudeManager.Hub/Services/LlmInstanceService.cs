@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net.Http;
 using System.Text;
 using ClaudeManager.Hub.Persistence.Entities;
 using Renci.SshNet;
@@ -12,10 +13,12 @@ namespace ClaudeManager.Hub.Services;
 public class LlmInstanceService
 {
     private readonly ILogger<LlmInstanceService> _logger;
+    private readonly HttpClient _httpClient;
 
-    public LlmInstanceService(ILogger<LlmInstanceService> logger)
+    public LlmInstanceService(ILogger<LlmInstanceService> logger, HttpClient httpClient)
     {
         _logger = logger;
+        _httpClient = httpClient;
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -83,6 +86,64 @@ public class LlmInstanceService
             return (null, stderr.Trim());
 
         return (stdout ?? "", null);
+    }
+
+    /// <summary>
+    /// Checks the health of a vLLM instance by making an HTTP GET request to /health.
+    /// Returns true if the instance responds with HTTP 200, false otherwise.
+    /// </summary>
+    public virtual async Task<bool> CheckHealthAsync(
+        GpuHostEntity host, int hostPort, CancellationToken ct = default)
+    {
+        var url = $"http://{host.Host}:{hostPort}/health";
+
+        try
+        {
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            using var response = await _httpClient.SendAsync(request, timeoutCts.Token);
+            return response.StatusCode == System.Net.HttpStatusCode.OK;
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("Health check timed out for {Url}", url);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Health check failed for {Url}", url);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Inspects a Docker container and returns its status.
+    /// Returns null if the container is not found.
+    /// </summary>
+    public virtual async Task<ContainerStatus?> InspectContainerAsync(
+        GpuHostEntity host, string containerId, CancellationToken ct = default)
+    {
+        var command = $"docker inspect -f '{{{{.State.Status}}}}' {containerId} 2>/dev/null || echo not_found";
+
+        var (stdout, _, exitCode) = IsLocalHost(host.Host)
+            ? await ExecLocalAsync(command, ct)
+            : await ExecSshAsync(host, command, ct);
+
+        if (exitCode != 0 && stdout?.Trim() == "not_found")
+            return null; // Container not found
+
+        return ParseContainerStatus(stdout?.Trim());
+    }
+
+    private static ContainerStatus? ParseContainerStatus(string? raw)
+    {
+        return raw switch
+        {
+            "running" => ContainerStatus.Running,
+            "exited"  => ContainerStatus.Exited,
+            "dead"    => ContainerStatus.Dead,
+            _         => null,
+        };
     }
 
     // ── Command builder ───────────────────────────────────────────────────────
