@@ -8,7 +8,8 @@
       "Bash(grep -v \"^\\\\s*//\")",
       "WebFetch(domain:agentfield.ai)",
       "Bash(grep -v \"^$\")",
-      "Bash(ls -la D:/Repos/claude_manager/src/ClaudeManager.Hub/Persistence/Migrations/*.cs)"
+      "Bash(ls -la D:/Repos/claude_manager/src/ClaudeManager.Hub/Persistence/Migrations/*.cs)",
+      "Bash(dotnet ef:*)"
     ]
   }
 }

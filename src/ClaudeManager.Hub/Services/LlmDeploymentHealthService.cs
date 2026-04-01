@@ -72,20 +72,62 @@ public class LlmDeploymentHealthService : BackgroundService
 
     private async Task HealthCheckLoopAsync(CancellationToken ct)
     {
-        // Fetch all Running deployments
         await using var db = _dbFactory.CreateDbContext();
         var deployments = await db.LlmDeployments
-            .Where(d => d.Status == LlmDeploymentStatus.Running)
+            .Where(d => d.Status == LlmDeploymentStatus.Running
+                     || (d.Status == LlmDeploymentStatus.Starting && d.ContainerId != null))
             .ToListAsync(ct);
 
-        _logger.LogDebug("Checking health of {Count} Running deployments", deployments.Count);
+        _logger.LogDebug("Checking health of {Count} active deployments", deployments.Count);
 
         foreach (var deployment in deployments)
         {
             if (ct.IsCancellationRequested) break;
 
-            await CheckSingleDeploymentAsync(deployment, ct);
+            if (deployment.Status == LlmDeploymentStatus.Starting)
+                await CheckStartingDeploymentAsync(deployment, ct);
+            else
+                await CheckSingleDeploymentAsync(deployment, ct);
         }
+    }
+
+    /// <summary>
+    /// Monitors a Starting deployment while its model loads.
+    /// Transitions to Running when vLLM begins serving, or to Error if the container exits.
+    /// </summary>
+    private async Task CheckStartingDeploymentAsync(LlmDeploymentEntity deployment, CancellationToken ct)
+    {
+        var host = await _gpuHosts.GetByHostIdAsync(deployment.HostId);
+        if (host is null || deployment.ContainerId is null) return;
+
+        _logger.LogDebug("Checking startup progress for deployment {Id} on {Host}", deployment.Id, host.Host);
+
+        // Check whether the container is still alive
+        var containerStatus = await _instance.InspectContainerAsync(host, deployment.ContainerId, ct);
+        if (containerStatus is null || containerStatus != ContainerStatus.Running)
+        {
+            _logger.LogWarning("Deployment {Id} container exited during model load (status: {Status})",
+                deployment.Id, containerStatus?.ToString() ?? "not found");
+            await TransitionToErrorAsync(deployment,
+                $"Container exited during startup (status: {containerStatus?.ToString() ?? "not found"})", ct);
+            return;
+        }
+
+        // Check whether vLLM is now serving
+        using var httpCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        httpCts.CancelAfter(TimeSpan.FromSeconds(HealthCheckTimeoutSeconds));
+
+        var isHealthy = await _instance.CheckHealthAsync(host, deployment.HostPort, httpCts.Token);
+        if (!isHealthy) return; // Still loading — will check again next interval
+
+        deployment.Status       = LlmDeploymentStatus.Running;
+        deployment.StartedAt    = DateTimeOffset.UtcNow;
+        deployment.ErrorMessage = null;
+        deployment.LastHealthCheckAt = DateTimeOffset.UtcNow;
+        await SaveAndNotifyAsync(deployment, ct);
+        await RefreshNginxConfigAsync(deployment.HostId, ct);
+
+        _logger.LogInformation("Deployment {Id} transitioned Starting → Running after model load", deployment.Id);
     }
 
     private async Task CheckSingleDeploymentAsync(LlmDeploymentEntity deployment, CancellationToken ct)
@@ -223,10 +265,11 @@ public class LlmDeploymentHealthService : BackgroundService
         var entity = await db.LlmDeployments.FindAsync([deployment.Id], ct);
         if (entity is null) return;
 
-        entity.Status = deployment.Status;
-        entity.ErrorMessage = deployment.ErrorMessage;
-        entity.ContainerId = deployment.ContainerId;
-        entity.RestartCount = deployment.RestartCount;
+        entity.Status            = deployment.Status;
+        entity.ErrorMessage      = deployment.ErrorMessage;
+        entity.ContainerId       = deployment.ContainerId;
+        entity.StartedAt         = deployment.StartedAt;
+        entity.RestartCount      = deployment.RestartCount;
         entity.LastHealthCheckAt = deployment.LastHealthCheckAt;
 
         await db.SaveChangesAsync(ct);

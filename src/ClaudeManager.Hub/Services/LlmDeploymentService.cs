@@ -99,6 +99,13 @@ public class LlmDeploymentService
         }
     }
 
+    public async Task UpdateAsync(LlmDeploymentEntity deployment)
+    {
+        await using var db = _dbFactory.CreateDbContext();
+        db.LlmDeployments.Update(deployment);
+        await db.SaveChangesAsync();
+    }
+
     // ── Start / Stop ──────────────────────────────────────────────────────────
 
     /// <summary>
@@ -118,7 +125,7 @@ public class LlmDeploymentService
             ? deployment.HfTokenOverride
             : await _secrets.GetAsync(HubSecretService.HuggingFaceTokenKey);
 
-        // Transition to Starting (no nginx refresh needed — container not yet running)
+        // Transition to Starting
         await SetStatusAsync(deployment, LlmDeploymentStatus.Starting, containerId: null, error: null);
 
         var (containerId, error) = await _instance.StartContainerAsync(host, deployment, hfToken, ct);
@@ -129,61 +136,52 @@ public class LlmDeploymentService
             return error;
         }
 
+        // Persist ContainerId immediately so logs are accessible while the model loads.
+        // Large models (35B+) can take 5-10+ minutes to initialize; do NOT block on health here.
         deployment.ContainerId = containerId;
+        deployment.RestartCount = 0;
+        await SetStatusAsync(deployment, LlmDeploymentStatus.Starting, containerId, error: null, ct);
 
-        // (C) Startup health poll — wait for vLLM to be ready before marking Running
-        _logger.LogInformation(
-            "Waiting for vLLM startup health check on deployment {Id}...", deployment.Id);
+        // Short fast-fail poll (30s): catches immediate startup failures (bad image, port conflict,
+        // OOM on first GPU alloc, etc.) without blocking for large model loads.
+        // LlmDeploymentHealthService handles the Starting → Running transition for slow loaders.
+        _logger.LogInformation("Deployment {Id} container started ({ContainerId}); polling for fast failures...",
+            deployment.Id, containerId![..Math.Min(12, containerId!.Length)]);
 
-        var startupCt = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        startupCt.CancelAfter(TimeSpan.FromSeconds(120)); // 2 minute timeout for model load
+        using var fastFailCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        fastFailCts.CancelAfter(TimeSpan.FromSeconds(30));
 
-        var healthPollInterval = TimeSpan.FromSeconds(2);
-        var startTime = DateTimeOffset.UtcNow;
-        var isHealthy = false;
-
-        while (!isHealthy && !startupCt.Token.IsCancellationRequested)
+        while (!fastFailCts.Token.IsCancellationRequested)
         {
-            try
+            var isHealthy = await _instance.CheckHealthAsync(host, deployment.HostPort, fastFailCts.Token);
+            if (isHealthy)
             {
-                isHealthy = await _instance.CheckHealthAsync(host, deployment.HostPort, startupCt.Token);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug("Health poll failed during startup: {Error}", ex.Message);
+                _logger.LogInformation("Deployment {Id} is healthy (fast startup)", deployment.Id);
+                deployment.StartedAt    = DateTimeOffset.UtcNow;
+                deployment.LastHealthCheckAt = DateTimeOffset.UtcNow;
+                await SetStatusAsync(deployment, LlmDeploymentStatus.Running, containerId, error: null, ct);
+                return null;
             }
 
-            if (!isHealthy)
+            // Not healthy yet — check that the container hasn't already exited
+            var containerStatus = await _instance.InspectContainerAsync(host, containerId, fastFailCts.Token);
+            if (containerStatus is null || containerStatus != ContainerStatus.Running)
             {
-                await Task.Delay(healthPollInterval, startupCt.Token);
+                var msg = $"Container exited immediately after start (status: {containerStatus?.ToString() ?? "not found"})";
+                _logger.LogWarning("Deployment {Id}: {Message}", deployment.Id, msg);
+                await SetStatusAsync(deployment, LlmDeploymentStatus.Error, containerId: null, error: msg, ct);
+                return msg;
             }
+
+            try { await Task.Delay(TimeSpan.FromSeconds(2), fastFailCts.Token); }
+            catch (OperationCanceledException) { break; }
         }
 
-        if (!isHealthy)
-        {
-            var elapsed = (DateTimeOffset.UtcNow - startTime).TotalSeconds;
-            _logger.LogWarning(
-                "Startup health check timed out after {Elapsed}s for deployment {Id}",
-                elapsed, deployment.Id);
-
-            // Clean up the container
-            await _instance.StopContainerAsync(host, containerId, ct);
-
-            await SetStatusAsync(deployment, LlmDeploymentStatus.Error,
-                containerId: null,
-                error: $"Startup health check failed after {elapsed:F0}s",
-                ct);
-            return $"Startup health check failed after {elapsed:F0}s";
-        }
-
+        // Container is running but vLLM hasn't finished loading within 30s — normal for large models.
+        // Leave in Starting; LlmDeploymentHealthService will poll and transition to Running.
         _logger.LogInformation(
-            "vLLM startup health check passed in {Elapsed:F0}s for deployment {Id}",
-            (DateTimeOffset.UtcNow - startTime).TotalSeconds, deployment.Id);
-
-        deployment.StartedAt = DateTimeOffset.UtcNow;
-        deployment.RestartCount = 0; // Reset on manual start
-        deployment.LastHealthCheckAt = DateTimeOffset.UtcNow;
-        await SetStatusAsync(deployment, LlmDeploymentStatus.Running, containerId, error: null, ct);
+            "Deployment {Id} model still loading; background health service will track progress.",
+            deployment.Id);
         return null;
     }
 
@@ -250,8 +248,10 @@ public class LlmDeploymentService
 
         entity.Status       = status;
         entity.ErrorMessage = error;
-        if (containerId is not null) entity.ContainerId = containerId;
-        if (status == LlmDeploymentStatus.Stopped) entity.ContainerId = null;
+        if (containerId is not null)
+            entity.ContainerId = containerId;
+        else if (status is LlmDeploymentStatus.Stopped or LlmDeploymentStatus.Error)
+            entity.ContainerId = null;
 
         // Also save RestartCount and LastHealthCheckAt if they were set by the caller
         entity.RestartCount = deployment.RestartCount;

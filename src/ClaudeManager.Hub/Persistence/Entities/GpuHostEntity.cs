@@ -38,5 +38,18 @@ public class GpuHostEntity
     /// </summary>
     public int? ProxyPort { get; set; }
 
+    /// <summary>
+    /// Indicates whether sudo/root privileges are required to execute Docker commands on this host.
+    /// When true, commands will be prefixed with sudo and the SudoPassword will be used.
+    /// </summary>
+    public bool RequiresSudo { get; set; }
+
+    /// <summary>
+    /// The sudo password used for privilege escalation when RequiresSudo is true.
+    /// This password is used with 'sudo -S' to authenticate Docker commands.
+    /// </summary>
+    [MaxLength(500)]
+    public string? SudoPassword { get; set; }
+
     public DateTimeOffset AddedAt { get; set; }
 }

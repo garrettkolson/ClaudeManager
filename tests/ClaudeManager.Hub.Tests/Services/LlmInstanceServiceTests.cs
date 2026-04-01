@@ -25,10 +25,13 @@ public class LlmInstanceServiceTests
         var cmd = LlmInstanceService.BuildDockerRunCommand(deployment, hfToken: null);
 
         cmd.Should().Contain("docker run -d");
-        cmd.Should().Contain("--gpus \"device=0\"");
+        cmd.Should().Contain("--runtime nvidia");
+        cmd.Should().Contain("--gpus '\"device=0\"'");
+        cmd.Should().Contain("--ipc=host");
         cmd.Should().Contain("-p 8001:8000");
         cmd.Should().Contain("-v ~/.cache/huggingface:/root/.cache/huggingface");
         cmd.Should().Contain("vllm/vllm-openai:latest");
+        cmd.Should().Contain("--host 0.0.0.0 --port 8000");
         cmd.Should().Contain("--model meta-llama/Llama-3.1-8B-Instruct");
     }
 
@@ -97,13 +100,24 @@ public class LlmInstanceServiceTests
     }
 
     [Test]
-    public void BuildDockerRunCommand_MultipleGpus_FormatsDeviceArg()
+    public void BuildDockerRunCommand_MultipleGpus_FormatsDeviceArgAndTensorParallel()
     {
         var deployment = MakeDeployment("meta-llama/Llama-3.1-70B-Instruct", gpuIndices: "0,1,2,3", port: 8001);
 
         var cmd = LlmInstanceService.BuildDockerRunCommand(deployment, hfToken: null);
 
-        cmd.Should().Contain("--gpus \"device=0,1,2,3\"");
+        cmd.Should().Contain("--gpus '\"device=0,1,2,3\"'");
+        cmd.Should().Contain("--tensor-parallel-size 4");
+    }
+
+    [Test]
+    public void BuildDockerRunCommand_SingleGpu_OmitsTensorParallel()
+    {
+        var deployment = MakeDeployment("meta-llama/Llama-3.1-8B-Instruct", gpuIndices: "0", port: 8001);
+
+        var cmd = LlmInstanceService.BuildDockerRunCommand(deployment, hfToken: null);
+
+        cmd.Should().NotContain("--tensor-parallel-size");
     }
 
     [Test]

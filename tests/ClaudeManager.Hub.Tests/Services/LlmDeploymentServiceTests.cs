@@ -257,6 +257,71 @@ public class LlmDeploymentServiceTests
     }
 
     [Test]
+    public async Task StartAsync_ContainerExitsImmediately_StatusBecomesError()
+    {
+        await SeedHostAsync("gpu-h1");
+        var d = await SeedDeploymentAsync("gpu-h1");
+
+        _instanceMock
+            .Setup(m => m.StartContainerAsync(
+                It.IsAny<GpuHostEntity>(),
+                It.IsAny<LlmDeploymentEntity>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("cid", null));
+
+        _instanceMock
+            .Setup(m => m.CheckHealthAsync(
+                It.IsAny<GpuHostEntity>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        _instanceMock
+            .Setup(m => m.InspectContainerAsync(
+                It.IsAny<GpuHostEntity>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ContainerStatus?)null); // container not found
+
+        var error = await _svc.StartAsync(d.Id);
+
+        error.Should().NotBeNullOrWhiteSpace();
+        var all = await _svc.GetAllAsync();
+        all[0].Status.Should().Be(LlmDeploymentStatus.Error);
+        all[0].ContainerId.Should().BeNull();
+    }
+
+    [Test]
+    public async Task StartAsync_ContainerIdPersistedBeforeHealthResolves()
+    {
+        await SeedHostAsync("gpu-h1");
+        var d = await SeedDeploymentAsync("gpu-h1");
+
+        _instanceMock
+            .Setup(m => m.StartContainerAsync(
+                It.IsAny<GpuHostEntity>(),
+                It.IsAny<LlmDeploymentEntity>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("cid_persisted", null));
+
+        // Health passes immediately so the test completes without waiting 30s
+        _instanceMock
+            .Setup(m => m.CheckHealthAsync(
+                It.IsAny<GpuHostEntity>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        await _svc.StartAsync(d.Id);
+
+        // Whether fast-healthy or slow-loading, ContainerId must always be in the DB
+        var all = await _svc.GetAllAsync();
+        all[0].ContainerId.Should().Be("cid_persisted");
+    }
+
+    [Test]
     public async Task StartAsync_UsesHfTokenOverride_WhenSet()
     {
         await SeedHostAsync("gpu-h1");

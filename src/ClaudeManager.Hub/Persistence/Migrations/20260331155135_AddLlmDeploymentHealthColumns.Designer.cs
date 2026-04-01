@@ -102,6 +102,13 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("RequiresSudo")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SudoPassword")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
 
                     b.HasIndex("HostId")

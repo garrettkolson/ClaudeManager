@@ -155,6 +155,8 @@
                                         @(_viewingNginxConfigId == hostRef.Id ? "Hide Config" : "View Config")
                                     </button>
                                 }
+                                <button class="btn-sm"
+                                        @onclick="() => OpenHostEdit(hostRef)">Edit</button>
                                 <button class="btn-sm btn-danger-sm"
                                         @onclick="() => DeleteHost(hostRef)">Remove</button>
                             </td>
@@ -409,6 +411,8 @@
                                 <button class="btn-sm" @onclick="() => ToggleLogs(dep)">
                                     @(_viewingLogsId == dep.Id ? "Hide Logs" : "Logs")
                                 </button>
+                                <button class="btn-sm"
+                                        @onclick="() => OpenDeployEdit(dep)">Edit</button>
                                 <button class="btn-sm btn-danger-sm"
                                         @onclick="() => DeleteDeployment(dep)"
                                         disabled="@_busyIds.Contains(dep.Id)">Remove</button>
@@ -450,6 +454,109 @@
     </section>
 </div>
 
+@* ── Edit Host Modal ──────────────────────────────────────────────────────── *@
+@if (_showHostEditModal)
+{
+    <div class="modal-overlay" @onclick="CloseHostEdit">
+        <div class="modal" @onclick:stopPropagation>
+            <h3>Edit GPU Host</h3>
+            <div class="llm-form-grid">
+                <label class="llm-label">Display Name *</label>
+                <input class="llm-input" @bind="_hostEditForm.DisplayName" />
+
+                <label class="llm-label">Host *</label>
+                <input class="llm-input" @bind="_hostEditForm.Host" />
+
+                <label class="llm-label">SSH Port</label>
+                <input class="llm-input" @bind="_hostEditForm.SshPort" type="number" />
+
+                <label class="llm-label">SSH User</label>
+                <input class="llm-input" @bind="_hostEditForm.SshUser" />
+
+                <label class="llm-label">SSH Key Path</label>
+                <input class="llm-input" @bind="_hostEditForm.SshKeyPath" />
+
+                <label class="llm-label">SSH Password</label>
+                <input class="llm-input" type="password" @bind="_hostEditForm.SshPassword" />
+
+                <label class="llm-label">Proxy Port</label>
+                <input class="llm-input" @bind="_hostEditForm.ProxyPort" type="number"
+                       placeholder="leave blank to disable proxy" />
+
+                <label class="llm-label">Requires Sudo</label>
+                <label class="llm-checkbox-label">
+                    <input type="checkbox" @bind="_hostEditForm.RequiresSudo" />
+                    Prefix Docker commands with sudo
+                </label>
+
+                @if (_hostEditForm.RequiresSudo)
+                {
+                    <label class="llm-label">Sudo Password</label>
+                    <input class="llm-input" type="password" @bind="_hostEditForm.SudoPassword"
+                           placeholder="leave blank to keep current" />
+                }
+            </div>
+            @if (_hostEditError is not null) { <div class="error-msg">@_hostEditError</div> }
+            <div class="modal-actions">
+                <button class="btn-secondary" @onclick="CloseHostEdit">Cancel</button>
+                <button class="btn-primary" @onclick="SaveHostEdit" disabled="@_savingHostEdit">
+                    @(_savingHostEdit ? "Saving…" : "Save")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@* ── Edit Deployment Modal ────────────────────────────────────────────────── *@
+@if (_showDeployEditModal)
+{
+    <div class="modal-overlay" @onclick="CloseDeployEdit">
+        <div class="modal" @onclick:stopPropagation>
+            <h3>Edit Deployment</h3>
+            <div class="llm-form-grid">
+                <label class="llm-label">GPU Indices *</label>
+                <input class="llm-input" @bind="_deployEditForm.GpuIndices"
+                       placeholder="e.g. 0  or  0,1" />
+
+                <label class="llm-label">Port *</label>
+                <input class="llm-input" @bind="_deployEditForm.HostPort" type="number" />
+
+                <label class="llm-label">vLLM Image</label>
+                <select class="llm-input" @bind="_deployEditForm.ImageTag">
+                    <option value="latest">latest (stable)</option>
+                    <option value="nightly">nightly (cutting edge)</option>
+                </select>
+
+                <label class="llm-label">Quantization</label>
+                <select class="llm-input" @bind="_deployEditForm.Quantization">
+                    <option value="none">none (fp16)</option>
+                    <option value="awq">AWQ (~4-bit)</option>
+                    <option value="gptq">GPTQ (~4-bit)</option>
+                </select>
+
+                <label class="llm-label">Max Context</label>
+                <input class="llm-input" @bind="_deployEditForm.MaxModelLen" type="number"
+                       placeholder="leave blank for vLLM default" />
+
+                <label class="llm-label">Extra Args</label>
+                <input class="llm-input" @bind="_deployEditForm.ExtraArgs"
+                       placeholder="--dtype float16" />
+
+                <label class="llm-label">HF Token Override</label>
+                <input class="llm-input" type="password" @bind="_deployEditForm.HfTokenOverride"
+                       placeholder="leave blank to use global token" />
+            </div>
+            @if (_deployEditError is not null) { <div class="error-msg">@_deployEditError</div> }
+            <div class="modal-actions">
+                <button class="btn-secondary" @onclick="CloseDeployEdit">Cancel</button>
+                <button class="btn-primary" @onclick="SaveDeployEdit" disabled="@_savingDeployEdit">
+                    @(_savingDeployEdit ? "Saving…" : "Save")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     // ── State — global settings ───────────────────────────────────────────────
     private string? _hfToken;
@@ -464,6 +571,13 @@
     private string? _addHostError;
     private HostForm _hostForm = new();
 
+    // Host edit modal
+    private bool           _showHostEditModal;
+    private GpuHostEntity? _editingHost;
+    private HostEditForm   _hostEditForm  = new();
+    private string?        _hostEditError;
+    private bool           _savingHostEdit;
+
     // GPU inspection (hosts table)
     private long?                                     _inspectingId;
     private Dictionary<long, IReadOnlyList<GpuInfo>>  _gpuResults = new();
@@ -475,6 +589,13 @@
     private bool    _addingDeployment;
     private string? _deployAddError;
     private DeploymentForm _deployForm = new();
+
+    // Deployment edit modal
+    private bool                  _showDeployEditModal;
+    private LlmDeploymentEntity?  _editingDeployment;
+    private DeploymentEditForm    _deployEditForm  = new();
+    private string?               _deployEditError;
+    private bool                  _savingDeployEdit;
 
     // GPU picker in new-deployment form
     private IReadOnlyList<GpuInfo>? _formGpus;
@@ -571,6 +692,63 @@
         }
         catch (Exception ex) { _addHostError = ex.Message; }
         finally { _addingHost = false; }
+    }
+
+    private void OpenHostEdit(GpuHostEntity host)
+    {
+        _editingHost   = host;
+        _hostEditError = null;
+        _hostEditForm  = new HostEditForm
+        {
+            DisplayName  = host.DisplayName,
+            Host         = host.Host,
+            SshPort      = host.SshPort,
+            SshUser      = host.SshUser,
+            SshKeyPath   = host.SshKeyPath,
+            SshPassword  = host.SshPassword,
+            ProxyPort    = host.ProxyPort,
+            RequiresSudo = host.RequiresSudo,
+            SudoPassword = null, // keep blank; only update if user types something
+        };
+        _showHostEditModal = true;
+    }
+
+    private void CloseHostEdit()
+    {
+        _showHostEditModal = false;
+        _editingHost       = null;
+    }
+
+    private async Task SaveHostEdit()
+    {
+        if (_editingHost is null) return;
+        _hostEditError = null;
+        if (string.IsNullOrWhiteSpace(_hostEditForm.DisplayName)) { _hostEditError = "Display name is required."; return; }
+        if (string.IsNullOrWhiteSpace(_hostEditForm.Host))        { _hostEditError = "Host is required."; return; }
+
+        _savingHostEdit = true;
+        try
+        {
+            _editingHost.DisplayName  = _hostEditForm.DisplayName.Trim();
+            _editingHost.Host         = _hostEditForm.Host.Trim();
+            _editingHost.SshPort      = _hostEditForm.SshPort;
+            _editingHost.SshUser      = NullIfBlank(_hostEditForm.SshUser);
+            _editingHost.SshKeyPath   = NullIfBlank(_hostEditForm.SshKeyPath);
+            _editingHost.SshPassword  = NullIfBlank(_hostEditForm.SshPassword);
+            _editingHost.ProxyPort    = _hostEditForm.ProxyPort > 0 ? _hostEditForm.ProxyPort : null;
+            _editingHost.RequiresSudo = _hostEditForm.RequiresSudo;
+            if (!string.IsNullOrWhiteSpace(_hostEditForm.SudoPassword))
+                _editingHost.SudoPassword = _hostEditForm.SudoPassword.Trim();
+            else if (!_hostEditForm.RequiresSudo)
+                _editingHost.SudoPassword = null;
+
+            await GpuSvc.UpdateAsync(_editingHost);
+            _hosts             = await GpuSvc.GetAllAsync();
+            _showHostEditModal = false;
+            _editingHost       = null;
+        }
+        catch (Exception ex) { _hostEditError = ex.Message; }
+        finally { _savingHostEdit = false; }
     }
 
     private async Task DeleteHost(GpuHostEntity host)
@@ -694,6 +872,57 @@
             _deployments = await DeploymentSvc.GetAllAsync();
         }
         finally { _busyIds.Remove(dep.Id); }
+    }
+
+    private void OpenDeployEdit(LlmDeploymentEntity dep)
+    {
+        _editingDeployment = dep;
+        _deployEditError   = null;
+        _deployEditForm    = new DeploymentEditForm
+        {
+            GpuIndices      = dep.GpuIndices,
+            HostPort        = dep.HostPort,
+            ImageTag        = dep.ImageTag,
+            Quantization    = dep.Quantization,
+            MaxModelLen     = dep.MaxModelLen,
+            ExtraArgs       = dep.ExtraArgs,
+            HfTokenOverride = null, // keep blank; only update if user types something
+        };
+        _showDeployEditModal = true;
+    }
+
+    private void CloseDeployEdit()
+    {
+        _showDeployEditModal = false;
+        _editingDeployment   = null;
+    }
+
+    private async Task SaveDeployEdit()
+    {
+        if (_editingDeployment is null) return;
+        _deployEditError = null;
+        if (string.IsNullOrWhiteSpace(_deployEditForm.GpuIndices)) { _deployEditError = "GPU indices are required."; return; }
+        if (_deployEditForm.HostPort <= 0)                          { _deployEditError = "Port must be a positive number."; return; }
+
+        _savingDeployEdit = true;
+        try
+        {
+            _editingDeployment.GpuIndices   = _deployEditForm.GpuIndices.Trim();
+            _editingDeployment.HostPort      = _deployEditForm.HostPort;
+            _editingDeployment.ImageTag      = _deployEditForm.ImageTag;
+            _editingDeployment.Quantization  = _deployEditForm.Quantization;
+            _editingDeployment.MaxModelLen   = _deployEditForm.MaxModelLen > 0 ? _deployEditForm.MaxModelLen : null;
+            _editingDeployment.ExtraArgs     = NullIfBlank(_deployEditForm.ExtraArgs);
+            if (!string.IsNullOrWhiteSpace(_deployEditForm.HfTokenOverride))
+                _editingDeployment.HfTokenOverride = _deployEditForm.HfTokenOverride.Trim();
+
+            await DeploymentSvc.UpdateAsync(_editingDeployment);
+            _deployments         = await DeploymentSvc.GetAllAsync();
+            _showDeployEditModal = false;
+            _editingDeployment   = null;
+        }
+        catch (Exception ex) { _deployEditError = ex.Message; }
+        finally { _savingDeployEdit = false; }
     }
 
     private async Task DeleteDeployment(LlmDeploymentEntity dep)
@@ -867,6 +1096,30 @@
         public string? SshKeyPath  { get; set; }
         public string? SshPassword { get; set; }
         public int?    ProxyPort   { get; set; }
+    }
+
+    private sealed class HostEditForm
+    {
+        public string  DisplayName  { get; set; } = "";
+        public string  Host         { get; set; } = "";
+        public int     SshPort      { get; set; } = 22;
+        public string? SshUser      { get; set; }
+        public string? SshKeyPath   { get; set; }
+        public string? SshPassword  { get; set; }
+        public int?    ProxyPort    { get; set; }
+        public bool    RequiresSudo { get; set; }
+        public string? SudoPassword { get; set; }
+    }
+
+    private sealed class DeploymentEditForm
+    {
+        public string  GpuIndices      { get; set; } = "";
+        public int     HostPort        { get; set; } = 8000;
+        public string  ImageTag        { get; set; } = "latest";
+        public string  Quantization    { get; set; } = "none";
+        public int?    MaxModelLen     { get; set; }
+        public string? ExtraArgs       { get; set; }
+        public string? HfTokenOverride { get; set; }
     }
 
     private sealed class DeploymentForm

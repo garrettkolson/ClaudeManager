@@ -84,6 +84,9 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                     b.Property<int?>("ProxyPort")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("RequiresSudo")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("SshKeyPath")
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
@@ -97,6 +100,10 @@ namespace ClaudeManager.Hub.Persistence.Migrations
 
                     b.Property<string>("SshUser")
                         .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SudoPassword")
+                        .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");

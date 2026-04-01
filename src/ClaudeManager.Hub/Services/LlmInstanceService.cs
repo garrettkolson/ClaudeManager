@@ -82,10 +82,14 @@ public class LlmInstanceService
             ? await ExecLocalAsync(command, ct)
             : await ExecSshAsync(host, command, ct);
 
-        if (exitCode != 0 && !string.IsNullOrWhiteSpace(stderr))
-            return (null, stderr.Trim());
+        if (exitCode != 0)
+            return (null, (stderr ?? stdout ?? "docker logs failed").Trim());
 
-        return (stdout ?? "", null);
+        // docker routes container stdout → its stdout and container stderr → its stderr.
+        // With 2>&1 both should be merged into stdout, but fall back to stderr if stdout is
+        // empty (e.g. apps like vLLM that write exclusively to stderr).
+        var logs = string.IsNullOrWhiteSpace(stdout) ? (stderr ?? "") : stdout;
+        return (logs, null);
     }
 
     /// <summary>
@@ -152,8 +156,11 @@ public class LlmInstanceService
     {
         var sb = new StringBuilder("docker run -d");
 
-        // GPU assignment
-        sb.Append($" --gpus \"device={deployment.GpuIndices}\"");
+        // Runtime and GPU assignment.
+        // '"device=X"' passes a JSON-style value to Docker that sets only DeviceIDs (no Count),
+        // avoiding the "cannot set both Count and DeviceIDs" error from the NVIDIA container runtime.
+        sb.Append(" --runtime nvidia");
+        sb.Append($" --gpus '\"device={deployment.GpuIndices}\"'");
 
         // Port mapping (container always listens on 8000)
         sb.Append($" -p {deployment.HostPort}:8000");
@@ -165,12 +172,23 @@ public class LlmInstanceService
         if (!string.IsNullOrWhiteSpace(hfToken))
             sb.Append($" -e HUGGING_FACE_HUB_TOKEN={hfToken}");
 
+        // Shared memory — required for multi-GPU tensor parallelism
+        sb.Append(" --ipc=host");
+
         // vLLM image
         var tag = string.IsNullOrWhiteSpace(deployment.ImageTag) ? "latest" : deployment.ImageTag;
         sb.Append($" vllm/vllm-openai:{tag}");
 
+        // vLLM bind address and port
+        sb.Append(" --host 0.0.0.0 --port 8000");
+
         // Model
         sb.Append($" --model {deployment.ModelId}");
+
+        // Tensor parallelism — must match the number of GPUs assigned
+        var gpuCount = deployment.GpuIndices.Split(',').Length;
+        if (gpuCount > 1)
+            sb.Append($" --tensor-parallel-size {gpuCount}");
 
         // Quantization
         if (deployment.Quantization is not "none")
@@ -231,16 +249,42 @@ public class LlmInstanceService
         if (auth is null)
             return (null, "No SSH authentication configured (SshKeyPath or SshPassword required).", 1);
 
+        // Determine if sudo is required and build the command
+        bool requiresSudo = host.RequiresSudo;
+        string finalCommand = requiresSudo ? $"sudo {command}" : command;
+
         try
         {
             var connInfo = new Renci.SshNet.ConnectionInfo(host.Host, host.SshPort, host.SshUser!, auth);
             using var client = new SshClient(connInfo);
 
             await Task.Run(() => client.Connect(), ct);
-            using var cmd = client.RunCommand(command);
-            client.Disconnect();
 
-            return (cmd.Result, cmd.Error, cmd.ExitStatus ?? 0);
+            string? stdout;
+            string? stderr;
+            int exitCode;
+
+            if (requiresSudo && !string.IsNullOrWhiteSpace(host.SudoPassword))
+            {
+                // Use sudo with password via SSH
+                (stdout, stderr, exitCode) = await ExecuteWithSudoAsync(client, command, host.SudoPassword!, ct);
+            }
+            else if (requiresSudo)
+            {
+                // Sudo required but no password configured
+                return (null, "Sudo is required but no sudo password configured for host " + host.Host, 1);
+            }
+            else
+            {
+                // No sudo needed
+                using var cmd = client.RunCommand(finalCommand);
+                stdout = cmd.Result;
+                stderr = cmd.Error;
+                exitCode = cmd.ExitStatus ?? 0;
+            }
+
+            client.Disconnect();
+            return (stdout, stderr, exitCode);
         }
         catch (OperationCanceledException)
         {
@@ -249,6 +293,41 @@ public class LlmInstanceService
         catch (Exception ex)
         {
             _logger.LogError(ex, "SSH docker command failed on {Host}", host.Host);
+            return (null, ex.Message, 1);
+        }
+    }
+
+    /// <summary>
+    /// Executes a command with sudo privileges using SSH, prompting for password if needed.
+    /// </summary>
+    private async Task<(string? Stdout, string? Stderr, int ExitCode)> ExecuteWithSudoAsync(
+        SshClient client, string command, string sudoPassword, CancellationToken ct)
+    {
+        _logger.LogInformation("Executing with sudo on remote host: {Command}", command);
+
+        try
+        {
+            // Use sudo with password by piping it to sudo -S
+            // The command format is: echo "password" | sudo -S <command>
+            var sudoCommand = $"echo '{sudoPassword}' | sudo -S {command}";
+
+            using var cmd = client.RunCommand(sudoCommand);
+            await Task.Run(() => { }, ct); // Allow cancellation check
+
+            var stdout = cmd.Result;
+            var stderr = cmd.Error;
+            var exitCode = cmd.ExitStatus ?? 0;
+
+            if (exitCode != 0)
+            {
+                _logger.LogWarning("Sudo command failed with exit code {ExitCode}: {Stderr}", exitCode, stderr);
+            }
+
+            return (stdout, stderr, exitCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to execute sudo command: {Command}", command);
             return (null, ex.Message, 1);
         }
     }
