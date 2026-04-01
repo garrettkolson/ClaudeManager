@@ -9,7 +9,9 @@ public class ClaudeManagerDbContext : DbContext
     public DbSet<ClaudeSessionEntity> ClaudeSessions { get; set; } = default!;
     public DbSet<StreamedLineEntity> StreamedLines { get; set; } = default!;
     public DbSet<WikiEntryEntity>  WikiEntries { get; set; } = default!;
-    public DbSet<SweAfJobEntity>  SweAfJobs   { get; set; } = default!;
+    public DbSet<SweAfJobEntity>    SweAfJobs    { get; set; } = default!;
+    public DbSet<SweAfConfigEntity> SweAfConfigs { get; set; } = default!;
+    public DbSet<SweAfHostEntity>   SweAfHosts   { get; set; } = default!;
     public DbSet<GpuHostEntity>        GpuHosts       { get; set; } = default!;
     public DbSet<HubSecretEntity>      HubSecrets     { get; set; } = default!;
     public DbSet<LlmDeploymentEntity>  LlmDeployments { get; set; } = default!;

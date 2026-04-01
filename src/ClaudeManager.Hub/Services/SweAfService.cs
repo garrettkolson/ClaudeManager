@@ -1,7 +1,9 @@
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using ClaudeManager.Hub.Persistence;
 using ClaudeManager.Hub.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -10,35 +12,56 @@ namespace ClaudeManager.Hub.Services;
 
 public class SweAfService
 {
-    private readonly HttpClient   _http;
-    private readonly SweAfConfig  _config;
+    private readonly IHttpClientFactory _httpFactory;
+    private readonly SweAfConfigService _configSvc;
     private readonly IDbContextFactory<ClaudeManagerDbContext> _dbFactory;
     private readonly BuildNotifier _notifier;
     private readonly ILogger<SweAfService> _logger;
 
-    public bool    IsConfigured  => _config.IsConfigured;
-    public string? WebhookSecret => _config.WebhookSecret;
-    public string? HubPublicUrl  => _config.HubPublicUrl;
+    private static readonly JsonSerializerOptions _ignoreNulls = new()
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    public bool    IsConfigured  => _configSvc.IsConfigured;
+    public string? WebhookSecret => _configSvc.WebhookSecret;
+    public string? HubPublicUrl  => _configSvc.HubPublicUrl;
 
     public SweAfService(
-        HttpClient http,
-        SweAfConfig config,
+        IHttpClientFactory httpFactory,
+        SweAfConfigService configSvc,
         IDbContextFactory<ClaudeManagerDbContext> dbFactory,
         BuildNotifier notifier,
         ILogger<SweAfService> logger)
     {
-        _http      = http;
-        _config    = config;
-        _dbFactory = dbFactory;
-        _notifier  = notifier;
-        _logger    = logger;
+        _httpFactory = httpFactory;
+        _configSvc   = configSvc;
+        _dbFactory   = dbFactory;
+        _notifier    = notifier;
+        _logger      = logger;
+    }
+
+    // ── HTTP helpers ──────────────────────────────────────────────────────────
+
+    /// <summary>Creates a per-call HttpClient from the factory (safe for singletons).</summary>
+    private HttpClient Http() => _httpFactory.CreateClient("sweaf");
+
+    /// <summary>Builds a request with the current BaseUrl and Bearer token.</summary>
+    private HttpRequestMessage BuildRequest(
+        HttpMethod method, string path, SweAfConfigEntity cfg,
+        HttpContent? content = null)
+    {
+        var baseUri = new Uri(cfg.BaseUrl.TrimEnd('/') + "/");
+        var request = new HttpRequestMessage(method, new Uri(baseUri, path.TrimStart('/')));
+        request.Headers.Authorization =
+            new AuthenticationHeaderValue("Bearer", cfg.ApiKey!);
+        if (content is not null)
+            request.Content = content;
+        return request;
     }
 
     // ── Retry ────────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Re-triggers a failed or cancelled build with the same goal and repository URL.
-    /// </summary>
     public async Task<(bool Success, string? Error)> RetryJobAsync(
         long jobId, CancellationToken ct = default)
     {
@@ -60,20 +83,23 @@ public class SweAfService
 
     // ── Webhook registration ─────────────────────────────────────────────────
 
-    /// <summary>
-    /// Registers (or updates) the observability webhook on the AgentField control plane.
-    /// After registration, AgentField will POST execution events to <paramref name="url"/>.
-    /// </summary>
     public async Task<(bool Success, string? Error)> RegisterWebhookAsync(
         string url, string? secret, CancellationToken ct = default)
     {
+        var cfg = _configSvc.GetConfig();
+        if (!cfg.IsConfigured) return (false, "SWE-AF is not configured.");
+
         object payload = string.IsNullOrWhiteSpace(secret)
             ? new { url }
             : new { url, secret };
 
-        var resp = await _http.PostAsJsonAsync(
-            "/api/v1/settings/observability-webhook", payload, ct);
+        using var request = BuildRequest(
+            HttpMethod.Post,
+            "/api/v1/settings/observability-webhook",
+            cfg,
+            JsonContent.Create(payload));
 
+        var resp = await Http().SendAsync(request, ct);
         if (!resp.IsSuccessStatusCode)
         {
             _logger.LogWarning("Webhook registration returned {Status}", (int)resp.StatusCode);
@@ -88,9 +114,15 @@ public class SweAfService
 
     public async Task<SweAfJobEntity> TriggerBuildAsync(string goal, string repoUrl)
     {
-        if (!_config.IsConfigured)
+        var cfg = _configSvc.GetConfig();
+        if (!cfg.IsConfigured)
             throw new InvalidOperationException(
-                "SweAf is not configured. Set SweAf:BaseUrl and SweAf:ApiKey in appsettings.json.");
+                "SWE-AF is not configured. Go to SWE-AF Servers to add the AgentField URL and API key.");
+
+        SweAfModelsConfig? models = null;
+        if (cfg.ModelDefault is not null || cfg.ModelCoder is not null || cfg.ModelQa is not null)
+            models = new SweAfModelsConfig
+                { Default = cfg.ModelDefault, Coder = cfg.ModelCoder, Qa = cfg.ModelQa };
 
         var payload = new
         {
@@ -98,21 +130,17 @@ public class SweAfService
             {
                 goal,
                 repo_url = repoUrl,
-                config   = new
-                {
-                    runtime = _config.Runtime,
-                    models  = _config.Models,
-                },
+                config   = new { runtime = cfg.Runtime, models },
             },
         };
 
-        var resp = await _http.PostAsJsonAsync(
+        using var request = BuildRequest(
+            HttpMethod.Post,
             "/api/v1/execute/async/swe-planner.build",
-            payload,
-            new System.Text.Json.JsonSerializerOptions
-            {
-                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
-            });
+            cfg,
+            JsonContent.Create(payload, options: _ignoreNulls));
+
+        var resp = await Http().SendAsync(request);
         resp.EnsureSuccessStatusCode();
 
         var result = await resp.Content.ReadFromJsonAsync<ExecuteResponse>()
@@ -134,7 +162,8 @@ public class SweAfService
         await db.SaveChangesAsync();
 
         _notifier.NotifyBuildChanged(job);
-        _logger.LogInformation("SWE-AF build triggered: {ExternalJobId} for {RepoUrl}", job.ExternalJobId, repoUrl);
+        _logger.LogInformation(
+            "SWE-AF build triggered: {ExternalJobId} for {RepoUrl}", job.ExternalJobId, repoUrl);
         return job;
     }
 
@@ -146,17 +175,17 @@ public class SweAfService
         return await db.SweAfJobs.FindAsync([jobId], ct);
     }
 
-    /// <summary>
-    /// Fetches live execution detail from the AgentField control plane.
-    /// Returns <see langword="null"/> when SWE-AF is not configured or the request fails.
-    /// </summary>
     public async Task<BuildExecutionDetail?> FetchExecutionDetailAsync(
         string externalJobId, CancellationToken ct = default)
     {
-        if (!_config.IsConfigured) return null;
+        var cfg = _configSvc.GetConfig();
+        if (!cfg.IsConfigured) return null;
         try
         {
-            var resp = await _http.GetAsync($"/api/v1/executions/{externalJobId}", ct);
+            using var request = BuildRequest(
+                HttpMethod.Get, $"/api/v1/executions/{externalJobId}", cfg);
+
+            var resp = await Http().SendAsync(request, ct);
             if (!resp.IsSuccessStatusCode) return null;
 
             var detail = await resp.Content.ReadFromJsonAsync<ExecutionStatusResponse>(
@@ -191,20 +220,18 @@ public class SweAfService
 
     // ── Job control ───────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Sends a cancel request to AgentField. The local job status will be updated
-    /// asynchronously when the resulting <c>execution_cancelled</c> webhook event arrives.
-    /// </summary>
     public async Task<(bool Success, string? Error)> CancelJobAsync(
         long jobId, CancellationToken ct = default)
     {
-        await using var db  = await _dbFactory.CreateDbContextAsync(ct);
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
         var job = await db.SweAfJobs.FindAsync([jobId], ct);
         if (job is null) return (false, "Job not found.");
 
-        var resp = await _http.PostAsync(
-            $"/api/v1/executions/{job.ExternalJobId}/cancel", content: null, ct);
+        var cfg = _configSvc.GetConfig();
+        using var request = BuildRequest(
+            HttpMethod.Post, $"/api/v1/executions/{job.ExternalJobId}/cancel", cfg);
 
+        var resp = await Http().SendAsync(request, ct);
         if (!resp.IsSuccessStatusCode)
         {
             _logger.LogWarning("Cancel request for {JobId} returned {Status}",
@@ -216,20 +243,20 @@ public class SweAfService
         return (true, null);
     }
 
-    /// <summary>
-    /// Sends an approval decision to AgentField for a job currently in the
-    /// <see cref="BuildStatus.Waiting"/> state.
-    /// </summary>
     public async Task<(bool Success, string? Error)> ApproveJobAsync(
         long jobId, bool approved, CancellationToken ct = default)
     {
-        await using var db  = await _dbFactory.CreateDbContextAsync(ct);
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
         var job = await db.SweAfJobs.FindAsync([jobId], ct);
         if (job is null) return (false, "Job not found.");
 
+        var cfg     = _configSvc.GetConfig();
         var payload = new { execution_id = job.ExternalJobId, approved };
-        var resp    = await _http.PostAsJsonAsync("/api/v1/webhooks/approval-response", payload, ct);
+        using var request = BuildRequest(
+            HttpMethod.Post, "/api/v1/webhooks/approval-response", cfg,
+            JsonContent.Create(payload));
 
+        var resp = await Http().SendAsync(request, ct);
         if (!resp.IsSuccessStatusCode)
         {
             _logger.LogWarning("Approval response for {JobId} returned {Status}",
@@ -277,12 +304,11 @@ public class SweAfService
 
     private async Task ApplyEventAsync(string externalJobId, string eventType, JsonElement data)
     {
-        await using var db  = await _dbFactory.CreateDbContextAsync();
+        await using var db = await _dbFactory.CreateDbContextAsync();
         var job = await db.SweAfJobs.FirstOrDefaultAsync(j => j.ExternalJobId == externalJobId);
 
         if (job is null)
         {
-            // Externally triggered run we haven't seen before — upsert on creation events.
             if (eventType is not ("execution_created" or "execution_started"))
                 return;
 
@@ -344,19 +370,16 @@ public class SweAfService
 
     // ── Startup reconciliation ────────────────────────────────────────────────
 
-    /// <summary>
-    /// Polls AgentField for the current status of each supplied execution ID.
-    /// Used by <see cref="SweAfRecoveryService"/> on hub restart to close any
-    /// state gap that accumulated while the hub was offline.
-    /// </summary>
     public async Task ReconcileAsync(IEnumerable<string> externalJobIds, CancellationToken ct = default)
     {
+        var cfg = _configSvc.GetConfig();
         foreach (var id in externalJobIds)
         {
             ct.ThrowIfCancellationRequested();
             try
             {
-                var resp = await _http.GetAsync($"/api/v1/executions/{id}", ct);
+                using var request = BuildRequest(HttpMethod.Get, $"/api/v1/executions/{id}", cfg);
+                var resp = await Http().SendAsync(request, ct);
                 if (!resp.IsSuccessStatusCode) continue;
 
                 var status = await resp.Content.ReadFromJsonAsync<ExecutionStatusResponse>(
@@ -387,25 +410,20 @@ public class SweAfService
 
     // ── HMAC signature verification ───────────────────────────────────────────
 
-    /// <summary>
-    /// Verifies the HMAC-SHA256 signature on an incoming AgentField webhook request.
-    /// Returns <see langword="true"/> if no secret is configured (verification disabled).
-    /// </summary>
     public static bool VerifySignature(string? secret, byte[] body, string? signature)
     {
         if (string.IsNullOrEmpty(secret)) return true;
         if (string.IsNullOrEmpty(signature)) return false;
 
-        // Strip optional "sha256=" prefix
         var hex = signature.StartsWith("sha256=", StringComparison.OrdinalIgnoreCase)
             ? signature[7..]
             : signature;
 
         try
         {
-            using var hmac     = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-            var computed       = hmac.ComputeHash(body);
-            var expected       = Convert.FromHexString(hex);
+            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+            var computed   = hmac.ComputeHash(body);
+            var expected   = Convert.FromHexString(hex);
             return CryptographicOperations.FixedTimeEquals(computed, expected);
         }
         catch (FormatException)
@@ -418,13 +436,13 @@ public class SweAfService
 
     private static BuildStatus ParseStatus(string? s) => s switch
     {
-        "queued"             => BuildStatus.Queued,
-        "running"            => BuildStatus.Running,
-        "waiting" or "paused"=> BuildStatus.Waiting,
-        "succeeded"          => BuildStatus.Succeeded,
-        "failed"             => BuildStatus.Failed,
-        "cancelled"          => BuildStatus.Cancelled,
-        _                    => BuildStatus.Running,
+        "queued"              => BuildStatus.Queued,
+        "running"             => BuildStatus.Running,
+        "waiting" or "paused" => BuildStatus.Waiting,
+        "succeeded"           => BuildStatus.Succeeded,
+        "failed"              => BuildStatus.Failed,
+        "cancelled"           => BuildStatus.Cancelled,
+        _                     => BuildStatus.Running,
     };
 
     private static string? ExtractPrUrls(JsonElement data)

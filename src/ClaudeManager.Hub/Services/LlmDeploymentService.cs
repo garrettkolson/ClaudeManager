@@ -151,20 +151,26 @@ public class LlmDeploymentService
         using var fastFailCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         fastFailCts.CancelAfter(TimeSpan.FromSeconds(30));
 
+        // fastFailCts.Token controls the loop window only (while condition + Delay).
+        // Individual SSH operations use the outer ct so the fast-fail timeout expiring mid-command
+        // doesn't cause a cancelled SSH result to be misread as "container not found".
         while (!fastFailCts.Token.IsCancellationRequested)
         {
-            var isHealthy = await _instance.CheckHealthAsync(host, deployment.HostPort, fastFailCts.Token);
+            var isHealthy = await _instance.CheckHealthAsync(host, deployment.HostPort, ct);
             if (isHealthy)
             {
                 _logger.LogInformation("Deployment {Id} is healthy (fast startup)", deployment.Id);
-                deployment.StartedAt    = DateTimeOffset.UtcNow;
+                deployment.StartedAt         = DateTimeOffset.UtcNow;
                 deployment.LastHealthCheckAt = DateTimeOffset.UtcNow;
                 await SetStatusAsync(deployment, LlmDeploymentStatus.Running, containerId, error: null, ct);
                 return null;
             }
 
-            // Not healthy yet — check that the container hasn't already exited
-            var containerStatus = await _instance.InspectContainerAsync(host, containerId, fastFailCts.Token);
+            // Not healthy yet — check that the container hasn't already exited.
+            // Only do this if the fast-fail window hasn't expired; otherwise we're done anyway.
+            if (fastFailCts.Token.IsCancellationRequested) break;
+
+            var containerStatus = await _instance.InspectContainerAsync(host, containerId, ct);
             if (containerStatus is null || containerStatus != ContainerStatus.Running)
             {
                 var msg = $"Container exited immediately after start (status: {containerStatus?.ToString() ?? "not found"})";

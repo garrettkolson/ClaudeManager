@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Text.Json;
 using ClaudeManager.Hub.Hubs;
 using ClaudeManager.Hub.Models;
@@ -62,29 +61,18 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<LlmDeploymentHealt
 builder.Services.AddHttpClient<ModelConfigFetcher>();
 
 // ── SWE-AF / AgentField ───────────────────────────────────────────────────────
+// Config and hosts are now stored in the DB and managed via the SWE-AF Servers UI.
+// SweAfConfigService must be started before SweAfRecoveryService so the IsConfigured
+// sync property is populated before recovery tries to read it.
 
-var sweAfConfig = builder.Configuration.GetSection("SweAf").Get<SweAfConfig>() ?? new SweAfConfig();
-builder.Services.AddSingleton(sweAfConfig);
-
-var sweAfHttp = new HttpClient();
-if (sweAfConfig.IsConfigured)
-{
-    sweAfHttp.BaseAddress = new Uri(sweAfConfig.BaseUrl.TrimEnd('/') + "/");
-    sweAfHttp.DefaultRequestHeaders.Authorization =
-        new AuthenticationHeaderValue("Bearer", sweAfConfig.ApiKey);
-}
-builder.Services.AddSingleton(sweAfHttp);
+builder.Services.AddSingleton<SweAfConfigService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<SweAfConfigService>());
+builder.Services.AddHttpClient("sweaf");
 builder.Services.AddSingleton<BuildNotifier>();
 builder.Services.AddSingleton<SweAfService>();
+builder.Services.AddSingleton<SweAfHostService>();
 builder.Services.AddHostedService<SweAfRecoveryService>();
 builder.Services.AddSingleton<NotificationService>();
-
-// ── SWE-AF host service control ───────────────────────────────────────────
-
-var sweAfHostConfig = builder.Configuration
-    .GetSection("SweAfHost").Get<SweAfHostConfig>() ?? new SweAfHostConfig();
-builder.Services.AddSingleton(sweAfHostConfig);
-builder.Services.AddSingleton<SweAfHostService>();
 
 // ── SignalR ───────────────────────────────────────────────────────────────────
 
@@ -143,14 +131,14 @@ app.MapGet("/api/llm-config", async (LlmProxyConfigService svc) =>
 
 // ── AgentField observability webhook ──────────────────────────────────────────
 
-app.MapPost("/api/webhooks/agentfield", async (HttpRequest req, SweAfService svc, SweAfConfig cfg) =>
+app.MapPost("/api/webhooks/agentfield", async (HttpRequest req, SweAfService svc, SweAfConfigService cfgSvc) =>
 {
     using var ms = new MemoryStream();
     await req.Body.CopyToAsync(ms);
     var body = ms.ToArray();
 
     var signature = req.Headers["X-AgentField-Signature"].FirstOrDefault();
-    if (!SweAfService.VerifySignature(cfg.WebhookSecret, body, signature))
+    if (!SweAfService.VerifySignature(cfgSvc.WebhookSecret, body, signature))
         return Results.Unauthorized();
 
     ObservabilityBatch? batch;

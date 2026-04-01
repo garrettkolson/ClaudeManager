@@ -37,11 +37,42 @@ public class SweAfServiceTests
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private SweAfService CreateService(HttpMessageHandler handler, string baseUrl = "https://af.test", string apiKey = "key")
+    private SweAfService CreateService(HttpMessageHandler handler, string baseUrl = "https://af.test", string apiKey = "key",
+        string? modelDefault = null, string? modelCoder = null, string? modelQa = null)
     {
-        var http   = new HttpClient(handler) { BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/") };
-        var config = new SweAfConfig { BaseUrl = baseUrl, ApiKey = apiKey };
-        return new SweAfService(http, config, _dbFactory, _notifier, NullLogger<SweAfService>.Instance);
+        var factory    = new TestHttpClientFactory(new HttpClient(handler));
+        var configSvc  = CreateConfigService(baseUrl, apiKey, modelDefault, modelCoder, modelQa);
+        return new SweAfService(factory, configSvc, _dbFactory, _notifier,
+            NullLogger<SweAfService>.Instance);
+    }
+
+    private SweAfConfigService CreateConfigService(string baseUrl, string apiKey,
+        string? modelDefault = null, string? modelCoder = null, string? modelQa = null)
+    {
+        // Pre-seed the in-memory DB with the config, then start the service so it loads the cache.
+        using var db = _dbFactory.CreateDbContext();
+        db.SweAfConfigs.Add(new SweAfConfigEntity
+        {
+            BaseUrl      = baseUrl,
+            ApiKey       = apiKey,
+            Runtime      = "claude_code",
+            ModelDefault = modelDefault,
+            ModelCoder   = modelCoder,
+            ModelQa      = modelQa,
+        });
+        db.SaveChanges();
+
+        var svc = new SweAfConfigService(_dbFactory, NullLogger<SweAfConfigService>.Instance);
+        svc.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+        return svc;
+    }
+
+    /// <summary>Minimal IHttpClientFactory that always returns the same pre-configured client.</summary>
+    private sealed class TestHttpClientFactory : IHttpClientFactory
+    {
+        private readonly HttpClient _client;
+        public TestHttpClientFactory(HttpClient client) => _client = client;
+        public HttpClient CreateClient(string name) => _client;
     }
 
     private static Mock<HttpMessageHandler> MockHttp(HttpStatusCode status, object? body = null)
@@ -187,16 +218,8 @@ public class SweAfServiceTests
                 Content = JsonContent.Create(new { execution_id = "exec-m1" }),
             });
 
-        var config = new SweAfConfig
-        {
-            BaseUrl = "https://af.test",
-            ApiKey  = "key",
-            Runtime = "claude_code",
-            Models  = new SweAfModelsConfig { Default = "sonnet", Coder = "opus" },
-        };
-        var http = new HttpClient(handlerMock.Object) { BaseAddress = new Uri("https://af.test/") };
-        var svc  = new SweAfService(http, config, _dbFactory, _notifier,
-            NullLogger<SweAfService>.Instance);
+        var svc = CreateService(handlerMock.Object,
+            modelDefault: "sonnet", modelCoder: "opus");
 
         await svc.TriggerBuildAsync("Goal", "https://github.com/org/repo");
 

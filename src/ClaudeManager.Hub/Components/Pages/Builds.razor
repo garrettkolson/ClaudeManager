@@ -5,18 +5,20 @@
 @inject BuildNotifier Notifier
 @using System.Text.Json
 @using ClaudeManager.Hub.Persistence.Entities
+@using ClaudeManager.Hub.Services
 
 <PageTitle>Builds – Claude Manager</PageTitle>
 
 <div class="builds-page">
     <div class="builds-header">
         <h1>Builds</h1>
-        @foreach (var cmd in HostSvc.Commands)
+        @foreach (var (host, cmd) in _hostCommands)
         {
-            var label = cmd.Label;
+            var label   = cmd.Label;
             var command = cmd.Command;
+            var h       = host;
             <button class="btn-host-cmd"
-                    @onclick="() => RunHostCommand(command, label)"
+                    @onclick="() => RunHostCommand(h, command, label)"
                     disabled="@(_serviceOp is not null)">
                 @(_serviceOp == label ? label + "…" : label)
             </button>
@@ -65,8 +67,8 @@
     @if (!BuildsSvc.IsConfigured)
     {
         <div class="builds-unconfigured">
-            SWE-AF is not configured. Add <code>SweAf:BaseUrl</code> and <code>SweAf:ApiKey</code>
-            to appsettings.json to enable autonomous builds.
+            SWE-AF is not configured.
+            <a href="/sweaf">Go to SWE-AF Servers</a> to add the AgentField URL and API key.
         </div>
     }
     else if (_jobs is null)
@@ -220,6 +222,7 @@
 
 @code {
     private List<SweAfJobEntity>? _jobs;
+    private List<(SweAfHostEntity Host, SweAfHostCommand Cmd)> _hostCommands = [];
 
     private bool    _showModal;
     private string  _formGoal    = string.Empty;
@@ -242,6 +245,10 @@
     protected override async Task OnInitializedAsync()
     {
         _jobs = await BuildsSvc.GetAllJobsAsync();
+        var hosts = await HostSvc.GetAllAsync();
+        _hostCommands = hosts
+            .SelectMany(h => SweAfHostService.GetCommands(h).Select(c => (h, c)))
+            .ToList();
         Notifier.BuildChanged += OnBuildChanged;
     }
 
@@ -300,11 +307,11 @@
 
     // ── Service controls ──────────────────────────────────────────────────────
 
-    private async Task RunHostCommand(string command, string label)
+    private async Task RunHostCommand(SweAfHostEntity host, string command, string label)
     {
         _serviceOp = label; _serviceError = null;
         StateHasChanged();
-        var (ok, err) = await HostSvc.RunAsync(command, label);
+        var (ok, err) = await HostSvc.RunCommandAsync(host, command, label);
         _serviceOp = null;
         if (!ok) _serviceError = $"{label} failed: {err}";
     }

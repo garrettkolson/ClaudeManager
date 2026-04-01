@@ -1,5 +1,10 @@
+using ClaudeManager.Hub.Persistence;
+using ClaudeManager.Hub.Persistence.Entities;
 using ClaudeManager.Hub.Services;
+using ClaudeManager.Hub.Tests.Helpers;
 using FluentAssertions;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ClaudeManager.Hub.Tests.Services;
@@ -7,109 +12,140 @@ namespace ClaudeManager.Hub.Tests.Services;
 [TestFixture]
 public class SweAfHostServiceTests
 {
-    // ── IsConfigured / Commands ───────────────────────────────────────────────
+    private SqliteConnection _conn = default!;
+    private IDbContextFactory<ClaudeManagerDbContext> _dbFactory = default!;
+
+    [SetUp]
+    public async Task SetUp()
+    {
+        var (factory, conn) = await InMemoryDbHelper.CreateAsync();
+        _conn      = conn;
+        _dbFactory = factory;
+    }
+
+    [TearDown]
+    public void TearDown() => _conn.Dispose();
+
+    private SweAfHostService BuildSvc() =>
+        new SweAfHostService(_dbFactory, NullLogger<SweAfHostService>.Instance);
+
+    // ── GetCommands (static helper) ───────────────────────────────────────────
 
     [Test]
-    public void IsConfigured_WithCommands_ReturnsTrue()
+    public void GetCommands_ValidJson_ReturnsParsedList()
     {
-        var svc = Build([new SweAfHostCommand { Label = "Start", Command = "start.sh" }]);
-        svc.IsConfigured.Should().BeTrue();
+        var host = new SweAfHostEntity
+        {
+            CommandsJson = """[{"Label":"Start","Command":"start.sh"},{"Label":"Stop","Command":"stop.sh"}]""",
+        };
+        var cmds = SweAfHostService.GetCommands(host);
+        cmds.Should().HaveCount(2);
+        cmds[0].Label.Should().Be("Start");
+        cmds[1].Label.Should().Be("Stop");
     }
 
     [Test]
-    public void IsConfigured_EmptyCommandList_ReturnsFalse()
+    public void GetCommands_NullJson_ReturnsEmpty()
     {
-        var svc = Build([]);
-        svc.IsConfigured.Should().BeFalse();
+        var host = new SweAfHostEntity { CommandsJson = null };
+        SweAfHostService.GetCommands(host).Should().BeEmpty();
     }
 
     [Test]
-    public void IsConfigured_NullCommandList_ReturnsFalse()
+    public void GetCommands_InvalidJson_ReturnsEmpty()
     {
-        var svc = Build(null);
-        svc.IsConfigured.Should().BeFalse();
+        var host = new SweAfHostEntity { CommandsJson = "not-json" };
+        SweAfHostService.GetCommands(host).Should().BeEmpty();
     }
 
+    // ── SerializeCommands (static helper) ─────────────────────────────────────
+
     [Test]
-    public void Commands_ReflectsConfiguredList()
+    public void SerializeCommands_FiltersBlanks()
     {
         var cmds = new List<SweAfHostCommand>
         {
             new() { Label = "Start", Command = "start.sh" },
-            new() { Label = "Stop",  Command = "stop.sh"  },
+            new() { Label = "",      Command = "ignored"  }, // blank label — omitted
         };
-        var svc = Build(cmds);
-        svc.Commands.Should().HaveCount(2);
-        svc.Commands[0].Label.Should().Be("Start");
-        svc.Commands[1].Label.Should().Be("Stop");
+        var json = SweAfHostService.SerializeCommands(cmds);
+        json.Should().NotBeNullOrEmpty();
+        json.Should().Contain("Start");
+        json.Should().NotContain("ignored");
     }
 
     [Test]
-    public void Commands_NullConfig_ReturnsEmptyList()
+    public void SerializeCommands_AllBlank_ReturnsNull()
     {
-        var svc = Build(null);
-        svc.Commands.Should().BeEmpty();
+        var cmds = new List<SweAfHostCommand>
+        {
+            new() { Label = "", Command = "x" },
+        };
+        SweAfHostService.SerializeCommands(cmds).Should().BeNull();
     }
 
-    // ── Guard: not configured ─────────────────────────────────────────────────
+    // ── CRUD ──────────────────────────────────────────────────────────────────
 
     [Test]
-    public async Task RunAsync_NotConfigured_ReturnsError()
+    public async Task CreateAsync_PersistsToDb()
     {
-        var svc = Build(null);
-        var (ok, err) = await svc.RunAsync("start.sh", "Start");
-        ok.Should().BeFalse();
-        err.Should().NotBeNullOrEmpty();
+        var svc = BuildSvc();
+        var cmds = new List<SweAfHostCommand>
+        {
+            new() { Label = "Start", Command = "docker compose up -d" },
+        };
+        var entity = await svc.CreateAsync("My Host", "server.local", commands: cmds);
+
+        entity.Id.Should().BeGreaterThan(0);
+
+        await using var db = _dbFactory.CreateDbContext();
+        var stored = await db.SweAfHosts.FindAsync(entity.Id);
+        stored.Should().NotBeNull();
+        stored!.DisplayName.Should().Be("My Host");
+        stored.Host.Should().Be("server.local");
+        stored.CommandsJson.Should().Contain("Start");
+    }
+
+    [Test]
+    public async Task GetAllAsync_ReturnsOrderedByDisplayName()
+    {
+        var svc = BuildSvc();
+        await svc.CreateAsync("Zebra Host", "z.local");
+        await svc.CreateAsync("Alpha Host", "a.local");
+
+        var all = await svc.GetAllAsync();
+        all.Should().HaveCount(2);
+        all[0].DisplayName.Should().Be("Alpha Host");
+        all[1].DisplayName.Should().Be("Zebra Host");
+    }
+
+    [Test]
+    public async Task DeleteAsync_RemovesFromDb()
+    {
+        var svc    = BuildSvc();
+        var entity = await svc.CreateAsync("Temp", "temp.local");
+
+        await svc.DeleteAsync(entity.Id);
+
+        await using var db = _dbFactory.CreateDbContext();
+        (await db.SweAfHosts.FindAsync(entity.Id)).Should().BeNull();
     }
 
     // ── Guard: no SSH auth on remote host ─────────────────────────────────────
 
     [Test]
-    public async Task RunAsync_RemoteHostWithNoAuth_ReturnsError()
+    public async Task RunCommandAsync_RemoteHostWithNoAuth_ReturnsError()
     {
-        var config = new SweAfHostConfig
+        var svc  = BuildSvc();
+        var host = new SweAfHostEntity
         {
             Host    = "remote.example.com",
+            SshPort = 22,
             SshUser = "user",
-            Commands =
-            [
-                new SweAfHostCommand { Label = "Start", Command = "start.sh" },
-            ],
             // No SshKeyPath or SshPassword
         };
-        var svc = new SweAfHostService(config, NullLogger<SweAfHostService>.Instance);
-        var (ok, err) = await svc.RunAsync("start.sh", "Start");
+        var (ok, err) = await svc.RunCommandAsync(host, "start.sh", "Start");
         ok.Should().BeFalse();
         err.Should().Contain("SSH");
     }
-
-    // ── AnthropicBaseUrl / AnthropicApiKey do not affect IsConfigured ─────────
-
-    [Test]
-    public void IsConfigured_WithAnthropicOverrides_StillTrue()
-    {
-        var config = new SweAfHostConfig
-        {
-            Host             = "localhost",
-            AnthropicBaseUrl = "http://localhost:11434",
-            AnthropicApiKey  = "local",
-            Commands =
-            [
-                new SweAfHostCommand { Label = "Start", Command = "start.sh" },
-            ],
-        };
-        new SweAfHostService(config, NullLogger<SweAfHostService>.Instance)
-            .IsConfigured.Should().BeTrue();
-    }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private static SweAfHostService Build(IEnumerable<SweAfHostCommand>? commands) =>
-        new SweAfHostService(
-            new SweAfHostConfig
-            {
-                Host     = "localhost",
-                Commands = commands?.ToList(),
-            },
-            NullLogger<SweAfHostService>.Instance);
 }

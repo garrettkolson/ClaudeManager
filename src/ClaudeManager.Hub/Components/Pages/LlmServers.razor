@@ -439,8 +439,8 @@
                                     else
                                     {
                                         <div class="llm-logs-header">
-                                            <span class="llm-hint">Last 200 lines</span>
-                                            <button class="btn-sm" @onclick="() => RefreshLogs(dep)">Refresh</button>
+                                            <span class="llm-hint">Last 200 lines — auto-refreshing every 5s</span>
+                                            <button class="btn-sm" @onclick="() => RefreshLogs(dep)">Refresh Now</button>
                                         </div>
                                         <pre class="llm-logs-pre">@_deploymentLogs</pre>
                                     }
@@ -620,10 +620,11 @@
     private HashSet<long> _busyIds = [];
 
     // Log viewer
-    private long?   _viewingLogsId;
-    private string? _deploymentLogs;
-    private bool    _loadingLogs;
-    private string? _logsError;
+    private long?                    _viewingLogsId;
+    private string?                  _deploymentLogs;
+    private bool                     _loadingLogs;
+    private string?                  _logsError;
+    private CancellationTokenSource? _logStreamCts;
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -638,6 +639,7 @@
     public void Dispose()
     {
         Notifier.DeploymentChanged -= OnDeploymentChanged;
+        StopLogStream();
     }
 
     private void OnDeploymentChanged(LlmDeploymentEntity updated)
@@ -1048,11 +1050,13 @@
 
     private async Task ToggleLogs(LlmDeploymentEntity dep)
     {
+        StopLogStream();
         if (_viewingLogsId == dep.Id) { _viewingLogsId = null; return; }
         _viewingLogsId  = dep.Id;
         _deploymentLogs = null;
         _logsError      = null;
         await RefreshLogs(dep);
+        StartLogStream(dep);
     }
 
     private async Task RefreshLogs(LlmDeploymentEntity dep)
@@ -1066,6 +1070,38 @@
             _logsError      = error;
         }
         finally { _loadingLogs = false; }
+    }
+
+    private void StartLogStream(LlmDeploymentEntity dep)
+    {
+        _logStreamCts = new CancellationTokenSource();
+        var ct = _logStreamCts.Token;
+        _ = Task.Run(async () =>
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+            try
+            {
+                while (await timer.WaitForNextTickAsync(ct))
+                {
+                    var (logs, error) = await DeploymentSvc.GetLogsAsync(dep.Id);
+                    if (ct.IsCancellationRequested) break;
+                    await InvokeAsync(() =>
+                    {
+                        _deploymentLogs = logs;
+                        _logsError      = error;
+                        StateHasChanged();
+                    });
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
+    }
+
+    private void StopLogStream()
+    {
+        _logStreamCts?.Cancel();
+        _logStreamCts?.Dispose();
+        _logStreamCts = null;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

@@ -23,15 +23,13 @@ internal sealed class WebhookSecretFactory : HubWebApplicationFactory
     {
         base.ConfigureWebHost(builder);
 
-        // SweAfConfig is bound as a singleton value in Program.cs before test
-        // ConfigureAppConfiguration sources are applied, so we replace the DI
-        // registration directly instead of relying on config layering.
-        builder.ConfigureServices(services =>
-        {
-            var existing = services.SingleOrDefault(d => d.ServiceType == typeof(SweAfConfig));
-            if (existing is not null) services.Remove(existing);
-            services.AddSingleton(new SweAfConfig { WebhookSecret = WebhookSecret });
-        });
+        // Inject the webhook secret via configuration; SweAfConfigService falls back to
+        // SweAf:WebhookSecret when no DB row is present (integration test DB starts empty).
+        builder.ConfigureAppConfiguration((_, cfg) =>
+            cfg.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["SweAf:WebhookSecret"] = WebhookSecret,
+            }));
     }
 }
 
