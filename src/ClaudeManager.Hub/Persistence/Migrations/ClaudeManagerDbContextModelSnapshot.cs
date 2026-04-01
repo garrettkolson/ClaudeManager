@@ -286,7 +286,6 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                     b.Property<string>("BaseUrl")
                         .IsRequired()
                         .HasMaxLength(500)
-                        .HasDefaultValue("")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("DefaultRepoUrl")
@@ -312,7 +311,6 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                     b.Property<string>("Runtime")
                         .IsRequired()
                         .HasMaxLength(50)
-                        .HasDefaultValue("claude_code")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("WebhookSecret")

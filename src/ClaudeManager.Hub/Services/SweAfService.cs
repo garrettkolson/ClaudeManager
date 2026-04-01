@@ -93,7 +93,7 @@ public class SweAfService
             ? new { url }
             : new { url, secret };
 
-        using var request = BuildRequest(
+        var request = BuildRequest(
             HttpMethod.Post,
             "/api/v1/settings/observability-webhook",
             cfg,
@@ -134,7 +134,7 @@ public class SweAfService
             },
         };
 
-        using var request = BuildRequest(
+        var request = BuildRequest(
             HttpMethod.Post,
             "/api/v1/execute/async/swe-planner.build",
             cfg,
@@ -182,7 +182,7 @@ public class SweAfService
         if (!cfg.IsConfigured) return null;
         try
         {
-            using var request = BuildRequest(
+            var request = BuildRequest(
                 HttpMethod.Get, $"/api/v1/executions/{externalJobId}", cfg);
 
             var resp = await Http().SendAsync(request, ct);
@@ -228,7 +228,7 @@ public class SweAfService
         if (job is null) return (false, "Job not found.");
 
         var cfg = _configSvc.GetConfig();
-        using var request = BuildRequest(
+        var request = BuildRequest(
             HttpMethod.Post, $"/api/v1/executions/{job.ExternalJobId}/cancel", cfg);
 
         var resp = await Http().SendAsync(request, ct);
@@ -252,7 +252,7 @@ public class SweAfService
 
         var cfg     = _configSvc.GetConfig();
         var payload = new { execution_id = job.ExternalJobId, approved };
-        using var request = BuildRequest(
+        var request = BuildRequest(
             HttpMethod.Post, "/api/v1/webhooks/approval-response", cfg,
             JsonContent.Create(payload));
 
@@ -378,7 +378,7 @@ public class SweAfService
             ct.ThrowIfCancellationRequested();
             try
             {
-                using var request = BuildRequest(HttpMethod.Get, $"/api/v1/executions/{id}", cfg);
+                var request = BuildRequest(HttpMethod.Get, $"/api/v1/executions/{id}", cfg);
                 var resp = await Http().SendAsync(request, ct);
                 if (!resp.IsSuccessStatusCode) continue;
 
