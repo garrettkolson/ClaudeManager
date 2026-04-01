@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using ClaudeManager.Hub.Persistence;
 using ClaudeManager.Hub.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -217,6 +218,85 @@ public class LlmDeploymentService
             ct);
 
         return error;
+    }
+
+    // ── Container detection ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Scans the given host for running vLLM containers and correlates them with
+    /// deployments already tracked in the database.
+    /// </summary>
+    public async Task<(List<DetectedVllmContainer> Containers, string? Error)> DetectContainersAsync(
+        GpuHostEntity host, CancellationToken ct = default)
+    {
+        var (rawList, error) = await _instance.ListRunningVllmContainersAsync(host, ct);
+        if (error is not null) return ([], error);
+
+        await using var db = _dbFactory.CreateDbContext();
+        var existing = await db.LlmDeployments
+            .Where(d => d.HostId == host.HostId)
+            .ToListAsync(ct);
+
+        var results = rawList.Select(raw =>
+        {
+            var match = existing.FirstOrDefault(d => d.ContainerId == raw.ContainerId);
+            return new DetectedVllmContainer(
+                ContainerId:            raw.ContainerId,
+                ImageTag:               raw.ImageTag,
+                ModelId:                raw.ModelId,
+                HostPort:               raw.HostPort,
+                GpuIndices:             raw.GpuIndices,
+                Quantization:           raw.Quantization,
+                MaxModelLen:            raw.MaxModelLen,
+                AlreadyTracked:         match is not null,
+                ExistingDeploymentDbId: match?.Id,
+                ExistingDeploymentId:   match?.DeploymentId);
+        }).ToList();
+
+        return (results, null);
+    }
+
+    /// <summary>
+    /// Creates a new deployment record for a container that was detected but not yet tracked.
+    /// The deployment is created in Running status with the container ID already associated.
+    /// </summary>
+    public async Task<(LlmDeploymentEntity Deployment, string? Error)> ImportDetectedAsync(
+        string hostId, DetectedVllmContainer detected, CancellationToken ct = default)
+    {
+        if (detected.AlreadyTracked)
+            return (null!, "Container is already tracked by an existing deployment.");
+
+        // Build a short readable slug from the model name
+        var rawName = string.IsNullOrWhiteSpace(detected.ModelId) ? "vllm" :
+            detected.ModelId.Contains('/')
+                ? detected.ModelId[(detected.ModelId.LastIndexOf('/') + 1)..]
+                : detected.ModelId;
+        var slug     = Regex.Replace(rawName, @"[^a-zA-Z0-9]", "-").ToLowerInvariant().Trim('-');
+        var prefix   = slug.Length > 7 ? slug[..7] : slug;
+        var deployId = $"{prefix}-{Guid.NewGuid().ToString("N")[..4]}";
+
+        var entity = new LlmDeploymentEntity
+        {
+            DeploymentId  = deployId,
+            HostId        = hostId,
+            ModelId       = detected.ModelId ?? "(unknown)",
+            GpuIndices    = detected.GpuIndices ?? "0",
+            HostPort      = detected.HostPort ?? 8000,
+            Quantization  = detected.Quantization ?? "none",
+            ImageTag      = detected.ImageTag,
+            MaxModelLen   = detected.MaxModelLen,
+            ContainerId   = detected.ContainerId,
+            Status        = LlmDeploymentStatus.Running,
+            StartedAt     = DateTimeOffset.UtcNow,
+            CreatedAt     = DateTimeOffset.UtcNow,
+        };
+
+        await using var db = _dbFactory.CreateDbContext();
+        db.LlmDeployments.Add(entity);
+        await db.SaveChangesAsync(ct);
+
+        _notifier.NotifyChanged(entity);
+        return (entity, null);
     }
 
     // ── Logs ──────────────────────────────────────────────────────────────────

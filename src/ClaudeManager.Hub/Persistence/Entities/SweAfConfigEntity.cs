@@ -42,6 +42,13 @@ public class SweAfConfigEntity
     [MaxLength(1000)]
     public string? DefaultRepoUrl { get; set; }
 
+    /// <summary>
+    /// Personal access token (GitHub, GitLab, etc.) injected into the build trigger payload
+    /// so the agent swarm can clone and push to private repositories.
+    /// </summary>
+    [MaxLength(500)]
+    public string? RepositoryApiToken { get; set; }
+
     [NotMapped]
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(ApiKey);

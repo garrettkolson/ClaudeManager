@@ -84,10 +84,11 @@ public class SweAfConfigService : IHostedService
             existing.WebhookSecret  = config.WebhookSecret;
             existing.HubPublicUrl   = config.HubPublicUrl;
             existing.Runtime        = config.Runtime;
-            existing.ModelDefault   = config.ModelDefault;
-            existing.ModelCoder     = config.ModelCoder;
-            existing.ModelQa        = config.ModelQa;
-            existing.DefaultRepoUrl = config.DefaultRepoUrl;
+            existing.ModelDefault        = config.ModelDefault;
+            existing.ModelCoder          = config.ModelCoder;
+            existing.ModelQa             = config.ModelQa;
+            existing.DefaultRepoUrl      = config.DefaultRepoUrl;
+            existing.RepositoryApiToken  = config.RepositoryApiToken;
         }
         await db.SaveChangesAsync(ct);
 

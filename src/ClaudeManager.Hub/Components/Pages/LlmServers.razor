@@ -156,6 +156,13 @@
                                     </button>
                                 }
                                 <button class="btn-sm"
+                                        @onclick="() => ToggleDetect(hostRef)"
+                                        disabled="@(_detectingHostId == hostRef.Id)">
+                                    @if (_detectingHostId == hostRef.Id) { <span>Detecting…</span> }
+                                    else if (_detectResults.ContainsKey(hostRef.Id) || _detectErrors.ContainsKey(hostRef.Id)) { <span>Hide Detected</span> }
+                                    else { <span>Detect Containers</span> }
+                                </button>
+                                <button class="btn-sm"
                                         @onclick="() => OpenHostEdit(hostRef)">Edit</button>
                                 <button class="btn-sm btn-danger-sm"
                                         @onclick="() => DeleteHost(hostRef)">Remove</button>
@@ -181,6 +188,66 @@
                                         }
                                     </div>
                                     <pre class="llm-logs-pre">@GenerateNginxConfigForHost(host)</pre>
+                                </td>
+                            </tr>
+                        }
+                        @if (_detectErrors.TryGetValue(host.Id, out var detectErr))
+                        {
+                            <tr class="llm-gpu-row">
+                                <td colspan="6"><div class="error-msg">Detection: @detectErr</div></td>
+                            </tr>
+                        }
+                        else if (_detectResults.TryGetValue(host.Id, out var detected))
+                        {
+                            <tr class="llm-gpu-row">
+                                <td colspan="6">
+                                    @if (detected.Count == 0)
+                                    {
+                                        <div class="llm-hint">No vLLM containers found on this host.</div>
+                                    }
+                                    else
+                                    {
+                                        <table class="llm-gpu-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Container</th>
+                                                    <th>Image</th>
+                                                    <th>Model</th>
+                                                    <th>Port</th>
+                                                    <th>GPUs</th>
+                                                    <th></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var c in detected)
+                                                {
+                                                    var cRef    = c;
+                                                    var hostRef2 = host;
+                                                    <tr>
+                                                        <td><code title="@cRef.ContainerId">@cRef.ContainerId[..Math.Min(12, cRef.ContainerId.Length)]</code></td>
+                                                        <td>@cRef.ImageTag</td>
+                                                        <td title="@cRef.ModelId">@(cRef.ModelId is not null ? TruncateModel(cRef.ModelId) : "(unknown)")</td>
+                                                        <td>@(cRef.HostPort?.ToString() ?? "—")</td>
+                                                        <td>@(cRef.GpuIndices ?? "—")</td>
+                                                        <td>
+                                                            @if (cRef.AlreadyTracked)
+                                                            {
+                                                                <span class="llm-hint">Tracked: @cRef.ExistingDeploymentId</span>
+                                                            }
+                                                            else
+                                                            {
+                                                                <button class="btn-sm btn-start-sm"
+                                                                        @onclick="() => ImportContainer(hostRef2, cRef)"
+                                                                        disabled="@_importingContainers.Contains(cRef.ContainerId)">
+                                                                    @(_importingContainers.Contains(cRef.ContainerId) ? "Importing…" : "Import")
+                                                                </button>
+                                                            }
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    }
                                 </td>
                             </tr>
                         }
@@ -583,6 +650,12 @@
     private Dictionary<long, IReadOnlyList<GpuInfo>>  _gpuResults = new();
     private Dictionary<long, string>                  _gpuErrors  = new();
 
+    // Container detection (hosts table)
+    private long?                                          _detectingHostId;
+    private Dictionary<long, List<DetectedVllmContainer>>  _detectResults    = new();
+    private Dictionary<long, string>                       _detectErrors     = new();
+    private HashSet<string>                                _importingContainers = [];
+
     // ── State — deployments ───────────────────────────────────────────────────
     private List<LlmDeploymentEntity>? _deployments;
     private bool    _showDeployForm;
@@ -778,6 +851,58 @@
             else                   _gpuResults[host.Id] = gpus;
         }
         finally { _inspectingId = null; }
+    }
+
+    // ── Container detection ───────────────────────────────────────────────────
+
+    private async Task ToggleDetect(GpuHostEntity host)
+    {
+        if (_detectResults.ContainsKey(host.Id) || _detectErrors.ContainsKey(host.Id))
+        {
+            _detectResults.Remove(host.Id);
+            _detectErrors.Remove(host.Id);
+            return;
+        }
+
+        _detectingHostId = host.Id;
+        _detectErrors.Remove(host.Id);
+        try
+        {
+            var (containers, error) = await DeploymentSvc.DetectContainersAsync(host);
+            if (error is not null) _detectErrors[host.Id]  = error;
+            else                   _detectResults[host.Id] = containers;
+        }
+        finally { _detectingHostId = null; }
+    }
+
+    private async Task ImportContainer(GpuHostEntity host, DetectedVllmContainer detected)
+    {
+        _importingContainers.Add(detected.ContainerId);
+        try
+        {
+            var (deployment, error) = await DeploymentSvc.ImportDetectedAsync(host.HostId, detected);
+            if (error is not null)
+            {
+                _detectErrors[host.Id] = error;
+            }
+            else
+            {
+                // Mark as tracked in the detection results
+                if (_detectResults.TryGetValue(host.Id, out var list))
+                {
+                    var idx = list.FindIndex(c => c.ContainerId == detected.ContainerId);
+                    if (idx >= 0)
+                        list[idx] = detected with
+                        {
+                            AlreadyTracked         = true,
+                            ExistingDeploymentDbId = deployment.Id,
+                            ExistingDeploymentId   = deployment.DeploymentId,
+                        };
+                }
+                _deployments = await DeploymentSvc.GetAllAsync();
+            }
+        }
+        finally { _importingContainers.Remove(detected.ContainerId); }
     }
 
     // ── Deployments CRUD ──────────────────────────────────────────────────────

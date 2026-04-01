@@ -63,6 +63,10 @@
                 <label class="llm-label">Default Repo URL</label>
                 <input class="llm-input" @bind="_cfgForm.DefaultRepoUrl"
                        placeholder="https://github.com/org/repo  (pre-filled in New Build modal)" />
+
+                <label class="llm-label">Repository API Token</label>
+                <input class="llm-input" type="password" @bind="_cfgForm.NewRepositoryApiToken"
+                       placeholder="leave blank to keep current  (GitHub/GitLab PAT for private repos)" />
             </div>
 
             @if (_cfgError is not null) { <div class="error-msg">@_cfgError</div> }
@@ -225,7 +229,8 @@
                 ModelDefault   = NullIfBlank(_cfgForm.ModelDefault),
                 ModelCoder     = NullIfBlank(_cfgForm.ModelCoder),
                 ModelQa        = NullIfBlank(_cfgForm.ModelQa),
-                DefaultRepoUrl = NullIfBlank(_cfgForm.DefaultRepoUrl),
+                DefaultRepoUrl      = NullIfBlank(_cfgForm.DefaultRepoUrl),
+                RepositoryApiToken  = NullIfBlank(_cfgForm.NewRepositoryApiToken) ?? ConfigSvc.GetConfig().RepositoryApiToken,
             };
             await ConfigSvc.SaveAsync(entity);
             _cfgSaved = true;
@@ -390,15 +395,16 @@
 
     private class CfgForm
     {
-        public string  BaseUrl        = "";
-        public string  NewApiKey      = "";      // blank = keep current
-        public string  NewWebhookSecret = "";    // blank = keep current
-        public string  HubPublicUrl   = "";
-        public string  Runtime        = "claude_code";
-        public string  ModelDefault   = "";
-        public string  ModelCoder     = "";
-        public string  ModelQa        = "";
-        public string  DefaultRepoUrl = "";
+        public string  BaseUrl               = "";
+        public string  NewApiKey             = "";      // blank = keep current
+        public string  NewWebhookSecret      = "";      // blank = keep current
+        public string  NewRepositoryApiToken = "";      // blank = keep current
+        public string  HubPublicUrl          = "";
+        public string  Runtime               = "claude_code";
+        public string  ModelDefault          = "";
+        public string  ModelCoder            = "";
+        public string  ModelQa               = "";
+        public string  DefaultRepoUrl        = "";
 
         public static CfgForm From(SweAfConfigEntity e) => new()
         {

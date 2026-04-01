@@ -308,6 +308,10 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("RepositoryApiToken")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Runtime")
                         .IsRequired()
                         .HasMaxLength(50)

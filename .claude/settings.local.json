@@ -9,7 +9,10 @@
       "WebFetch(domain:agentfield.ai)",
       "Bash(grep -v \"^$\")",
       "Bash(ls -la D:/Repos/claude_manager/src/ClaudeManager.Hub/Persistence/Migrations/*.cs)",
-      "Bash(dotnet ef:*)"
+      "Bash(dotnet ef:*)",
+      "Bash(grep -n \"class GpuHostService\\\\|class HubSecretService\\\\|class LlmDeploymentNotifier\\\\|class LlmProxyConfigService\" D:/Repos/claude_manager/src/ClaudeManager.Hub/Services/*.cs)",
+      "Bash(grep -n \"public GpuHostService\\\\|public HubSecretService\\\\|public LlmDeploymentNotifier\\\\|public LlmProxyConfigService\\\\|public NginxProxyService\" D:/Repos/claude_manager/src/ClaudeManager.Hub/Services/*.cs)",
+      "Bash(ls:*)"
     ]
   }
 }

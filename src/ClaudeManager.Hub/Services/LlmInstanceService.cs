@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using ClaudeManager.Hub.Persistence.Entities;
 using Renci.SshNet;
 
@@ -149,6 +151,129 @@ public class LlmInstanceService
             _         => null,
         };
     }
+
+    // ── Container detection ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Lists all running vLLM (<c>vllm/vllm-openai:*</c>) containers on the given host
+    /// by querying <c>docker ps</c> then <c>docker inspect</c> for each container ID found.
+    /// </summary>
+    public virtual async Task<(List<RawVllmContainerInfo> Containers, string? Error)>
+        ListRunningVllmContainersAsync(GpuHostEntity host, CancellationToken ct = default)
+    {
+        // 1. Get IDs of all running containers
+        const string psCmd = "docker ps -q --no-trunc";
+        var (psOut, psErr, psExit) = IsLocalHost(host.Host)
+            ? await ExecLocalAsync(psCmd, ct)
+            : await ExecSshAsync(host, psCmd, ct);
+
+        if (psExit != 0)
+            return ([], $"docker ps failed: {(psErr ?? psOut ?? "no output").Trim()}");
+
+        var ids = (psOut ?? "")
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(s => s.Length > 0)
+            .ToList();
+
+        if (ids.Count == 0) return ([], null);
+
+        // 2. Inspect each container; ParseDockerInspect filters to vLLM images
+        var results = new List<RawVllmContainerInfo>();
+        foreach (var id in ids)
+        {
+            var (inspectOut, _, inspectExit) = IsLocalHost(host.Host)
+                ? await ExecLocalAsync($"docker inspect {id}", ct)
+                : await ExecSshAsync(host, $"docker inspect {id}", ct);
+
+            if (inspectExit != 0 || string.IsNullOrWhiteSpace(inspectOut)) continue;
+
+            var raw = ParseDockerInspect(id, inspectOut);
+            if (raw is not null) results.Add(raw);
+        }
+
+        return (results, null);
+    }
+
+    /// <summary>
+    /// Parses a single <c>docker inspect</c> JSON response.
+    /// Returns null when the container is not a vLLM instance or the JSON cannot be parsed.
+    /// </summary>
+    internal static RawVllmContainerInfo? ParseDockerInspect(string containerId, string json)
+    {
+        try
+        {
+            var opts  = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var items = JsonSerializer.Deserialize<DockerInspectResult[]>(json, opts);
+            var item  = items?.FirstOrDefault();
+            if (item is null) return null;
+
+            var image = item.Config?.Image ?? "";
+            if (!image.Contains("vllm/vllm-openai", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            var colon    = image.LastIndexOf(':');
+            var imageTag = colon >= 0 ? image[(colon + 1)..] : "latest";
+
+            var cmd          = item.Config?.Cmd;
+            var modelId      = ParseCmdArg(cmd, "--model");
+            var quantization = ParseCmdArg(cmd, "--quantization");
+            var maxLenStr    = ParseCmdArg(cmd, "--max-model-len");
+            int? maxModelLen = maxLenStr is not null && int.TryParse(maxLenStr, out var ml) ? ml : null;
+
+            int? hostPort = null;
+            if (item.HostConfig?.PortBindings?.TryGetValue("8000/tcp", out var bindings) == true)
+            {
+                var first = bindings?.FirstOrDefault();
+                if (first?.HostPort is not null && int.TryParse(first.HostPort, out var p))
+                    hostPort = p;
+            }
+
+            var devReq     = item.HostConfig?.DeviceRequests?.FirstOrDefault();
+            var gpuIndices = devReq?.DeviceIDs is { Length: > 0 }
+                ? string.Join(",", devReq.DeviceIDs)
+                : null;
+
+            return new RawVllmContainerInfo(
+                ContainerId:  containerId,
+                ImageTag:     imageTag,
+                ModelId:      modelId,
+                HostPort:     hostPort,
+                GpuIndices:   gpuIndices,
+                Quantization: quantization,
+                MaxModelLen:  maxModelLen);
+        }
+        catch { return null; }
+    }
+
+    private static string? ParseCmdArg(string[]? args, string flag)
+    {
+        if (args is null) return null;
+        for (var i = 0; i < args.Length - 1; i++)
+            if (args[i] == flag) return args[i + 1];
+        return null;
+    }
+
+    // ── Docker inspect JSON models ────────────────────────────────────────────
+
+    private record DockerInspectResult(
+        [property: JsonPropertyName("Config")]     DockerInspectConfig?     Config,
+        [property: JsonPropertyName("HostConfig")] DockerInspectHostConfig? HostConfig);
+
+    private record DockerInspectConfig(
+        [property: JsonPropertyName("Image")] string?   Image,
+        [property: JsonPropertyName("Cmd")]   string[]? Cmd);
+
+    private record DockerInspectHostConfig(
+        [property: JsonPropertyName("PortBindings")]
+        Dictionary<string, DockerPortBinding[]?>? PortBindings,
+        [property: JsonPropertyName("DeviceRequests")]
+        DockerDeviceRequest[]? DeviceRequests);
+
+    private record DockerPortBinding(
+        [property: JsonPropertyName("HostPort")] string? HostPort);
+
+    private record DockerDeviceRequest(
+        [property: JsonPropertyName("DeviceIDs")] string[]? DeviceIDs);
 
     // ── Command builder ───────────────────────────────────────────────────────
 

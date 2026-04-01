@@ -468,4 +468,215 @@ public class LlmDeploymentServiceTests
         notified.Should().NotBeNull();
         notified!.Status.Should().Be(LlmDeploymentStatus.Running);
     }
+
+    // ── DetectContainersAsync ─────────────────────────────────────────────────
+
+    [Test]
+    public async Task DetectContainersAsync_InstanceReturnsError_BubblesError()
+    {
+        var host = await SeedHostAsync("gpu-h1");
+
+        _instanceMock
+            .Setup(m => m.ListRunningVllmContainersAsync(host, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<RawVllmContainerInfo>(), "SSH connection refused"));
+
+        var (containers, error) = await _svc.DetectContainersAsync(host);
+
+        containers.Should().BeEmpty();
+        error.Should().Be("SSH connection refused");
+    }
+
+    [Test]
+    public async Task DetectContainersAsync_NoContainers_ReturnsEmptyList()
+    {
+        var host = await SeedHostAsync("gpu-h1");
+
+        _instanceMock
+            .Setup(m => m.ListRunningVllmContainersAsync(host, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<RawVllmContainerInfo>(), null));
+
+        var (containers, error) = await _svc.DetectContainersAsync(host);
+
+        error.Should().BeNull();
+        containers.Should().BeEmpty();
+    }
+
+    [Test]
+    public async Task DetectContainersAsync_UnknownContainer_MarkedNotTracked()
+    {
+        var host = await SeedHostAsync("gpu-h1");
+        var raw = new RawVllmContainerInfo("abc123", "latest", "model/m", 8001, "0", null, null);
+
+        _instanceMock
+            .Setup(m => m.ListRunningVllmContainersAsync(host, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<RawVllmContainerInfo> { raw }, null));
+
+        var (containers, error) = await _svc.DetectContainersAsync(host);
+
+        error.Should().BeNull();
+        containers.Should().HaveCount(1);
+        containers[0].AlreadyTracked.Should().BeFalse();
+        containers[0].ExistingDeploymentDbId.Should().BeNull();
+        containers[0].ContainerId.Should().Be("abc123");
+    }
+
+    [Test]
+    public async Task DetectContainersAsync_KnownContainer_MarkedAlreadyTracked()
+    {
+        var host = await SeedHostAsync("gpu-h1");
+
+        // Create a deployment and give it a ContainerId via start
+        var d = await SeedDeploymentAsync("gpu-h1");
+        _instanceMock
+            .Setup(m => m.StartContainerAsync(It.IsAny<GpuHostEntity>(), It.IsAny<LlmDeploymentEntity>(),
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("tracked-cid", null));
+        _instanceMock
+            .Setup(m => m.CheckHealthAsync(It.IsAny<GpuHostEntity>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        await _svc.StartAsync(d.Id);
+
+        var raw = new RawVllmContainerInfo("tracked-cid", "latest", "meta-llama/Llama-3.1-8B-Instruct", 8001, "0", null, null);
+        _instanceMock
+            .Setup(m => m.ListRunningVllmContainersAsync(host, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<RawVllmContainerInfo> { raw }, null));
+
+        var (containers, error) = await _svc.DetectContainersAsync(host);
+
+        error.Should().BeNull();
+        containers.Should().HaveCount(1);
+        containers[0].AlreadyTracked.Should().BeTrue();
+        containers[0].ExistingDeploymentDbId.Should().Be(d.Id);
+        containers[0].ExistingDeploymentId.Should().Be(d.DeploymentId);
+    }
+
+    [Test]
+    public async Task DetectContainersAsync_MixedContainers_CorrectlyClassifiesBoth()
+    {
+        var host = await SeedHostAsync("gpu-h1");
+
+        var d = await SeedDeploymentAsync("gpu-h1");
+        _instanceMock
+            .Setup(m => m.StartContainerAsync(It.IsAny<GpuHostEntity>(), It.IsAny<LlmDeploymentEntity>(),
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("known-cid", null));
+        _instanceMock
+            .Setup(m => m.CheckHealthAsync(It.IsAny<GpuHostEntity>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        await _svc.StartAsync(d.Id);
+
+        var rawList = new List<RawVllmContainerInfo>
+        {
+            new("known-cid",   "latest",  "meta-llama/Llama-3.1-8B-Instruct", 8001, "0", null, null),
+            new("unknown-cid", "nightly", "mistral/Mistral-7B-v0.1",           8002, "1", null, null),
+        };
+        _instanceMock
+            .Setup(m => m.ListRunningVllmContainersAsync(host, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((rawList, null));
+
+        var (containers, error) = await _svc.DetectContainersAsync(host);
+
+        error.Should().BeNull();
+        containers.Should().HaveCount(2);
+        containers.Should().ContainSingle(c => c.ContainerId == "known-cid"   && c.AlreadyTracked);
+        containers.Should().ContainSingle(c => c.ContainerId == "unknown-cid" && !c.AlreadyTracked);
+    }
+
+    // ── ImportDetectedAsync ───────────────────────────────────────────────────
+
+    [Test]
+    public async Task ImportDetectedAsync_AlreadyTracked_ReturnsError()
+    {
+        var detected = new DetectedVllmContainer(
+            "cid", "latest", "model/m", 8001, "0", null, null,
+            AlreadyTracked: true, ExistingDeploymentDbId: 1, ExistingDeploymentId: "dep-1");
+
+        var (deployment, error) = await _svc.ImportDetectedAsync("gpu-h1", detected);
+
+        error.Should().NotBeNullOrWhiteSpace();
+        deployment.Should().BeNull();
+    }
+
+    [Test]
+    public async Task ImportDetectedAsync_NewContainer_CreatesRunningDeployment()
+    {
+        var detected = new DetectedVllmContainer(
+            "newcid", "latest", "meta-llama/Llama-3.1-8B-Instruct", 8001, "0,1", "awq", 32768,
+            AlreadyTracked: false, ExistingDeploymentDbId: null, ExistingDeploymentId: null);
+
+        var (deployment, error) = await _svc.ImportDetectedAsync("gpu-h1", detected);
+
+        error.Should().BeNull();
+        deployment.Should().NotBeNull();
+        deployment.Status.Should().Be(LlmDeploymentStatus.Running);
+        deployment.ContainerId.Should().Be("newcid");
+        deployment.HostId.Should().Be("gpu-h1");
+        deployment.ModelId.Should().Be("meta-llama/Llama-3.1-8B-Instruct");
+        deployment.GpuIndices.Should().Be("0,1");
+        deployment.HostPort.Should().Be(8001);
+        deployment.Quantization.Should().Be("awq");
+        deployment.MaxModelLen.Should().Be(32768);
+        deployment.ImageTag.Should().Be("latest");
+    }
+
+    [Test]
+    public async Task ImportDetectedAsync_NewContainer_GeneratesSlugDeploymentId()
+    {
+        var detected = new DetectedVllmContainer(
+            "cid", "latest", "meta-llama/Llama-3.1-8B-Instruct", 8001, "0", null, null,
+            AlreadyTracked: false, ExistingDeploymentDbId: null, ExistingDeploymentId: null);
+
+        var (deployment, error) = await _svc.ImportDetectedAsync("gpu-h1", detected);
+
+        error.Should().BeNull();
+        deployment.DeploymentId.Should().StartWith("llama-3-");
+        deployment.DeploymentId.Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Test]
+    public async Task ImportDetectedAsync_NullModelId_UsesUnknownFallback()
+    {
+        var detected = new DetectedVllmContainer(
+            "cid", "latest", null, null, null, null, null,
+            AlreadyTracked: false, ExistingDeploymentDbId: null, ExistingDeploymentId: null);
+
+        var (deployment, error) = await _svc.ImportDetectedAsync("gpu-h1", detected);
+
+        error.Should().BeNull();
+        deployment.ModelId.Should().Be("(unknown)");
+        deployment.GpuIndices.Should().Be("0");
+        deployment.HostPort.Should().Be(8000);
+        deployment.Quantization.Should().Be("none");
+    }
+
+    [Test]
+    public async Task ImportDetectedAsync_NewContainer_PersistedInDb()
+    {
+        var detected = new DetectedVllmContainer(
+            "cid", "latest", "model/m", 8001, "0", null, null,
+            AlreadyTracked: false, ExistingDeploymentDbId: null, ExistingDeploymentId: null);
+
+        await _svc.ImportDetectedAsync("gpu-h1", detected);
+
+        var all = await _svc.GetAllAsync();
+        all.Should().HaveCount(1);
+        all[0].ContainerId.Should().Be("cid");
+        all[0].Status.Should().Be(LlmDeploymentStatus.Running);
+    }
+
+    [Test]
+    public async Task ImportDetectedAsync_NewContainer_FiresNotifier()
+    {
+        var detected = new DetectedVllmContainer(
+            "cid", "latest", "model/m", 8001, "0", null, null,
+            AlreadyTracked: false, ExistingDeploymentDbId: null, ExistingDeploymentId: null);
+
+        LlmDeploymentEntity? notified = null;
+        _notifier.DeploymentChanged += e => notified = e;
+
+        await _svc.ImportDetectedAsync("gpu-h1", detected);
+
+        notified.Should().NotBeNull();
+        notified!.Status.Should().Be(LlmDeploymentStatus.Running);
+    }
 }

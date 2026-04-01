@@ -129,8 +129,10 @@ public class SweAfService
             input = new
             {
                 goal,
-                repo_url = repoUrl,
-                config   = new { runtime = cfg.Runtime, models },
+                repo_url  = repoUrl,
+                repo_token = string.IsNullOrWhiteSpace(cfg.RepositoryApiToken)
+                    ? null : cfg.RepositoryApiToken,
+                config    = new { runtime = cfg.Runtime, models },
             },
         };
 

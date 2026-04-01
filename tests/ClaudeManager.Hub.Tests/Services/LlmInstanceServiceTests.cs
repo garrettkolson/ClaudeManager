@@ -162,6 +162,101 @@ public class LlmInstanceServiceTests
         cmd.Should().NotEndWith(" ");
     }
 
+    // ── ParseDockerInspect ────────────────────────────────────────────────────
+
+    [Test]
+    public void ParseDockerInspect_FullVllmInspect_ParsesAllFields()
+    {
+        const string json = """
+            [{
+              "Config": {
+                "Image": "vllm/vllm-openai:latest",
+                "Cmd": ["--host","0.0.0.0","--port","8000","--model","meta-llama/Llama-3.1-8B-Instruct",
+                        "--quantization","awq","--max-model-len","32768","--tensor-parallel-size","2"]
+              },
+              "HostConfig": {
+                "PortBindings": { "8000/tcp": [{"HostIp":"0.0.0.0","HostPort":"8081"}] },
+                "DeviceRequests": [{"Driver":"nvidia","Count":-1,"DeviceIDs":["0","1"],"Capabilities":[["gpu"]],"Options":{}}]
+              }
+            }]
+            """;
+
+        var result = LlmInstanceService.ParseDockerInspect("abc123def456", json);
+
+        result.Should().NotBeNull();
+        result!.ContainerId.Should().Be("abc123def456");
+        result.ImageTag.Should().Be("latest");
+        result.ModelId.Should().Be("meta-llama/Llama-3.1-8B-Instruct");
+        result.HostPort.Should().Be(8081);
+        result.GpuIndices.Should().Be("0,1");
+        result.Quantization.Should().Be("awq");
+        result.MaxModelLen.Should().Be(32768);
+    }
+
+    [Test]
+    public void ParseDockerInspect_NightlyImage_ParsesTag()
+    {
+        const string json = """
+            [{
+              "Config": { "Image": "vllm/vllm-openai:nightly", "Cmd": ["--model","org/model"] },
+              "HostConfig": {
+                "PortBindings": { "8000/tcp": [{"HostPort":"9000"}] },
+                "DeviceRequests": [{"DeviceIDs":["0"]}]
+              }
+            }]
+            """;
+
+        var result = LlmInstanceService.ParseDockerInspect("cid", json);
+
+        result.Should().NotBeNull();
+        result!.ImageTag.Should().Be("nightly");
+        result.HostPort.Should().Be(9000);
+        result.GpuIndices.Should().Be("0");
+    }
+
+    [Test]
+    public void ParseDockerInspect_NoQuantizationOrMaxLen_ReturnsNulls()
+    {
+        const string json = """
+            [{
+              "Config": { "Image": "vllm/vllm-openai:latest", "Cmd": ["--model","org/model"] },
+              "HostConfig": {
+                "PortBindings": { "8000/tcp": [{"HostPort":"8000"}] },
+                "DeviceRequests": []
+              }
+            }]
+            """;
+
+        var result = LlmInstanceService.ParseDockerInspect("cid", json);
+
+        result.Should().NotBeNull();
+        result!.Quantization.Should().BeNull();
+        result.MaxModelLen.Should().BeNull();
+        result.GpuIndices.Should().BeNull();
+    }
+
+    [Test]
+    public void ParseDockerInspect_NonVllmImage_ReturnsNull()
+    {
+        const string json = """
+            [{"Config":{"Image":"nginx:alpine","Cmd":[]},"HostConfig":{"PortBindings":{},"DeviceRequests":[]}}]
+            """;
+
+        LlmInstanceService.ParseDockerInspect("cid", json).Should().BeNull();
+    }
+
+    [Test]
+    public void ParseDockerInspect_InvalidJson_ReturnsNull()
+    {
+        LlmInstanceService.ParseDockerInspect("cid", "not-json").Should().BeNull();
+    }
+
+    [Test]
+    public void ParseDockerInspect_EmptyArray_ReturnsNull()
+    {
+        LlmInstanceService.ParseDockerInspect("cid", "[]").Should().BeNull();
+    }
+
     // ── DiscoverAsync — remote host, no auth ──────────────────────────────────
 
     [Test]
