@@ -64,6 +64,35 @@ public class SweAfHostService
     }
 
     public async Task<SweAfHostEntity> CreateAsync(
+        string displayName,
+        string? anthropicBaseUrl = null, string? anthropicApiKey = null,
+        List<SweAfHostCommand>? commands = null,
+        CancellationToken ct = default)
+    {
+        var entity = new SweAfHostEntity
+        {
+            DisplayName      = displayName.Trim(),
+            Host             = "control-plane",
+            SshPort          = 8080,
+            SshUser          = null,
+            SshKeyPath       = null,
+            SshPassword      = null,
+            AnthropicBaseUrl = NullIfBlank(anthropicBaseUrl),
+            AnthropicApiKey  = NullIfBlank(anthropicApiKey),
+            CommandsJson     = commands is { Count: > 0 } ? SerializeCommands(commands) : null,
+            AddedAt          = DateTimeOffset.UtcNow,
+        };
+
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        db.SweAfHosts.Add(entity);
+        await db.SaveChangesAsync(ct);
+        return entity;
+    }
+
+    /// <summary>
+    /// Creates a host with SSH configuration (legacy method, kept for compatibility).
+    /// </summary>
+    public async Task<SweAfHostEntity> CreateAsync(
         string displayName, string host, int sshPort = 22,
         string? sshUser = null, string? sshKeyPath = null, string? sshPassword = null,
         string? anthropicBaseUrl = null, string? anthropicApiKey = null,

@@ -49,6 +49,50 @@ public class SweAfConfigEntity
     [MaxLength(500)]
     public string? RepositoryApiToken { get; set; }
 
+    /// <summary>
+    /// Hostname or IP address of the machine where the control plane will be deployed.
+    /// Use "localhost" / "127.0.0.1" / "::1" to deploy on the local machine.
+    /// </summary>
+    [MaxLength(500)]
+    public string? ProvisionHost { get; set; }
+
+    /// <summary>
+    /// SSH username for remote provisioning. Ignored when ProvisionHost is localhost.
+    /// </summary>
+    [MaxLength(100)]
+    public string? SshUser { get; set; }
+
+    /// <summary>
+    /// Path to SSH private key for remote provisioning. Ignored when ProvisionHost is localhost.
+    /// </summary>
+    [MaxLength(500)]
+    public string? SshKeyPath { get; set; }
+
+    /// <summary>
+    /// SSH password for remote provisioning (used when SshKeyPath is not set).
+    /// Ignored when ProvisionHost is localhost.
+    /// </summary>
+    [MaxLength(500)]
+    public string? SshPassword { get; set; }
+
+    /// <summary>
+    /// SSH port for remote provisioning. Ignored when ProvisionHost is localhost.
+    /// </summary>
+    public int SshPort { get; set; } = 22;
+
+    /// <summary>
+    /// Indicates whether sudo/root privileges are required to execute Docker commands
+    /// on the provisioning host.
+    /// </summary>
+    public bool RequiresSudo { get; set; }
+
+    /// <summary>
+    /// Sudo password used for privilege escalation when RequiresSudo is true.
+    /// This password is used with 'sudo -S' to authenticate Docker commands.
+    /// </summary>
+    [MaxLength(500)]
+    public string? SudoPassword { get; set; }
+
     [NotMapped]
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(ApiKey);

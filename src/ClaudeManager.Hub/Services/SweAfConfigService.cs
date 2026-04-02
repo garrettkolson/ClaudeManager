@@ -89,6 +89,13 @@ public class SweAfConfigService : IHostedService
             existing.ModelQa             = config.ModelQa;
             existing.DefaultRepoUrl      = config.DefaultRepoUrl;
             existing.RepositoryApiToken  = config.RepositoryApiToken;
+            existing.ProvisionHost      = config.ProvisionHost;
+            existing.SshUser            = config.SshUser;
+            existing.SshKeyPath         = config.SshKeyPath;
+            existing.SshPassword        = config.SshPassword;
+            existing.SshPort            = config.SshPort;
+            existing.RequiresSudo       = config.RequiresSudo;
+            existing.SudoPassword       = config.SudoPassword;
         }
         await db.SaveChangesAsync(ct);
 

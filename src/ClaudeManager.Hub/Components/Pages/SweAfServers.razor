@@ -2,6 +2,8 @@
 @implements IDisposable
 @inject SweAfConfigService ConfigSvc
 @inject SweAfHostService HostSvc
+@inject SweAfProvisioningService ProvisioningSvc
+@inject ILogger<SweAfServers> _logger
 @using ClaudeManager.Hub.Persistence.Entities
 @using ClaudeManager.Hub.Services
 
@@ -10,12 +12,12 @@
 <div class="llm-page">
     <h1>SWE-AF Servers</h1>
 
-    @* ── AgentField Connection ───────────────────────────────────────────────── *@
+    @* ── SWE-AF Configuration ─────────────────────────────────────────────────── *@
 
     <section class="llm-section">
-        <h2>AgentField Connection</h2>
+        <h2>SWE-AF Configuration</h2>
         <p class="llm-hint">
-            The AgentField control plane URL and API key used to trigger autonomous builds.
+            Configure the AgentField control plane connection and deployment settings.
             Changes take effect immediately — no restart required.
         </p>
 
@@ -26,9 +28,16 @@
         else
         {
             <div class="llm-form-grid">
+                @* Control Plane Connection *@
+                <div class="form-section-title">Control Plane Connection / Provisioning</div>
+
                 <label class="llm-label">Control Plane URL *</label>
                 <input class="llm-input" @bind="_cfgForm.BaseUrl"
                        placeholder="http://localhost:8080" />
+
+                <label class="llm-label">Provision Host *</label>
+                <input class="llm-input" @bind="_provisionForm.Host"
+                       placeholder="localhost or 192.168.x.x" />
 
                 <label class="llm-label">API Key *</label>
                 <input class="llm-input" type="password" @bind="_cfgForm.NewApiKey"
@@ -41,6 +50,9 @@
                 <label class="llm-label">Hub Public URL</label>
                 <input class="llm-input" @bind="_cfgForm.HubPublicUrl"
                        placeholder="https://hub.example.com" />
+
+                @* Runtime & Models *@
+                <div class="form-section-title">Runtime Configuration</div>
 
                 <label class="llm-label">Runtime</label>
                 <select class="llm-input" @bind="_cfgForm.Runtime">
@@ -60,6 +72,9 @@
                 <input class="llm-input" @bind="_cfgForm.ModelQa"
                        placeholder="sonnet" />
 
+                @* Repository Settings *@
+                <div class="form-section-title">Repository Settings</div>
+
                 <label class="llm-label">Default Repo URL</label>
                 <input class="llm-input" @bind="_cfgForm.DefaultRepoUrl"
                        placeholder="https://github.com/org/repo  (pre-filled in New Build modal)" />
@@ -67,10 +82,40 @@
                 <label class="llm-label">Repository API Token</label>
                 <input class="llm-input" type="password" @bind="_cfgForm.NewRepositoryApiToken"
                        placeholder="leave blank to keep current  (GitHub/GitLab PAT for private repos)" />
+                
+                @* Control Plane Provisioning *@
+                <div class="form-section-title">Provisioning Config</div>
+
+                <label class="llm-label">SSH User</label>
+                <input class="llm-input" @bind="_provisionForm.SshUser"
+                       placeholder="ubuntu" />
+
+                <label class="llm-label">SSH Key Path</label>
+                <input class="llm-input" @bind="_provisionForm.SshKeyPath"
+                       placeholder="~/.ssh/id_rsa" />
+
+                <label class="llm-label">SSH Password</label>
+                <input class="llm-input" type="password" @bind="_provisionForm.SshPassword"
+                       placeholder="for keyless auth" />
+
+                <label class="llm-label">SSH Port</label>
+                <input class="llm-input" @bind="_provisionForm.SshPort" type="number" />
+
+                <div class="llm-label" style="display:flex; align-items:center; gap:0.5rem;">
+                    <input type="checkbox" @bind="_provisionForm.RequiresSudo" />
+                    <span>Requires Sudo</span>
+                </div>
+
+                @if (_provisionForm.RequiresSudo)
+                {
+                    <label class="llm-label">Sudo Password</label>
+                    <input class="llm-input" type="password" @bind="_provisionForm.SudoPassword"
+                           placeholder="sudo password" />
+                }
             </div>
 
             @if (_cfgError is not null) { <div class="error-msg">@_cfgError</div> }
-            @if (_cfgSaved)             { <div class="llm-success">Connection settings saved.</div> }
+            @if (_cfgSaved)             { <div class="llm-success">Configuration saved.</div> }
 
             <div class="llm-form-actions">
                 <button class="btn-primary" @onclick="SaveConfig" disabled="@_savingCfg">
@@ -80,30 +125,30 @@
         }
     </section>
 
-    @* ── Agent Hosts ─────────────────────────────────────────────────────────── *@
+    @* ── Swarm Agents ────────────────────────────────────────────────────────── *@
 
     <section class="llm-section">
         <div class="llm-section-header">
-            <h2>Agent Hosts</h2>
+            <h2>Swarm Agents</h2>
             <button class="btn-primary" @onclick="() => _showAddForm = !_showAddForm">
-                @(_showAddForm ? "Cancel" : "Add Host")
+                @(_showAddForm ? "Cancel" : "Add Agent")
             </button>
         </div>
 
         <p class="llm-hint">
-            Configure the machine(s) where the AgentField swarm runs.
-            Each host can have buttons (e.g. Start, Stop) that appear on the Builds page.
+            Configure agents that will connect to the control plane. Each agent can have
+            custom buttons (e.g. Start, Stop) that appear on the Builds page.
         </p>
 
         @if (_showAddForm)
         {
             <div class="llm-add-form">
-                <h3>New Agent Host</h3>
+                <h3>New Swarm Agent</h3>
                 @RenderHostForm(_addForm)
                 @if (_addHostError is not null) { <div class="error-msg">@_addHostError</div> }
                 <div class="llm-form-actions">
                     <button class="btn-primary" @onclick="AddHost" disabled="@_addingHost">
-                        @(_addingHost ? "Adding…" : "Add Host")
+                        @(_addingHost ? "Adding…" : "Add Agent")
                     </button>
                 </div>
             </div>
@@ -115,7 +160,7 @@
         }
         else if (_hosts.Count == 0)
         {
-            <div class="empty-state">No agent hosts configured yet.</div>
+            <div class="empty-state">No swarm agents configured yet.</div>
         }
         else
         {
@@ -123,8 +168,6 @@
                 <thead>
                     <tr>
                         <th>Name</th>
-                        <th>Host</th>
-                        <th>SSH User</th>
                         <th>Commands</th>
                         <th>Actions</th>
                     </tr>
@@ -135,8 +178,6 @@
                         var cmds = SweAfHostService.GetCommands(host);
                         <tr>
                             <td>@host.DisplayName</td>
-                            <td>@host.Host:@host.SshPort</td>
-                            <td>@(host.SshUser ?? "—")</td>
                             <td>@(cmds.Count > 0 ? string.Join(", ", cmds.Select(c => c.Label)) : "—")</td>
                             <td class="llm-host-actions">
                                 <button class="btn-sm" @onclick="() => OpenHostEdit(host)">Edit</button>
@@ -181,6 +222,12 @@
     private bool      _cfgSaved;
     private string?   _cfgError;
     private CfgForm   _cfgForm = new();
+
+    // ── State — provisioning ───────────────────────────────────────────────────
+
+    private bool      _provisioning;
+    private string?   _provisionStatus;
+    private ProvisionForm _provisionForm = new();
 
     // ── State — hosts ─────────────────────────────────────────────────────────
 
@@ -243,14 +290,51 @@
         finally { _savingCfg = false; }
     }
 
+    private async Task ProvisionControlPlane()
+    {
+        _provisioning = true;
+        _provisionStatus = null;
+        try
+        {
+            // Save provisioning settings to config first
+            var cfg = ConfigSvc.GetConfig();
+            cfg.ProvisionHost = _provisionForm.Host.Trim();
+            cfg.SshUser = _provisionForm.SshUser;
+            cfg.SshKeyPath = _provisionForm.SshKeyPath;
+            cfg.SshPassword = _provisionForm.SshPassword;
+            cfg.SshPort = _provisionForm.SshPort;
+            cfg.RequiresSudo = _provisionForm.RequiresSudo;
+            cfg.SudoPassword = _provisionForm.SudoPassword;
+            await ConfigSvc.SaveAsync(cfg);
+
+            // Provision the control plane
+            var (success, error, controlPlaneUrl) = await ProvisioningSvc.ProvisionControlPlaneAsync();
+            if (success && !string.IsNullOrEmpty(controlPlaneUrl))
+            {
+                _provisionStatus = $"Success! Control plane is running at {controlPlaneUrl}. Click 'Save' to persist the configuration.";
+            }
+            else
+            {
+                _provisionStatus = $"Error: {error ?? "Unknown error occurred."}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _provisionStatus = $"Error: {ex.Message}";
+            _logger.LogWarning(ex, "Provisioning failed");
+        }
+        finally
+        {
+            _provisioning = false;
+        }
+    }
+
     // ── Host CRUD ─────────────────────────────────────────────────────────────
 
     private async Task AddHost()
     {
         if (string.IsNullOrWhiteSpace(_addForm.DisplayName))
         { _addHostError = "Display name is required."; return; }
-        if (string.IsNullOrWhiteSpace(_addForm.Host))
-        { _addHostError = "Host is required."; return; }
 
         _addingHost   = true;
         _addHostError = null;
@@ -262,9 +346,8 @@
                 .ToList();
 
             await HostSvc.CreateAsync(
-                _addForm.DisplayName, _addForm.Host,
-                _addForm.SshPort, _addForm.SshUser, _addForm.SshKeyPath, _addForm.SshPassword,
-                _addForm.AnthropicBaseUrl, _addForm.AnthropicApiKey,
+                _addForm.DisplayName,
+                NullIfBlank(_addForm.AnthropicBaseUrl), NullIfBlank(_addForm.AnthropicApiKey),
                 cmds.Count > 0 ? cmds : null);
 
             _hosts       = await HostSvc.GetAllAsync();
@@ -300,18 +383,10 @@
                 .Select(c => new SweAfHostCommand { Label = c.Label.Trim(), Command = c.Command.Trim() })
                 .ToList();
 
-            _editingHost.DisplayName      = _editForm.DisplayName.Trim();
-            _editingHost.Host             = _editForm.Host.Trim();
-            _editingHost.SshPort          = _editForm.SshPort;
-            _editingHost.SshUser          = NullIfBlank(_editForm.SshUser);
-            _editingHost.SshKeyPath       = NullIfBlank(_editForm.SshKeyPath);
-            _editingHost.AnthropicBaseUrl = NullIfBlank(_editForm.AnthropicBaseUrl);
-            _editingHost.AnthropicApiKey  = NullIfBlank(_editForm.AnthropicApiKey);
-            _editingHost.CommandsJson     = SweAfHostService.SerializeCommands(cmds);
-
-            // Only update secrets if the user typed something
-            if (!string.IsNullOrEmpty(_editForm.SshPassword))
-                _editingHost.SshPassword = _editForm.SshPassword;
+            _editingHost.DisplayName       = _editForm.DisplayName.Trim();
+            _editingHost.AnthropicBaseUrl  = NullIfBlank(_editForm.AnthropicBaseUrl);
+            _editingHost.AnthropicApiKey   = NullIfBlank(_editForm.AnthropicApiKey);
+            _editingHost.CommandsJson      = SweAfHostService.SerializeCommands(cmds);
 
             await HostSvc.UpdateAsync(_editingHost);
             _hosts         = await HostSvc.GetAllAsync();
@@ -333,23 +408,7 @@
     {
         <div class="llm-form-grid">
             <label class="llm-label">Display Name *</label>
-            <input class="llm-input" @bind="form.DisplayName" placeholder="My AgentField Server" />
-
-            <label class="llm-label">Host *</label>
-            <input class="llm-input" @bind="form.Host" placeholder="192.168.1.50 or localhost" />
-
-            <label class="llm-label">SSH Port</label>
-            <input class="llm-input" @bind="form.SshPort" type="number" />
-
-            <label class="llm-label">SSH User</label>
-            <input class="llm-input" @bind="form.SshUser" placeholder="ubuntu" />
-
-            <label class="llm-label">SSH Key Path</label>
-            <input class="llm-input" @bind="form.SshKeyPath" placeholder="~/.ssh/id_rsa" />
-
-            <label class="llm-label">SSH Password</label>
-            <input class="llm-input" type="password" @bind="form.SshPassword"
-                   placeholder="leave blank to keep current" />
+            <input class="llm-input" @bind="form.DisplayName" placeholder="My Swarm Agent" />
 
             <label class="llm-label">Anthropic Base URL</label>
             <input class="llm-input" @bind="form.AnthropicBaseUrl"
@@ -422,11 +481,6 @@
     private class HostForm
     {
         public string  DisplayName      = "";
-        public string  Host             = "localhost";
-        public int     SshPort          = 22;
-        public string  SshUser          = "";
-        public string  SshKeyPath       = "";
-        public string  SshPassword      = "";
         public string  AnthropicBaseUrl = "";
         public string  AnthropicApiKey  = "";
         public List<CommandEntry> Commands = [];
@@ -439,15 +493,22 @@
             return new()
             {
                 DisplayName      = e.DisplayName,
-                Host             = e.Host,
-                SshPort          = e.SshPort,
-                SshUser          = e.SshUser          ?? "",
-                SshKeyPath       = e.SshKeyPath       ?? "",
                 AnthropicBaseUrl = e.AnthropicBaseUrl ?? "",
                 AnthropicApiKey  = e.AnthropicApiKey  ?? "",
                 Commands         = cmds,
             };
         }
+    }
+
+    private class ProvisionForm
+    {
+        public string  Host              = "localhost";
+        public string  SshUser           = "";
+        public string  SshKeyPath        = "";
+        public string  SshPassword       = "";
+        public int     SshPort           = 22;
+        public bool    RequiresSudo      = false;
+        public string  SudoPassword      = "";
     }
 
     private class CommandEntry

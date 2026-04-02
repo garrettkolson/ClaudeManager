@@ -286,6 +286,15 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 .llm-add-form h3 { font-size: 13px; color: #8899bb; margin: 0 0 12px; }
 .llm-form-grid { display: grid; grid-template-columns: 140px 1fr; gap: 8px 12px; align-items: center; max-width: 560px; }
 .llm-form-grid .llm-label { margin: 0; }
+.form-section-title {
+    grid-column: 1 / -1;
+    font-size: 13px;
+    color: #8899bb;
+    margin-top: 16px;
+    margin-bottom: 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
 .llm-form-actions { margin-top: 12px; }
 .llm-hosts-table { width: 100%; border-collapse: collapse; }
 .llm-hosts-table th, .llm-hosts-table td { padding: 8px 12px; text-align: left; font-size: 13px; }

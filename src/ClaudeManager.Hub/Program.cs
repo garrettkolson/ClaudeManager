@@ -71,6 +71,7 @@ builder.Services.AddHttpClient("sweaf");
 builder.Services.AddSingleton<BuildNotifier>();
 builder.Services.AddSingleton<SweAfService>();
 builder.Services.AddSingleton<SweAfHostService>();
+builder.Services.AddSingleton<SweAfProvisioningService>();
 builder.Services.AddHostedService<SweAfRecoveryService>();
 builder.Services.AddSingleton<NotificationService>();
 
