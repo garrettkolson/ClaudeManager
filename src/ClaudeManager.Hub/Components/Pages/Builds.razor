@@ -185,11 +185,57 @@
                             {
                                 <span class="build-action-error">@actionErr</span>
                             }
+                            @if (job.Status is BuildStatus.Running or BuildStatus.Queued)
+                            {
+                                <button class="btn-secondary-sm"
+                                        @onclick="() => ToggleLogs(job)"
+                                        disabled="@(_viewingLogsId == job.Id || _loadingLogs)">
+                                    @_viewingLogsId == job.Id
+                                        ? (_loadingLogs ? "Viewing…" : "Hide Logs")
+                                        : "View Logs"
+                                </button>
+                            }
                         </td>
                     </tr>
                 }
             </tbody>
         </table>
+
+        @if (_viewingLogsId.HasValue && _jobs is not null)
+        {
+            var currentJob = _jobs.FirstOrDefault(j => j.Id == _viewingLogsId);
+            if (currentJob is not null)
+            {
+                <div class="builds-logs-panel">
+                    <div class="builds-logs-header">
+                        <h4>Build Logs — @Truncate(currentJob.Goal, 40)</h4>
+                        <div class="builds-logs-actions">
+                            <button class="btn-secondary-sm" @onclick="() => RefreshLogs(currentJob)" disabled="@_loadingLogs">
+                                @_loadingLogs ? "Refreshing…" : "Refresh Now"
+                            </button>
+                        </div>
+                    </div>
+                    <div class="builds-logs-content">
+                        @if (_loadingLogs)
+                        {
+                            <div class="builds-loading-logs">Loading logs…</div>
+                        }
+                        else if (_logsError is not null)
+                        {
+                            <div class="error-msg">@_logsError</div>
+                        }
+                        else if (string.IsNullOrWhiteSpace(_buildLogs))
+                        {
+                            <div class="builds-logs-empty">No logs available yet.</div>
+                        }
+                        else
+                        {
+                            <pre>@_buildLogs</pre>
+                        }
+                    </div>
+                </div>
+            }
+        }
     }
 </div>
 
@@ -242,6 +288,13 @@
     private bool    _webhookSuccess;
     private bool    _webhookSaving;
 
+    // Log viewer
+    private long?                    _viewingLogsId;
+    private string?                  _buildLogs;
+    private bool                     _loadingLogs;
+    private string?                  _logsError;
+    private CancellationTokenSource? _logStreamCts;
+
     protected override async Task OnInitializedAsync()
     {
         _jobs = await BuildsSvc.GetAllJobsAsync();
@@ -263,7 +316,11 @@
         InvokeAsync(StateHasChanged);
     }
 
-    public void Dispose() => Notifier.BuildChanged -= OnBuildChanged;
+    public void Dispose()
+    {
+        Notifier.BuildChanged -= OnBuildChanged;
+        StopLogStream();
+    }
 
     // ── Webhook panel ─────────────────────────────────────────────────────────
 
@@ -425,4 +482,63 @@
         BuildStatus.Failed    => "failed",
         _                     => string.Empty,
     };
+
+    // ── Log viewer ────────────────────────────────────────────────────────────
+
+    private async Task ToggleLogs(SweAfJobEntity job)
+    {
+        StopLogStream();
+        if (_viewingLogsId == job.Id) { _viewingLogsId = null; return; }
+        _viewingLogsId  = job.Id;
+        _buildLogs      = null;
+        _logsError      = null;
+        await RefreshLogs(job);
+        StartLogStream(job);
+    }
+
+    private async Task RefreshLogs(SweAfJobEntity job)
+    {
+        _loadingLogs = true;
+        _logsError   = null;
+        StateHasChanged();
+        try
+        {
+            var (logs, error) = await BuildsSvc.GetLogsAsync(job.Id);
+            _buildLogs = logs;
+            _logsError = error;
+        }
+        finally { _loadingLogs = false; }
+    }
+
+    private void StartLogStream(SweAfJobEntity job)
+    {
+        _logStreamCts = new CancellationTokenSource();
+        var ct = _logStreamCts.Token;
+        _ = Task.Run(async () =>
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+            try
+            {
+                while (await timer.WaitForNextTickAsync(ct))
+                {
+                    var (logs, error) = await BuildsSvc.GetLogsAsync(job.Id);
+                    if (ct.IsCancellationRequested) break;
+                    await InvokeAsync(() =>
+                    {
+                        _buildLogs = logs;
+                        _logsError = error;
+                        StateHasChanged();
+                    });
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
+    }
+
+    private void StopLogStream()
+    {
+        _logStreamCts?.Cancel();
+        _logStreamCts?.Dispose();
+        _logStreamCts = null;
+    }
 }

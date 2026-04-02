@@ -112,8 +112,15 @@
                     <input class="llm-input" type="password" @bind="_provisionForm.SudoPassword"
                            placeholder="sudo password" />
                 }
+
+                <div class="llm-form-actions" style="margin-top:1rem;">
+                    <button class="btn-primary" @onclick="ProvisionControlPlane" disabled="@_provisioning">
+                        @(_provisioning ? "Provisioning…" : "Provision Control Plane")
+                    </button>
+                </div>
             </div>
 
+            @if (_provisionStatus is not null) { <div class="llm-success"> @_provisionStatus </div> }
             @if (_cfgError is not null) { <div class="error-msg">@_cfgError</div> }
             @if (_cfgSaved)             { <div class="llm-success">Configuration saved.</div> }
 
@@ -250,6 +257,7 @@
     {
         var cfg = await ConfigSvc.GetConfigAsync();
         _cfgForm = CfgForm.From(cfg);
+        _provisionForm = ProvisionForm.From(cfg);
         _configLoading = false;
 
         _hosts = await HostSvc.GetAllAsync();
@@ -268,16 +276,23 @@
         {
             var entity = new SweAfConfigEntity
             {
-                BaseUrl        = _cfgForm.BaseUrl.Trim(),
-                ApiKey         = NullIfBlank(_cfgForm.NewApiKey) ?? ConfigSvc.GetConfig().ApiKey,
-                WebhookSecret  = NullIfBlank(_cfgForm.NewWebhookSecret) ?? ConfigSvc.GetConfig().WebhookSecret,
-                HubPublicUrl   = NullIfBlank(_cfgForm.HubPublicUrl),
-                Runtime        = string.IsNullOrWhiteSpace(_cfgForm.Runtime) ? "claude_code" : _cfgForm.Runtime,
-                ModelDefault   = NullIfBlank(_cfgForm.ModelDefault),
-                ModelCoder     = NullIfBlank(_cfgForm.ModelCoder),
-                ModelQa        = NullIfBlank(_cfgForm.ModelQa),
-                DefaultRepoUrl      = NullIfBlank(_cfgForm.DefaultRepoUrl),
-                RepositoryApiToken  = NullIfBlank(_cfgForm.NewRepositoryApiToken) ?? ConfigSvc.GetConfig().RepositoryApiToken,
+                BaseUrl            = _cfgForm.BaseUrl.Trim(),
+                ApiKey             = NullIfBlank(_cfgForm.NewApiKey) ?? _cfgForm.ApiKey,
+                WebhookSecret      = NullIfBlank(_cfgForm.NewWebhookSecret) ?? _cfgForm.WebhookSecret,
+                HubPublicUrl       = NullIfBlank(_cfgForm.HubPublicUrl),
+                Runtime            = string.IsNullOrWhiteSpace(_cfgForm.Runtime) ? "claude_code" : _cfgForm.Runtime,
+                ModelDefault       = NullIfBlank(_cfgForm.ModelDefault),
+                ModelCoder         = NullIfBlank(_cfgForm.ModelCoder),
+                ModelQa            = NullIfBlank(_cfgForm.ModelQa),
+                DefaultRepoUrl     = NullIfBlank(_cfgForm.DefaultRepoUrl),
+                RepositoryApiToken = NullIfBlank(_cfgForm.NewRepositoryApiToken) ?? _cfgForm.RepositoryApiToken,
+                ProvisionHost      = _provisionForm.Host.Trim(),
+                SshUser            = _provisionForm.SshUser,
+                SshKeyPath         = _provisionForm.SshKeyPath,
+                SshPassword        = _provisionForm.SshPassword,
+                SshPort            = _provisionForm.SshPort,
+                RequiresSudo       = _provisionForm.RequiresSudo,
+                SudoPassword       = _provisionForm.SudoPassword,
             };
             await ConfigSvc.SaveAsync(entity);
             _cfgSaved = true;
@@ -285,6 +300,7 @@
             // Reload display (clears password placeholders)
             var saved = await ConfigSvc.GetConfigAsync();
             _cfgForm = CfgForm.From(saved);
+            _provisionForm = ProvisionForm.From(saved);
         }
         catch (Exception ex) { _cfgError = ex.Message; }
         finally { _savingCfg = false; }
@@ -464,17 +480,22 @@
         public string  ModelCoder            = "";
         public string  ModelQa               = "";
         public string  DefaultRepoUrl        = "";
+        public string  ApiKey                = "";       // current value (for preservation)
+        public string  WebhookSecret         = "";       // current value (for preservation)
+        public string  RepositoryApiToken    = "";       // current value (for preservation)
 
         public static CfgForm From(SweAfConfigEntity e) => new()
         {
-            BaseUrl        = e.BaseUrl,
-            HubPublicUrl   = e.HubPublicUrl   ?? "",
-            Runtime        = e.Runtime,
-            ModelDefault   = e.ModelDefault   ?? "",
-            ModelCoder     = e.ModelCoder     ?? "",
-            ModelQa        = e.ModelQa        ?? "",
-            DefaultRepoUrl = e.DefaultRepoUrl ?? "",
-            // Secrets left blank; user must retype to change
+            BaseUrl            = e.BaseUrl,
+            HubPublicUrl       = e.HubPublicUrl   ?? "",
+            Runtime            = e.Runtime,
+            ModelDefault       = e.ModelDefault   ?? "",
+            ModelCoder         = e.ModelCoder     ?? "",
+            ModelQa            = e.ModelQa        ?? "",
+            DefaultRepoUrl     = e.DefaultRepoUrl ?? "",
+            ApiKey             = e.ApiKey,
+            WebhookSecret      = e.WebhookSecret,
+            RepositoryApiToken = e.RepositoryApiToken,
         };
     }
 
@@ -509,6 +530,17 @@
         public int     SshPort           = 22;
         public bool    RequiresSudo      = false;
         public string  SudoPassword      = "";
+
+        public static ProvisionForm From(SweAfConfigEntity e) => new()
+        {
+            Host           = e.ProvisionHost ?? "localhost",
+            SshUser        = e.SshUser,
+            SshKeyPath     = e.SshKeyPath,
+            SshPassword    = e.SshPassword,
+            SshPort        = e.SshPort,
+            RequiresSudo   = e.RequiresSudo,
+            SudoPassword   = e.SudoPassword,
+        };
     }
 
     private class CommandEntry

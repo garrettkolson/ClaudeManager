@@ -12,7 +12,8 @@
       "Bash(dotnet ef:*)",
       "Bash(grep -n \"class GpuHostService\\\\|class HubSecretService\\\\|class LlmDeploymentNotifier\\\\|class LlmProxyConfigService\" D:/Repos/claude_manager/src/ClaudeManager.Hub/Services/*.cs)",
       "Bash(grep -n \"public GpuHostService\\\\|public HubSecretService\\\\|public LlmDeploymentNotifier\\\\|public LlmProxyConfigService\\\\|public NginxProxyService\" D:/Repos/claude_manager/src/ClaudeManager.Hub/Services/*.cs)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "WebFetch(domain:www.agentfield.ai)"
     ]
   }
 }

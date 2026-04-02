@@ -204,7 +204,8 @@ public class SweAfService
                 InputJson:  detail.Input is { ValueKind: not JsonValueKind.Null }
                     ? JsonSerializer.Serialize(detail.Input,
                         new JsonSerializerOptions { WriteIndented = true })
-                    : null);
+                    : null,
+                Logs:       detail.Logs);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -218,6 +219,22 @@ public class SweAfService
         await using var db = await _dbFactory.CreateDbContextAsync();
         var all = await db.SweAfJobs.ToListAsync();
         return all.OrderByDescending(j => j.CreatedAt).ToList();
+    }
+
+    public async Task<(string? Logs, string? Error)> GetLogsAsync(
+        long jobId, int lines = 200, CancellationToken ct = default)
+    {
+        var job = await GetJobAsync(jobId, ct);
+        if (job is null) return (null, "Job not found.");
+
+        if (string.IsNullOrWhiteSpace(job.ExternalJobId))
+            return (null, "No external job ID associated with this build.");
+
+        var detail = await FetchExecutionDetailAsync(job.ExternalJobId, ct);
+        if (detail is null)
+            return (null, "Failed to fetch logs from AgentField.");
+
+        return (detail.Logs, null);
     }
 
     // ── Job control ───────────────────────────────────────────────────────────

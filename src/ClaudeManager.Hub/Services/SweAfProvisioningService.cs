@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using ClaudeManager.Hub.Persistence;
 using ClaudeManager.Hub.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -8,24 +7,18 @@ using Renci.SshNet;
 namespace ClaudeManager.Hub.Services;
 
 /// <summary>
-/// Provisions (deploys via Docker) an AgentField control plane on a host.
-/// Uses Process.Start for localhost machines and SSH.NET for remote machines.
+/// Provisions (runs via Docker) an AgentField control plane on a host.
+/// Uses Docker on localhost machines and SSH + Docker for remote machines.
 /// </summary>
-public class SweAfProvisioningService
+public class SweAfProvisioningService(
+    IDbContextFactory<ClaudeManagerDbContext> dbFactory,
+    ILogger<SweAfProvisioningService> logger)
 {
-    private readonly IDbContextFactory<ClaudeManagerDbContext> _dbFactory;
-    private readonly ILogger<SweAfProvisioningService> _logger;
-
-    public SweAfProvisioningService(
-        IDbContextFactory<ClaudeManagerDbContext> dbFactory,
-        ILogger<SweAfProvisioningService> logger)
-    {
-        _dbFactory = dbFactory;
-        _logger = logger;
-    }
+    private const string ControlPlaneImage = "agentfield/control-plane:latest";
+    private const string ControlPlaneContainerName = "agentfield-control-plane";
 
     /// <summary>
-    /// Deploys the AgentField control plane container on the configured host.
+    /// Runs the AgentField control plane using Docker container.
     /// Returns the control plane URL on success, or an error message on failure.
     /// </summary>
     public async Task<(bool Success, string? Error, string? ControlPlaneUrl)>
@@ -38,30 +31,43 @@ public class SweAfProvisioningService
             return (false, "Provisioning host is not configured. Please configure SSH credentials and provisioning host first.", null);
         }
 
-        var dockerCommand = BuildDockerCommand(config);
-        _logger.LogInformation(
-            "Provisioning control plane on {Host} (sudo: {RequiresSudo}): {Command}",
-            config.ProvisionHost, config.RequiresSudo, dockerCommand);
+        var hostUrl = $"http://{config.ProvisionHost}:8080";
+        logger.LogInformation(
+            "Starting control plane container on {Host}: image={Image}, container={Container}",
+            config.ProvisionHost, ControlPlaneImage, ControlPlaneContainerName);
 
-        var (stdout, stderr, exitCode) = IsLocalHost(config.ProvisionHost!)
-            ? await ExecLocalAsync(dockerCommand, config, ct)
-            : await ExecSshAsync(config, dockerCommand, ct);
+        // Step 1: Ensure Docker is available and container is stopped/removed
+        await StopAndRemoveContainerAsync(config, ct);
 
-        if (exitCode != 0)
+        // Step 2: Pull the Docker image
+        var (pullStdout, pullStderr, pullExitCode) = IsLocalHost(config.ProvisionHost!)
+            ? await ExecLocalDockerAsync($"pull {ControlPlaneImage}", ct)
+            : await ExecSshDockerAsync(config, $"pull {ControlPlaneImage}", ct);
+
+        if (pullExitCode != 0)
         {
-            var errorMsg = (stderr ?? stdout ?? "Docker command failed").Trim();
-            _logger.LogWarning(
-                "Provisioning failed on {Host}: {Error}", config.ProvisionHost, errorMsg);
+            var errorMsg = (pullStderr ?? pullStdout ?? "Pull failed").Trim();
+            logger.LogWarning("Pull failed on {Host}: {Error}", config.ProvisionHost, errorMsg);
             return (false, errorMsg, null);
         }
 
-        // Extract container ID from output (docker run -d returns the ID)
-        var containerId = (stdout ?? "").Trim();
+        // Step 3: Run the container
+        var dockerRunArgs = BuildDockerRunArgs(config);
+        var (runStdout, runStderr, runExitCode) = IsLocalHost(config.ProvisionHost!)
+            ? await ExecLocalDockerAsync(dockerRunArgs, ct)
+            : await ExecSshDockerAsync(config, dockerRunArgs, ct);
 
-        var hostUrl = BuildControlPlaneUrl(config);
-        _logger.LogInformation(
-            "Control plane provisioned successfully on {Host}: {ContainerId} -> {Url}",
-            config.ProvisionHost, containerId[..Math.Min(12, containerId.Length)], hostUrl);
+        if (runExitCode != 0)
+        {
+            var errorMsg = (runStderr ?? runStdout ?? "Run failed").Trim();
+            logger.LogWarning(
+                "Run failed on {Host}: {Error}", config.ProvisionHost, errorMsg);
+            return (false, errorMsg, null);
+        }
+
+        logger.LogInformation(
+            "Control plane started successfully on {Host} -> {Url}",
+            config.ProvisionHost, hostUrl);
 
         return (true, null, hostUrl);
     }
@@ -69,26 +75,49 @@ public class SweAfProvisioningService
     private bool IsProvisioningConfigured(SweAfConfigEntity config) =>
         !string.IsNullOrWhiteSpace(config.ProvisionHost);
 
-    private static string BuildDockerCommand(SweAfConfigEntity config)
+    private static string BuildDockerRunArgs(SweAfConfigEntity config)
     {
-        var sb = new StringBuilder("docker run -d --name agentfield-control-plane -p 8080:8080 agentfield/control-plane:latest");
-        return config.RequiresSudo ? $"sudo {sb}" : sb.ToString();
+        // Build Docker run command with container name, ports, and restart policy
+        // Use nohup equivalent by not attaching to stdout/stderr for remote execution
+        return $"run -d --name {ControlPlaneContainerName} " +
+               $"--restart unless-stopped " +
+               $"-p 8080:8080 " +
+               $"{ControlPlaneImage}";
     }
 
-    private static string BuildControlPlaneUrl(SweAfConfigEntity config) =>
-        $"http://{config.ProvisionHost}:8080";
+    private async Task StopAndRemoveContainerAsync(SweAfConfigEntity config, CancellationToken ct)
+    {
+        var stopArgs = $"stop {ControlPlaneContainerName}";
+        var rmArgs = $"rm -f {ControlPlaneContainerName}";
+
+        try
+        {
+            await (IsLocalHost(config.ProvisionHost!)
+                ? ExecLocalDockerAsync(stopArgs, ct)
+                : ExecSshDockerAsync(config, stopArgs, ct));
+
+            await (IsLocalHost(config.ProvisionHost!)
+                ? ExecLocalDockerAsync(rmArgs, ct)
+                : ExecSshDockerAsync(config, rmArgs, ct));
+        }
+        catch
+        {
+            // Container may not exist, ignore errors
+            logger.LogInformation("Container {Container} does not exist, skipping removal", ControlPlaneContainerName);
+        }
+    }
 
     private static bool IsLocalHost(string host) =>
         host is "localhost" or "127.0.0.1" or "::1";
 
-    private async Task<(string? Stdout, string? Stderr, int ExitCode)> ExecLocalAsync(
-        string command, SweAfConfigEntity config, CancellationToken ct)
+    private async Task<(string? Stdout, string? Stderr, int ExitCode)> ExecLocalDockerAsync(
+        string dockerArgs, CancellationToken ct)
     {
         try
         {
             var psi = OperatingSystem.IsWindows()
-                ? new ProcessStartInfo("cmd.exe", $"/C {command}")
-                : new ProcessStartInfo("bash", $"-c \"{command.Replace("\"", "\\\"")}\"");
+                ? new ProcessStartInfo("cmd.exe", $"/C docker {dockerArgs}")
+                : new ProcessStartInfo("bash", $"-c \"docker {dockerArgs.Replace("\"", "\\\"")}\"");
 
             psi.UseShellExecute = false;
             psi.RedirectStandardOutput = true;
@@ -108,13 +137,13 @@ public class SweAfProvisioningService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Local docker command failed");
+            logger.LogError(ex, "Local Docker command failed");
             return (null, ex.Message, 1);
         }
     }
 
-    private async Task<(string? Stdout, string? Stderr, int ExitCode)> ExecSshAsync(
-        SweAfConfigEntity config, string command, CancellationToken ct)
+    private async Task<(string? Stdout, string? Stderr, int ExitCode)> ExecSshDockerAsync(
+        SweAfConfigEntity config, string dockerArgs, CancellationToken ct)
     {
         var auth = BuildAuth(config);
         if (auth is null)
@@ -122,8 +151,8 @@ public class SweAfProvisioningService
             return (null, "No SSH authentication configured (set SshKeyPath or SshPassword).", 1);
         }
 
-        bool requiresSudo = config.RequiresSudo;
-        string finalCommand = requiresSudo ? $"sudo {command}" : command;
+        var requiresSudo = config.RequiresSudo;
+        var finalCommand = $"docker {dockerArgs}";
 
         try
         {
@@ -143,12 +172,12 @@ public class SweAfProvisioningService
             if (requiresSudo && !string.IsNullOrWhiteSpace(config.SudoPassword))
             {
                 (stdout, stderr, exitCode) = await ExecuteWithSudoAsync(
-                    client, command, config.SudoPassword!, ct);
+                    client, finalCommand, config.SudoPassword!, ct);
             }
             else if (requiresSudo)
             {
                 client.Disconnect();
-                return (null, "Sudo is required but no sudo password configured.", 1);
+                return (null, "Sudo is required for Docker but no sudo password configured.", 1);
             }
             else
             {
@@ -167,7 +196,7 @@ public class SweAfProvisioningService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "SSH provisioning failed on {Host}", config.ProvisionHost);
+            logger.LogError(ex, "SSH Docker command failed on {Host}", config.ProvisionHost);
             return (null, ex.Message, 1);
         }
     }
@@ -177,11 +206,9 @@ public class SweAfProvisioningService
     {
         try
         {
-            var sudoCommand = $"echo '{sudoPassword}' | sudo -S {command}";
+            var sudoCommand = $"echo '{sudoPassword}' | sudo -S sh -c \"{command}\"";
 
             using var cmd = client.RunCommand(sudoCommand);
-            await Task.Run(() => { }, ct);
-
             var stdout = cmd.Result;
             var stderr = cmd.Error;
             var exitCode = cmd.ExitStatus ?? 0;
@@ -190,7 +217,7 @@ public class SweAfProvisioningService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to execute sudo command via SSH");
+            logger.LogError(ex, "Failed to execute sudo command via SSH");
             return (null, ex.Message, 1);
         }
     }
@@ -218,7 +245,7 @@ public class SweAfProvisioningService
 
     private async Task<SweAfConfigEntity> GetConfigAsync(CancellationToken ct = default)
     {
-        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
         return await db.SweAfConfigs.FirstOrDefaultAsync(ct) ?? new SweAfConfigEntity();
     }
 }

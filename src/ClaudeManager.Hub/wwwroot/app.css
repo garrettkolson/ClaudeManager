@@ -246,6 +246,19 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 .webhook-actions { margin-top: 8px; }
 .webhook-success { color: #4caf50; font-size: 13px; padding: 4px 0; }
 
+/* ── Build logs panel ── */
+.btn-secondary-sm { background: #1e3050; color: #7cb8ff; border: 1px solid #2a4a6a; padding: 3px 10px; border-radius: 3px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+.btn-secondary-sm:hover { background: #243a64; }
+.btn-secondary-sm:disabled { opacity: 0.45; cursor: not-allowed; }
+.builds-logs-panel { background: #0a1020; border: 1px solid #2a3a55; border-radius: 6px; padding: 16px; margin-top: 16px; }
+.builds-logs-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.builds-logs-header h4 { font-size: 14px; color: #cdd6f4; margin: 0; }
+.builds-logs-actions { display: flex; gap: 8px; }
+.builds-logs-content { background: #060d18; border: 1px solid #1e2e44; border-radius: 4px; padding: 12px; font-size: 12px; color: #8899bb; overflow-y: auto; max-height: 500px; }
+.builds-logs-content pre { margin: 0; white-space: pre-wrap; word-break: break-all; font-family: 'Consolas', 'Courier New', monospace; }
+.builds-loading-logs { color: #5a6a88; font-style: italic; text-align: center; padding: 8px; }
+.builds-logs-empty { color: #5a6a88; font-style: italic; text-align: center; padding: 8px; }
+
 /* ── Toast notifications ── */
 .toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 900; display: flex; flex-direction: column-reverse; gap: 8px; width: 340px; pointer-events: none; }
 .toast-container > * { pointer-events: auto; }

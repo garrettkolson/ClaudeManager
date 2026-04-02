@@ -14,7 +14,8 @@ internal record ExecutionStatusResponse(
     [property: JsonPropertyName("status")]       string       Status,
     [property: JsonPropertyName("result")]       JsonElement? Result,
     [property: JsonPropertyName("error")]        string?      Error,
-    [property: JsonPropertyName("input")]        JsonElement? Input);
+    [property: JsonPropertyName("input")]        JsonElement? Input,
+    [property: JsonPropertyName("logs")]         string?      Logs);
 
 /// <summary>
 /// Flattened view of an AgentField execution returned to the UI layer.
@@ -23,7 +24,8 @@ public record BuildExecutionDetail(
     string  Status,
     string? ResultJson,
     string? Error,
-    string? InputJson);
+    string? InputJson,
+    string? Logs);
 
 // ── Observability webhook payload ──────────────────────────────────────────
 
