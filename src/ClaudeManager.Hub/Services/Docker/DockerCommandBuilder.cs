@@ -236,9 +236,19 @@ public class DockerCommandBuilder
         args.AddRange(_commandArgs);
 
         return new DockerCommand(
-            Args: args.ToArray(),
+            Args: string.Join(" ", args.Select(EscapeArg)),
             RequiresSudo: _requiresSudo,
             SudoPassword: _sudoPassword
         );
+    }
+
+    private static string EscapeArg(string arg)
+    {
+        if (string.IsNullOrEmpty(arg)) return "\"\"";
+        if (arg.Contains(' ') || arg.Contains('"') || arg.Contains('\''))
+        {
+            return $"\"{arg.Replace("\"", "\\\"")}\"";
+        }
+        return arg;
     }
 }

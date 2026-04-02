@@ -72,7 +72,12 @@ public enum HostAuthType
 /// </summary>
 public class DockerExecutor : IDockerExecutor
 {
-    private readonly ILogger<DockerExecutor> _logger;
+    private readonly ILogger? _logger;
+
+    public DockerExecutor(ILogger? logger = null)
+    {
+        _logger = logger;
+    }
 
     public DockerExecutor(ILogger<DockerExecutor> logger)
     {
@@ -93,8 +98,7 @@ public class DockerExecutor : IDockerExecutor
 
     public async Task<DockerExecutionResult> ExecuteLocalAsync(DockerCommand command, CancellationToken ct)
     {
-        var dockerArgs = BuildDockerArgs(command);
-        return await ExecuteLocalInternalAsync(dockerArgs, ct);
+        return await ExecuteLocalInternalAsync(command.Args, ct);
     }
 
     private async Task<DockerExecutionResult> ExecuteLocalInternalAsync(string dockerArgs, CancellationToken ct)
@@ -145,8 +149,7 @@ public class DockerExecutor : IDockerExecutor
             );
         }
 
-        var dockerArgs = BuildDockerArgs(command);
-        var finalCommand = $"docker {dockerArgs}";
+        var finalCommand = $"docker {command.Args}";
 
         try
         {
@@ -194,7 +197,7 @@ public class DockerExecutor : IDockerExecutor
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "SSH Docker command failed on {Host}: {Command}", remoteHost, dockerArgs);
+            _logger.LogError(ex, "SSH Docker command failed on {Host}: {Command}", remoteHost, command.Args);
             return new DockerExecutionResult(null, ex.Message, 1, false);
         }
     }
@@ -248,21 +251,6 @@ public class DockerExecutor : IDockerExecutor
             _logger.LogError(ex, "Failed to execute sudo Docker command: {Command}", command);
             return (string.Empty, ex.Message, 1);
         }
-    }
-
-    private static string BuildDockerArgs(DockerCommand command)
-    {
-        return string.Join(" ", command.Args.Select(EscapeArg));
-    }
-
-    private static string EscapeArg(string arg)
-    {
-        if (string.IsNullOrEmpty(arg)) return "\"\"";
-        if (arg.Contains(' ') || arg.Contains('"') || arg.Contains('\''))
-        {
-            return $"\"{arg.Replace("\"", "\\\"")}\"";
-        }
-        return arg;
     }
 
     private static string EscapeBashCommand(string command)

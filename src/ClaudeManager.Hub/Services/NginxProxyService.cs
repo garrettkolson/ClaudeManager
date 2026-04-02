@@ -11,21 +11,14 @@ namespace ClaudeManager.Hub.Services;
 /// One upstream block is generated per distinct model ID; instances of the same model
 /// are load-balanced within that upstream.
 /// </summary>
-public class NginxProxyService
+public class NginxProxyService(ILogger<NginxProxyService> logger)
 {
-    private readonly ILogger<NginxProxyService> _logger;
-
     private readonly ConcurrentDictionary<string, (NginxProxyStatus Status, string? Error, DateTimeOffset UpdatedAt)>
         _statusCache = new();
 
     private const string ContainerName = "vllm-nginx-proxy";
     private const string RemoteConfigDir = "~/.vllm-proxy";
     private const string RemoteConfigPath = "~/.vllm-proxy/nginx.conf";
-
-    public NginxProxyService(ILogger<NginxProxyService> logger)
-    {
-        _logger = logger;
-    }
 
     // ── Config generation ─────────────────────────────────────────────────────
 
@@ -147,7 +140,7 @@ public class NginxProxyService
         // One compound shell command: write config then start/reload container
         var cmd = BuildApplyCommand(configB64);
 
-        _logger.LogInformation("Applying nginx proxy config on {Host} (port {Port}, {Count} deployments)",
+        logger.LogInformation("Applying nginx proxy config on {Host} (port {Port}, {Count} deployments)",
             host.Host, host.ProxyPort, runningDeployments.Count);
 
         var (_, stderr, exitCode) = await ExecAsync(host, cmd, ct);
@@ -155,7 +148,7 @@ public class NginxProxyService
         if (exitCode != 0)
         {
             var error = stderr?.Trim() ?? "nginx apply command failed with no output.";
-            _logger.LogWarning("Nginx apply failed on {Host}: {Error}", host.Host, error);
+            logger.LogWarning("Nginx apply failed on {Host}: {Error}", host.Host, error);
             SetCache(host.HostId, NginxProxyStatus.Error, error);
             return error;
         }
@@ -259,7 +252,7 @@ public class NginxProxyService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "SSH command failed on {Host}", host.Host);
+            logger.LogError(ex, "SSH command failed on {Host}", host.Host);
             return (null, ex.Message, 1);
         }
     }
