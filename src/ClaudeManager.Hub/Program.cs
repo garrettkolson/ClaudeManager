@@ -3,6 +3,7 @@ using ClaudeManager.Hub.Hubs;
 using ClaudeManager.Hub.Models;
 using ClaudeManager.Hub.Persistence;
 using ClaudeManager.Hub.Services;
+using ClaudeManager.Hub.Services.Docker;
 using Microsoft.EntityFrameworkCore;
 
 // Wire SessionStore → PersistenceQueue after both are built
@@ -52,6 +53,11 @@ builder.Services.AddSingleton<HubSecretService>();
 builder.Services.AddSingleton<LlmGpuDiscoveryService>();
 builder.Services.AddSingleton<LlmDeploymentNotifier>();
 builder.Services.AddHttpClient(); // For LlmInstanceService health checks
+builder.Services.AddSingleton<IDockerExecutor, DockerExecutor>(services =>
+{
+    var logger = services.GetRequiredService<ILogger<DockerExecutor>>();
+    return new DockerExecutor(logger);
+});
 builder.Services.AddSingleton<LlmInstanceService>();
 builder.Services.AddSingleton<NginxProxyService>();
 builder.Services.AddSingleton<LlmProxyConfigService>();
