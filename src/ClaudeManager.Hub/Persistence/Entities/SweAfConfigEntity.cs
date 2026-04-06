@@ -93,6 +93,21 @@ public class SweAfConfigEntity
     [MaxLength(500)]
     public string? SudoPassword { get; set; }
 
+    /// <summary>
+    /// Anthropic API key injected into the SWE-AF agent container as ANTHROPIC_API_KEY.
+    /// Required when Runtime is "claude_code".
+    /// </summary>
+    [MaxLength(500)]
+    public string? AnthropicApiKey { get; set; }
+
+    /// <summary>
+    /// Path to the cloned SWE-AF repository on the provision host.
+    /// Used by provisioning to run docker compose from the correct directory.
+    /// Defaults to ~/swe-af when null.
+    /// </summary>
+    [MaxLength(500)]
+    public string? SweAfRepoPath { get; set; }
+
     [NotMapped]
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(ApiKey);

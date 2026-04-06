@@ -143,7 +143,15 @@ public class SweAfService
             JsonContent.Create(payload, options: _ignoreNulls));
 
         var resp = await Http().SendAsync(request);
-        resp.EnsureSuccessStatusCode();
+        if (!resp.IsSuccessStatusCode)
+        {
+            var body = await resp.Content.ReadAsStringAsync();
+            _logger.LogWarning(
+                "AgentField returned {Status} for swe-planner.build: {Body}",
+                (int)resp.StatusCode, body);
+            throw new InvalidOperationException(
+                $"AgentField returned {(int)resp.StatusCode}: {body}");
+        }
 
         var result = await resp.Content.ReadFromJsonAsync<ExecuteResponse>()
             ?? throw new InvalidOperationException("Empty response from AgentField");

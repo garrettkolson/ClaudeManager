@@ -288,6 +288,10 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("AnthropicApiKey")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("DefaultRepoUrl")
                         .HasMaxLength(1000)
                         .HasColumnType("TEXT");
@@ -340,6 +344,10 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("SudoPassword")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SweAfRepoPath")
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 

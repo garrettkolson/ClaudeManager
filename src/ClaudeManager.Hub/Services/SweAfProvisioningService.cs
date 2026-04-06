@@ -14,8 +14,7 @@ public class SweAfProvisioningService(
     IDbContextFactory<ClaudeManagerDbContext> dbFactory,
     ILogger<SweAfProvisioningService> logger)
 {
-    private const string ControlPlaneImage = "agentfield/control-plane:latest";
-    private const string ControlPlaneContainerName = "agentfield-control-plane";
+    private const string DefaultSweAfRepoPath = "~/swe-af";
 
     /// <summary>
     /// Runs the AgentField control plane using Docker container.
@@ -24,6 +23,7 @@ public class SweAfProvisioningService(
     public async Task<(bool Success, string? Error, string? ControlPlaneUrl)>
         ProvisionControlPlaneAsync(CancellationToken ct = default)
     {
+        // TODO: convert all this to use the centralized Docker command logic
         var config = await GetConfigAsync(ct);
 
         if (!IsProvisioningConfigured(config))
@@ -32,41 +32,50 @@ public class SweAfProvisioningService(
         }
 
         var hostUrl = $"http://{config.ProvisionHost}:8080";
-        logger.LogInformation(
-            "Starting control plane container on {Host}: image={Image}, container={Container}",
-            config.ProvisionHost, ControlPlaneImage, ControlPlaneContainerName);
 
-        // Step 1: Ensure Docker is available and container is stopped/removed
-        await StopAndRemoveContainerAsync(config, ct);
-
-        // Step 2: Pull the Docker image
-        var (pullStdout, pullStderr, pullExitCode) = IsLocalHost(config.ProvisionHost!)
-            ? await ExecLocalDockerAsync($"pull {ControlPlaneImage}", ct)
-            : await ExecSshDockerAsync(config, $"pull {ControlPlaneImage}", ct);
-
-        if (pullExitCode != 0)
-        {
-            var errorMsg = (pullStderr ?? pullStdout ?? "Pull failed").Trim();
-            logger.LogWarning("Pull failed on {Host}: {Error}", config.ProvisionHost, errorMsg);
-            return (false, errorMsg, null);
-        }
-
-        // Step 3: Run the container
-        var dockerRunArgs = BuildDockerRunArgs(config);
-        var (runStdout, runStderr, runExitCode) = IsLocalHost(config.ProvisionHost!)
-            ? await ExecLocalDockerAsync(dockerRunArgs, ct)
-            : await ExecSshDockerAsync(config, dockerRunArgs, ct);
-
-        if (runExitCode != 0)
-        {
-            var errorMsg = (runStderr ?? runStdout ?? "Run failed").Trim();
-            logger.LogWarning(
-                "Run failed on {Host}: {Error}", config.ProvisionHost, errorMsg);
-            return (false, errorMsg, null);
-        }
+        var repoPath = string.IsNullOrWhiteSpace(config.SweAfRepoPath)
+            ? DefaultSweAfRepoPath
+            : config.SweAfRepoPath;
 
         logger.LogInformation(
-            "Control plane started successfully on {Host} -> {Url}",
+            "Writing .env and starting SWE-AF stack via docker compose on {Host} (repo: {Path})",
+            config.ProvisionHost, repoPath);
+
+        // Step 1: Write .env for docker compose
+        var writeEnvCmd = BuildWriteEnvCommand(config, repoPath);
+        var (envStdout, envStderr, envExitCode) = IsLocalHost(config.ProvisionHost!)
+            ? await ExecLocalShellAsync(writeEnvCmd, ct)
+            : await ExecSshShellAsync(config, writeEnvCmd, ct);
+
+        if (envExitCode != 0)
+        {
+            var errorMsg = (envStderr ?? envStdout ?? "Failed to write .env").Trim();
+            logger.LogWarning(".env write failed on {Host}: {Error}", config.ProvisionHost, errorMsg);
+            return (false, $"Failed to write agent .env: {errorMsg}", null);
+        }
+
+        // Step 2: Tear down any existing stack, then bring everything back up
+        var downCmd = $"cd {repoPath} && docker compose down";
+        var (downStdout, downStderr, _) = IsLocalHost(config.ProvisionHost!)
+            ? await ExecLocalShellAsync(downCmd, ct)
+            : await ExecSshShellAsync(config, downCmd, ct);
+        logger.LogInformation("docker compose down on {Host}: {Out}", config.ProvisionHost,
+            (downStdout ?? downStderr ?? "").Trim());
+
+        var composeCmd = $"cd {repoPath} && docker compose up -d --build";
+        var (compStdout, compStderr, compExitCode) = IsLocalHost(config.ProvisionHost!)
+            ? await ExecLocalShellAsync(composeCmd, ct)
+            : await ExecSshShellAsync(config, composeCmd, ct);
+
+        if (compExitCode != 0)
+        {
+            var errorMsg = (compStderr ?? compStdout ?? "docker compose failed").Trim();
+            logger.LogWarning("docker compose failed on {Host}: {Error}", config.ProvisionHost, errorMsg);
+            return (false, $"docker compose up failed: {errorMsg}", null);
+        }
+
+        logger.LogInformation(
+            "SWE-AF stack started successfully on {Host} -> {Url}",
             config.ProvisionHost, hostUrl);
 
         return (true, null, hostUrl);
@@ -75,37 +84,97 @@ public class SweAfProvisioningService(
     private bool IsProvisioningConfigured(SweAfConfigEntity config) =>
         !string.IsNullOrWhiteSpace(config.ProvisionHost);
 
-    private static string BuildDockerRunArgs(SweAfConfigEntity config)
+    /// <summary>
+    /// Builds a shell command that writes a .env file for docker compose,
+    /// using single-quoted heredoc so values are never shell-expanded.
+    /// </summary>
+    private static string BuildWriteEnvCommand(SweAfConfigEntity config, string repoPath)
     {
-        // Build Docker run command with container name, ports, and restart policy
-        // Use nohup equivalent by not attaching to stdout/stderr for remote execution
-        return $"run -d --name {ControlPlaneContainerName} " +
-               $"--restart unless-stopped " +
-               $"-p 8080:8080 " +
-               $"{ControlPlaneImage}";
+        var lines = new List<string>();
+        lines.Add($"ANTHROPIC_BASE_URL=http://192.168.4.28:8000");
+        if (!string.IsNullOrWhiteSpace(config.AnthropicApiKey))
+            lines.Add($"ANTHROPIC_API_KEY={config.AnthropicApiKey}");
+        if (!string.IsNullOrWhiteSpace(config.RepositoryApiToken))
+            lines.Add($"GH_TOKEN={config.RepositoryApiToken}");
+        if (!string.IsNullOrWhiteSpace(config.ApiKey))
+            lines.Add($"CLAUDE_CODE_OAUTH_TOKEN={config.ApiKey}");
+
+        var quoted = string.Join(" ", lines.Select(l => "'" + l.Replace("'", "'\\''") + "'"));
+        return $"printf '%s\\n' {quoted} > {repoPath}/.env";
     }
 
-    private async Task StopAndRemoveContainerAsync(SweAfConfigEntity config, CancellationToken ct)
+    private async Task<(string? Stdout, string? Stderr, int ExitCode)> ExecLocalShellAsync(
+        string command, CancellationToken ct)
     {
-        var stopArgs = $"stop {ControlPlaneContainerName}";
-        var rmArgs = $"rm -f {ControlPlaneContainerName}";
+        try
+        {
+            var psi = OperatingSystem.IsWindows()
+                ? new ProcessStartInfo("cmd.exe", $"/C {command}")
+                : new ProcessStartInfo("bash", $"-c {ShellQuote(command)}");
+
+            psi.UseShellExecute = false;
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.CreateNoWindow = true;
+
+            using var proc = Process.Start(psi)!;
+            var stdout = await proc.StandardOutput.ReadToEndAsync(ct);
+            var stderr = await proc.StandardError.ReadToEndAsync(ct);
+            await proc.WaitForExitAsync(ct);
+
+            return (stdout, stderr, proc.ExitCode);
+        }
+        catch (OperationCanceledException) { return (null, "Operation cancelled.", 1); }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Local shell command failed");
+            return (null, ex.Message, 1);
+        }
+    }
+
+    private async Task<(string? Stdout, string? Stderr, int ExitCode)> ExecSshShellAsync(
+        SweAfConfigEntity config, string command, CancellationToken ct, bool useSudo = true)
+    {
+        var auth = BuildAuth(config);
+        if (auth is null)
+            return (null, "No SSH authentication configured (set SshKeyPath or SshPassword).", 1);
 
         try
         {
-            await (IsLocalHost(config.ProvisionHost!)
-                ? ExecLocalDockerAsync(stopArgs, ct)
-                : ExecSshDockerAsync(config, stopArgs, ct));
+            var connInfo = new Renci.SshNet.ConnectionInfo(
+                config.ProvisionHost!, config.SshPort, config.SshUser!, auth);
 
-            await (IsLocalHost(config.ProvisionHost!)
-                ? ExecLocalDockerAsync(rmArgs, ct)
-                : ExecSshDockerAsync(config, rmArgs, ct));
+            using var client = new SshClient(connInfo);
+            await Task.Run(() => client.Connect(), ct);
+
+            string? stdout, stderr;
+            int exitCode;
+
+            if (useSudo && config.RequiresSudo && !string.IsNullOrWhiteSpace(config.SudoPassword))
+            {
+                (stdout, stderr, exitCode) = await ExecuteWithSudoAsync(client, command, config.SudoPassword!, ct);
+            }
+            else
+            {
+                using var cmd = client.RunCommand(command);
+                stdout = cmd.Result;
+                stderr = cmd.Error;
+                exitCode = cmd.ExitStatus ?? 0;
+            }
+
+            client.Disconnect();
+            return (stdout, stderr, exitCode);
         }
-        catch
+        catch (OperationCanceledException) { return (null, "Operation cancelled.", 1); }
+        catch (Exception ex)
         {
-            // Container may not exist, ignore errors
-            logger.LogInformation("Container {Container} does not exist, skipping removal", ControlPlaneContainerName);
+            logger.LogError(ex, "SSH shell command failed on {Host}", config.ProvisionHost);
+            return (null, ex.Message, 1);
         }
     }
+
+    private static string ShellQuote(string value) =>
+        "'" + value.Replace("'", "'\\''") + "'";
 
     private static bool IsLocalHost(string host) =>
         host is "localhost" or "127.0.0.1" or "::1";

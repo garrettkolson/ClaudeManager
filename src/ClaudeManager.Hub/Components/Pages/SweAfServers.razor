@@ -83,6 +83,17 @@
                 <input class="llm-input" type="password" @bind="_cfgForm.NewRepositoryApiToken"
                        placeholder="leave blank to keep current  (GitHub/GitLab PAT for private repos)" />
                 
+                @* Agent Configuration *@
+                <div class="form-section-title">Agent Configuration</div>
+
+                <label class="llm-label">Anthropic API Key</label>
+                <input class="llm-input" type="password" @bind="_cfgForm.NewAnthropicApiKey"
+                       placeholder="sk-ant-… (injected as ANTHROPIC_API_KEY into agent container)" />
+
+                <label class="llm-label">SWE-AF Repo Path</label>
+                <input class="llm-input" @bind="_cfgForm.SweAfRepoPath"
+                       placeholder="~/swe-af  (path to cloned Agent-Field/SWE-AF repo on provision host)" />
+
                 @* Control Plane Provisioning *@
                 <div class="form-section-title">Provisioning Config</div>
 
@@ -286,6 +297,8 @@
                 ModelQa            = NullIfBlank(_cfgForm.ModelQa),
                 DefaultRepoUrl     = NullIfBlank(_cfgForm.DefaultRepoUrl),
                 RepositoryApiToken = NullIfBlank(_cfgForm.NewRepositoryApiToken) ?? _cfgForm.RepositoryApiToken,
+                AnthropicApiKey    = NullIfBlank(_cfgForm.NewAnthropicApiKey) ?? _cfgForm.AnthropicApiKey,
+                SweAfRepoPath      = NullIfBlank(_cfgForm.SweAfRepoPath),
                 ProvisionHost      = _provisionForm.Host.Trim(),
                 SshUser            = _provisionForm.SshUser,
                 SshKeyPath         = _provisionForm.SshKeyPath,
@@ -474,28 +487,33 @@
         public string  NewApiKey             = "";      // blank = keep current
         public string  NewWebhookSecret      = "";      // blank = keep current
         public string  NewRepositoryApiToken = "";      // blank = keep current
+        public string  NewAnthropicApiKey    = "";      // blank = keep current
         public string  HubPublicUrl          = "";
         public string  Runtime               = "claude_code";
         public string  ModelDefault          = "";
         public string  ModelCoder            = "";
         public string  ModelQa               = "";
         public string  DefaultRepoUrl        = "";
+        public string  SweAfRepoPath         = "";
         public string  ApiKey                = "";       // current value (for preservation)
         public string  WebhookSecret         = "";       // current value (for preservation)
         public string  RepositoryApiToken    = "";       // current value (for preservation)
+        public string  AnthropicApiKey       = "";       // current value (for preservation)
 
         public static CfgForm From(SweAfConfigEntity e) => new()
         {
             BaseUrl            = e.BaseUrl,
-            HubPublicUrl       = e.HubPublicUrl   ?? "",
+            HubPublicUrl       = e.HubPublicUrl    ?? "",
             Runtime            = e.Runtime,
-            ModelDefault       = e.ModelDefault   ?? "",
-            ModelCoder         = e.ModelCoder     ?? "",
-            ModelQa            = e.ModelQa        ?? "",
-            DefaultRepoUrl     = e.DefaultRepoUrl ?? "",
+            ModelDefault       = e.ModelDefault    ?? "",
+            ModelCoder         = e.ModelCoder      ?? "",
+            ModelQa            = e.ModelQa         ?? "",
+            DefaultRepoUrl     = e.DefaultRepoUrl  ?? "",
+            SweAfRepoPath      = e.SweAfRepoPath  ?? "",
             ApiKey             = e.ApiKey,
             WebhookSecret      = e.WebhookSecret,
             RepositoryApiToken = e.RepositoryApiToken,
+            AnthropicApiKey    = e.AnthropicApiKey,
         };
     }
 

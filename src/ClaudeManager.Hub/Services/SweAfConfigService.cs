@@ -96,6 +96,8 @@ public class SweAfConfigService : IHostedService
             existing.SshPort            = config.SshPort;
             existing.RequiresSudo       = config.RequiresSudo;
             existing.SudoPassword       = config.SudoPassword;
+            existing.AnthropicApiKey    = config.AnthropicApiKey;
+            existing.SweAfRepoPath      = config.SweAfRepoPath;
         }
         await db.SaveChangesAsync(ct);
 

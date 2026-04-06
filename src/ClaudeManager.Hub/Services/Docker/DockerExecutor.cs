@@ -88,12 +88,9 @@ public class DockerExecutor : IDockerExecutor
     {
         var isLocal = IsLocalHost(host.Host);
 
-        if (isLocal)
-        {
-            return await ExecuteLocalAsync(command, ct);
-        }
-
-        return await ExecuteRemoteAsync(command, host.Host, host, ct);
+        return isLocal 
+            ? await ExecuteLocalAsync(command, ct) 
+            : await ExecuteRemoteAsync(command, host.Host, host, ct);
     }
 
     public async Task<DockerExecutionResult> ExecuteLocalAsync(DockerCommand command, CancellationToken ct)
@@ -166,9 +163,13 @@ public class DockerExecutor : IDockerExecutor
             string stdout, stderr;
             int exitCode;
 
-            if (command.RequiresSudo && !string.IsNullOrEmpty(command.SudoPassword))
+            var sudoPassword = !string.IsNullOrEmpty(command.SudoPassword)
+                ? command.SudoPassword
+                : host.SudoPassword;
+
+            if (command.RequiresSudo && !string.IsNullOrEmpty(sudoPassword))
             {
-                (stdout, stderr, exitCode) = await ExecuteWithSudoAsync(client, finalCommand, command.SudoPassword!, ct);
+                (stdout, stderr, exitCode) = await ExecuteWithSudoAsync(client, finalCommand, sudoPassword!, ct);
             }
             else if (command.RequiresSudo)
             {
@@ -230,7 +231,8 @@ public class DockerExecutor : IDockerExecutor
 
         try
         {
-            var sudoCommand = $"echo '{sudoPassword}' | sudo -S {command}";
+            var escapedCommand = command.Replace("'", "'\\''");
+            var sudoCommand = $"echo '{sudoPassword}' | sudo -S sh -c '{escapedCommand}'";
 
             using var cmd = client.RunCommand(sudoCommand);
             await Task.Run(() => { }, ct);

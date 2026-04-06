@@ -125,7 +125,7 @@ public class DockerCommandBuilder
     /// </summary>
     public DockerCommandBuilder WithGpus(string deviceSpec)
     {
-        _flags.Add($"--gpus \"{deviceSpec}\"");
+        _flags.Add($"--gpus '\"{deviceSpec}\"'");
         return this;
     }
 
@@ -213,7 +213,7 @@ public class DockerCommandBuilder
             throw new InvalidOperationException("At least an image or container name must be specified.");
         }
 
-        var args = new List<string>();
+        var args = new List<string> { "run" };
 
         if (_detached)
             args.Add("-d");
@@ -233,10 +233,13 @@ public class DockerCommandBuilder
         if (!_detached && _restartPolicy != "no")
             args.Add($"--restart {_restartPolicy}");
 
+        if (!string.IsNullOrEmpty(_image))
+            args.Add(_image);
+
         args.AddRange(_commandArgs);
 
         return new DockerCommand(
-            Args: string.Join(" ", args.Select(EscapeArg)),
+            Args: string.Join(" ", args),//.Select(EscapeArg)),
             RequiresSudo: _requiresSudo,
             SudoPassword: _sudoPassword
         );

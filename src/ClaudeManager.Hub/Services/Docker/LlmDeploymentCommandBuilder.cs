@@ -76,11 +76,14 @@ public class LlmDeploymentCommandBuilder
 
     /// <summary>
     /// Mounts HuggingFace cache directory for model caching.
+    /// Uses a Linux-compatible path derived from the remote SSH user.
     /// </summary>
-    public LlmDeploymentCommandBuilder WithHfCacheVolume()
+    public LlmDeploymentCommandBuilder WithHfCacheVolume(string? remoteUser = null)
     {
-        var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var cacheDir = Path.Combine(homeDir, ".cache", "huggingface");
+        var homeDir = string.IsNullOrEmpty(remoteUser) || remoteUser == "root"
+            ? "/root"
+            : $"/home/{remoteUser}";
+        var cacheDir = $"{homeDir}/.cache/huggingface";
         _baseBuilder.WithVolume(cacheDir, "/root/.cache/huggingface");
         return this;
     }

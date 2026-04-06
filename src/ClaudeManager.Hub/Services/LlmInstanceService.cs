@@ -26,12 +26,13 @@ public class LlmInstanceService(
         GpuHostEntity host, LlmDeploymentEntity deployment, string? hfToken,
         CancellationToken ct = default)
     {
-        var command = BuildDockerRunCommand(deployment, hfToken);
+        var execHost = host.ToExecutionHost();
+        var command = BuildDockerRunCommand(deployment, execHost, hfToken);
         logger.LogInformation("Starting vLLM container on {Host}: {Command}", host.Host, command);
 
         var result = await dockerExecutor.ExecuteAsync(
             command,
-            host.ToExecutionHost(),
+            execHost,
             ct);
 
         if (!result.IsSuccess || result.Stdout is null)
@@ -52,7 +53,7 @@ public class LlmInstanceService(
     public async Task<string?> StopContainerAsync(
         GpuHostEntity host, string containerId, CancellationToken ct = default)
     {
-        var command = $"docker rm -f {containerId}";
+        var command = $"rm -f {containerId}";
         logger.LogInformation("Stopping container {ContainerId} on {Host}", containerId[..Math.Min(12, containerId.Length)], host.Host);
 
         var result = await dockerExecutor.ExecuteAsync(
@@ -72,7 +73,7 @@ public class LlmInstanceService(
     public async Task<(string? Logs, string? Error)> GetLogsAsync(
         GpuHostEntity host, string containerId, int lines = 200, CancellationToken ct = default)
     {
-        var command = $"docker logs --tail {lines} --timestamps {containerId} 2>&1";
+        var command = $"logs --tail {lines} --timestamps {containerId} 2>&1";
 
         var result = await dockerExecutor.ExecuteAsync(
             DockerCommand.FromString(command),
@@ -121,7 +122,7 @@ public class LlmInstanceService(
     public async Task<ContainerStatus?> InspectContainerAsync(
         GpuHostEntity host, string containerId, CancellationToken ct = default)
     {
-        var command = $"docker inspect -f '{{{{.State.Status}}}}' {containerId} 2>/dev/null || echo not_found";
+        var command = $"inspect -f '{{{{.State.Status}}}}' {containerId} 2>/dev/null || echo not_found";
 
         var result = await dockerExecutor.ExecuteAsync(
             DockerCommand.FromString(command),
@@ -155,7 +156,7 @@ public class LlmInstanceService(
         ListRunningVllmContainersAsync(GpuHostEntity host, CancellationToken ct = default)
     {
         var psResult = await dockerExecutor.ExecuteAsync(
-            DockerCommand.FromString("docker ps -q --no-trunc"),
+            DockerCommand.FromString("ps -q --no-trunc"),
             host.ToExecutionHost(),
             ct);
 
@@ -173,7 +174,7 @@ public class LlmInstanceService(
         foreach (var id in ids)
         {
             var inspectResult = await dockerExecutor.ExecuteAsync(
-                DockerCommand.FromString($"docker inspect {id}"),
+                DockerCommand.FromString($"inspect {id}"),
                 host.ToExecutionHost(),
                 ct);
 
@@ -272,16 +273,16 @@ public class LlmInstanceService(
     /// <summary>
     /// Builds a Docker run command for a vLLM deployment using the builder pattern.
     /// </summary>
-    internal DockerCommand BuildDockerRunCommand(LlmDeploymentEntity deployment, string? hfToken)
+    internal DockerCommand BuildDockerRunCommand(LlmDeploymentEntity deployment, ExecutionHost host, string? hfToken)
     {
         var builder = new LlmDeploymentCommandBuilder()
-            .WithContainerName($"vllm-{deployment.ModelId.Replace("/", "-").Replace(".", "-")}-{{guid}}")
+            .WithContainerName($"vllm-{deployment.ModelId.Replace("/", "-").Replace(".", "-")}-{Guid.CreateVersion7()}")
             .WithImageTag(deployment.ImageTag ?? "latest")
             .WithGpus(deployment.GpuIndices ?? "0")
             .WithNvidiaRuntime()
             .WithHostIPC()
             .WithHostPort(deployment.HostPort)
-            .WithHfCacheVolume();
+            .WithHfCacheVolume(host.User);
 
         if (!string.IsNullOrWhiteSpace(hfToken))
             builder = builder.WithHfToken(hfToken);
@@ -301,6 +302,9 @@ public class LlmInstanceService(
 
         if (!string.IsNullOrWhiteSpace(deployment.ExtraArgs))
             builder = builder.WithExtraArgs(deployment.ExtraArgs.Trim());
+
+        if (host.SudoPassword is not null)
+            builder.RequiresSudo(host.SudoPassword);
 
         return builder.Build();
     }

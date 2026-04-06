@@ -5,7 +5,7 @@ namespace ClaudeManager.Hub.Services.Docker;
 /// </summary>
 public record DockerCommand(
     string Args,             // Docker CLI arguments (without "docker" prefix)
-    bool RequiresSudo = false,
+    bool RequiresSudo = true,
     string? SudoPassword = null,
     string? WorkingDir = null
 )
@@ -20,7 +20,7 @@ public record DockerCommand(
     /// </summary>
     public static DockerCommand FromArgs(string[] args) => new(
         Args: string.Join(" ", args),
-        RequiresSudo: false,
+        RequiresSudo: true,
         SudoPassword: null
     );
 };
