@@ -37,4 +37,10 @@ public class SweAfJobEntity
 
     [MaxLength(2000)]
     public string? ErrorMessage { get; set; }
+
+    /// <summary>
+    /// Latest log output, kept fresh by webhook execution_updated events.
+    /// No max length — log content can be large.
+    /// </summary>
+    public string? Logs { get; set; }
 }

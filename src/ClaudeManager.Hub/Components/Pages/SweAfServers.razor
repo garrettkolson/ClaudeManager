@@ -3,6 +3,7 @@
 @inject SweAfConfigService ConfigSvc
 @inject SweAfHostService HostSvc
 @inject SweAfProvisioningService ProvisioningSvc
+@inject SweAfService BuildsSvc
 @inject LlmDeploymentService DeploymentSvc
 @inject ILogger<SweAfServers> _logger
 @using ClaudeManager.Hub.Persistence.Entities
@@ -103,6 +104,10 @@
                 <label class="llm-label">SWE-AF Repo Path</label>
                 <input class="llm-input" @bind="_cfgForm.SweAfRepoPath"
                        placeholder="~/swe-af  (path to cloned Agent-Field/SWE-AF repo on provision host)" />
+
+                <label class="llm-label">docker-compose.override.yml</label>
+                <textarea class="llm-input llm-textarea" @bind="_cfgForm.ComposeOverride" rows="8"
+                          placeholder="# Written alongside .env on every provisioning run.&#10;# Use named volumes to persist build history across docker compose down/up.&#10;# Example:&#10;#&#10;# services:&#10;#   backend:&#10;#     volumes:&#10;#       - swe_af_data:/app/data&#10;# volumes:&#10;#   swe_af_data:"></textarea>
 
                 @* Control Plane Provisioning *@
                 <div class="form-section-title">Provisioning Config</div>
@@ -319,6 +324,7 @@
                 AnthropicApiKey    = NullIfBlank(_cfgForm.NewAnthropicApiKey) ?? _cfgForm.AnthropicApiKey,
                 SweAfRepoPath      = NullIfBlank(_cfgForm.SweAfRepoPath),
                 LlmDeploymentId    = NullIfBlank(_cfgForm.LlmDeploymentId),
+                ComposeOverride    = NullIfBlank(_cfgForm.ComposeOverride),
                 ProvisionHost      = _provisionForm.Host.Trim(),
                 SshUser            = _provisionForm.SshUser,
                 SshKeyPath         = _provisionForm.SshKeyPath,
@@ -361,6 +367,7 @@
             if (success && !string.IsNullOrEmpty(controlPlaneUrl))
             {
                 _provisionStatus = $"Success! Control plane is running at {controlPlaneUrl}. Click 'Save' to persist the configuration.";
+                await BuildsSvc.EnsureWebhookRegisteredAsync();
             }
             else
             {
@@ -538,6 +545,7 @@
         public string  DefaultRepoUrl        = "";
         public string  SweAfRepoPath         = "";
         public string  LlmDeploymentId      = "";
+        public string  ComposeOverride      = "";
         public string  ApiKey                = "";       // current value (for preservation)
         public string  WebhookSecret         = "";       // current value (for preservation)
         public string  RepositoryApiToken    = "";       // current value (for preservation)
@@ -554,6 +562,7 @@
             DefaultRepoUrl     = e.DefaultRepoUrl  ?? "",
             SweAfRepoPath      = e.SweAfRepoPath  ?? "",
             LlmDeploymentId    = e.LlmDeploymentId ?? "",
+            ComposeOverride    = e.ComposeOverride  ?? "",
             ApiKey             = e.ApiKey,
             WebhookSecret      = e.WebhookSecret,
             RepositoryApiToken = e.RepositoryApiToken,

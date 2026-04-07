@@ -99,6 +99,7 @@ public class SweAfConfigService : IHostedService
             existing.AnthropicApiKey    = config.AnthropicApiKey;
             existing.SweAfRepoPath      = config.SweAfRepoPath;
             existing.LlmDeploymentId    = config.LlmDeploymentId;
+            existing.ComposeOverride    = config.ComposeOverride;
         }
         await db.SaveChangesAsync(ct);
 

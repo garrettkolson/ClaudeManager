@@ -116,6 +116,14 @@ public class SweAfConfigEntity
     [MaxLength(100)]
     public string? LlmDeploymentId { get; set; }
 
+    /// <summary>
+    /// YAML content written to docker-compose.override.yml in the SWE-AF repo directory
+    /// on every provisioning run. Use this to declare named volumes (or bind mounts) so
+    /// that build history and agent state survive docker compose down/up cycles.
+    /// When null/empty, any existing override file is left untouched.
+    /// </summary>
+    public string? ComposeOverride { get; set; }
+
     [NotMapped]
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(ApiKey);

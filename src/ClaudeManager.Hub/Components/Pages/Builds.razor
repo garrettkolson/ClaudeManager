@@ -313,6 +313,11 @@
             _jobs[idx] = updated;
         else
             _jobs.Insert(0, updated);
+
+        // Push log content immediately rather than waiting for the next poll tick.
+        if (_viewingLogsId == updated.Id && !string.IsNullOrWhiteSpace(updated.Logs))
+            _buildLogs = updated.Logs;
+
         InvokeAsync(StateHasChanged);
     }
 
@@ -521,7 +526,7 @@
             {
                 while (await timer.WaitForNextTickAsync(ct))
                 {
-                    var (logs, error) = await BuildsSvc.GetLogsAsync(job.Id);
+                    var (logs, error) = await BuildsSvc.GetLogsAsync(job.Id, ct: ct);
                     if (ct.IsCancellationRequested) break;
                     await InvokeAsync(() =>
                     {
@@ -532,6 +537,14 @@
                 }
             }
             catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                await InvokeAsync(() =>
+                {
+                    _logsError = $"Log stream stopped: {ex.Message}";
+                    StateHasChanged();
+                });
+            }
         });
     }
 

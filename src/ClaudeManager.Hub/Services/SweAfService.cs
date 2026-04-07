@@ -83,6 +83,28 @@ public class SweAfService
 
     // ── Webhook registration ─────────────────────────────────────────────────
 
+    /// <summary>
+    /// Registers (or re-registers) the observability webhook using the configured
+    /// HubPublicUrl. No-ops silently when HubPublicUrl is not set.
+    /// Failures are logged as warnings and do not throw.
+    /// </summary>
+    public async Task EnsureWebhookRegisteredAsync(CancellationToken ct = default)
+    {
+        var publicUrl = _configSvc.HubPublicUrl?.TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(publicUrl))
+        {
+            _logger.LogDebug("Skipping webhook registration — HubPublicUrl is not configured.");
+            return;
+        }
+
+        var webhookUrl = $"{publicUrl}/api/webhooks/agentfield";
+        var (ok, err)  = await RegisterWebhookAsync(webhookUrl, _configSvc.WebhookSecret, ct);
+        if (!ok)
+            _logger.LogWarning("Webhook auto-registration failed: {Error}", err);
+        else
+            _logger.LogInformation("Webhook registered: {Url}", webhookUrl);
+    }
+
     public async Task<(bool Success, string? Error)> RegisterWebhookAsync(
         string url, string? secret, CancellationToken ct = default)
     {
@@ -118,6 +140,9 @@ public class SweAfService
         if (!cfg.IsConfigured)
             throw new InvalidOperationException(
                 "SWE-AF is not configured. Go to SWE-AF Servers to add the AgentField URL and API key.");
+
+        // Ensure the webhook is registered so we receive live status/log events.
+        await EnsureWebhookRegisteredAsync();
 
         SweAfModelsConfig? models = null;
         if (cfg.ModelDefault is not null || cfg.ModelCoder is not null || cfg.ModelQa is not null)
@@ -198,8 +223,8 @@ public class SweAfService
             var resp = await Http().SendAsync(request, ct);
             if (!resp.IsSuccessStatusCode) return null;
 
-            var detail = await resp.Content.ReadFromJsonAsync<ExecutionStatusResponse>(
-                cancellationToken: ct);
+            var content = await resp.Content.ReadAsStringAsync(ct);
+            var detail = JsonSerializer.Deserialize<ExecutionStatusResponse>(content);
             if (detail is null) return null;
 
             return new BuildExecutionDetail(
@@ -235,6 +260,11 @@ public class SweAfService
         var job = await GetJobAsync(jobId, ct);
         if (job is null) return (null, "Job not found.");
 
+        // Return webhook-cached logs immediately if available.
+        if (!string.IsNullOrWhiteSpace(job.Logs))
+            return (job.Logs, null);
+
+        // Fall back to polling the execution detail endpoint.
         if (string.IsNullOrWhiteSpace(job.ExternalJobId))
             return (null, "No external job ID associated with this build.");
 
@@ -391,6 +421,11 @@ public class SweAfService
                 break;
         }
 
+        // Extract log output present on any event type — try common field names.
+        var logValue = ExtractLogs(data);
+        if (logValue is not null)
+            job.Logs = logValue;
+
         await db.SaveChangesAsync();
         _notifier.NotifyBuildChanged(job);
     }
@@ -486,6 +521,25 @@ public class SweAfService
     {
         if (data.TryGetProperty("error",         out var e)) return e.GetString();
         if (data.TryGetProperty("error_message", out var m)) return m.GetString();
+        return null;
+    }
+
+    /// <summary>
+    /// Tries common field names used by AgentField for log/output content.
+    /// Returns null if none are present or the value is not a non-empty string.
+    /// </summary>
+    private static string? ExtractLogs(JsonElement data)
+    {
+        foreach (var name in (ReadOnlySpan<string>)["logs", "output", "log", "stdout", "log_output"])
+        {
+            if (data.TryGetProperty(name, out var prop) &&
+                prop.ValueKind == JsonValueKind.String)
+            {
+                var val = prop.GetString();
+                if (!string.IsNullOrWhiteSpace(val))
+                    return val;
+            }
+        }
         return null;
     }
 }

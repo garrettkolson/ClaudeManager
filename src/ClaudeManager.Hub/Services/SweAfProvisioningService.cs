@@ -55,7 +55,23 @@ public class SweAfProvisioningService(
             return (false, $"Failed to write agent .env: {errorMsg}", null);
         }
 
-        // Step 2: Tear down any existing stack, then bring everything back up
+        // Step 2: Write docker-compose.override.yml if configured
+        if (!string.IsNullOrWhiteSpace(config.ComposeOverride))
+        {
+            var writeOverrideCmd = BuildWriteOverrideCommand(config.ComposeOverride, repoPath);
+            var (ovStdout, ovStderr, ovExitCode) = IsLocalHost(config.ProvisionHost!)
+                ? await ExecLocalShellAsync(writeOverrideCmd, ct)
+                : await ExecSshShellAsync(config, writeOverrideCmd, ct);
+
+            if (ovExitCode != 0)
+            {
+                var errorMsg = (ovStderr ?? ovStdout ?? "Failed to write docker-compose.override.yml").Trim();
+                logger.LogWarning("Override write failed on {Host}: {Error}", config.ProvisionHost, errorMsg);
+                return (false, $"Failed to write docker-compose.override.yml: {errorMsg}", null);
+            }
+        }
+
+        // Step 3: Tear down any existing stack, then bring everything back up
         var downCmd = $"cd {repoPath} && docker compose down";
         var (downStdout, downStderr, _) = IsLocalHost(config.ProvisionHost!)
             ? await ExecLocalShellAsync(downCmd, ct)
@@ -140,6 +156,16 @@ public class SweAfProvisioningService(
             return $"http://{host.Host}:{host.ProxyPort}";
 
         return $"http://{host.Host}:{deployment.HostPort}";
+    }
+
+    /// <summary>
+    /// Builds a shell command that writes a docker-compose.override.yml file,
+    /// using base64 encoding to safely transport arbitrary YAML without shell escaping issues.
+    /// </summary>
+    private static string BuildWriteOverrideCommand(string overrideYaml, string repoPath)
+    {
+        var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(overrideYaml));
+        return $"echo {b64} | base64 -d > {repoPath}/docker-compose.override.yml";
     }
 
     /// <summary>

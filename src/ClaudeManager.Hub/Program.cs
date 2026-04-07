@@ -1,3 +1,5 @@
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text.Json;
 using ClaudeManager.Hub.Hubs;
 using ClaudeManager.Hub.Models;
@@ -9,6 +11,11 @@ using Microsoft.EntityFrameworkCore;
 // Wire SessionStore → PersistenceQueue after both are built
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Bind to all network interfaces so LAN clients (e.g. AgentField) can reach the hub.
+// Port is read from Hub:HttpPort in config, defaulting to 5258.
+var httpPort = builder.Configuration.GetValue("Hub:HttpPort", 5258);
+builder.WebHost.ConfigureKestrel(kestrel => kestrel.ListenAnyIP(httpPort));
 
 // ── Database ──────────────────────────────────────────────────────────────────
 
@@ -138,7 +145,7 @@ app.MapGet("/api/llm-config", async (LlmProxyConfigService svc) =>
 
 // ── AgentField observability webhook ──────────────────────────────────────────
 
-app.MapPost("/api/webhooks/agentfield", async (HttpRequest req, SweAfService svc, SweAfConfigService cfgSvc) =>
+app.MapPost("/api/webhooks/agentfield", async (HttpRequest req, SweAfService svc, SweAfConfigService cfgSvc, ILoggerFactory logFac) =>
 {
     using var ms = new MemoryStream();
     await req.Body.CopyToAsync(ms);
@@ -160,12 +167,36 @@ app.MapPost("/api/webhooks/agentfield", async (HttpRequest req, SweAfService svc
     }
     if (batch is null) return Results.BadRequest("Invalid payload");
 
-    await svc.ProcessWebhookBatchAsync(batch);
+    // Acknowledge immediately — AgentField has a short HTTP deadline and will
+    // retry on timeout. Processing is fast but any DB latency would cause
+    // "context deadline exceeded" errors on the caller side.
+    var logger = logFac.CreateLogger("AgentFieldWebhook");
+    _ = Task.Run(async () =>
+    {
+        try   { await svc.ProcessWebhookBatchAsync(batch); }
+        catch (Exception ex) { logger.LogError(ex, "Webhook batch processing failed for batch {BatchId}", batch.BatchId); }
+    });
+
     return Results.Ok();
 });
 
 app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");
+
+// Log LAN addresses at startup so the correct HubPublicUrl is easy to find.
+var startupLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+var lanIps = NetworkInterface.GetAllNetworkInterfaces()
+    .Where(n => n.OperationalStatus == OperationalStatus.Up
+             && n.NetworkInterfaceType is not NetworkInterfaceType.Loopback)
+    .SelectMany(n => n.GetIPProperties().UnicastAddresses)
+    .Where(a => a.Address.AddressFamily == AddressFamily.InterNetwork)
+    .Select(a => a.Address.ToString())
+    .ToList();
+if (lanIps.Count > 0)
+    startupLog.LogInformation(
+        "Hub listening on port {Port}. Set HubPublicUrl to one of: {Urls}",
+        httpPort,
+        string.Join(", ", lanIps.Select(ip => $"http://{ip}:{httpPort}")));
 
 app.Run();
 

@@ -4,6 +4,7 @@
 @inject BuildNotifier Notifier
 @using System.Text.Json
 @using ClaudeManager.Hub.Persistence.Entities
+@using ClaudeManager.Hub.Services
 
 <PageTitle>Build — Claude Manager</PageTitle>
 
@@ -165,7 +166,14 @@
         Notifier.BuildChanged += OnBuildChanged;
 
         if (_job is not null)
+        {
+            // Re-register the webhook in case it was never set or the control plane
+            // was reprovisioned and lost its configuration.
+            if (_job.Status is BuildStatus.Queued or BuildStatus.Running or BuildStatus.Waiting)
+                await BuildsSvc.EnsureWebhookRegisteredAsync();
+
             await RefreshDetail();
+        }
     }
 
     private void OnBuildChanged(SweAfJobEntity updated)
