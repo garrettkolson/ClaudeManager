@@ -108,6 +108,14 @@ public class SweAfConfigEntity
     [MaxLength(500)]
     public string? SweAfRepoPath { get; set; }
 
+    /// <summary>
+    /// DeploymentId of the LlmDeploymentEntity whose host/port should be used as
+    /// ANTHROPIC_BASE_URL when provisioning the SWE-AF agent container.
+    /// When null, ANTHROPIC_BASE_URL is omitted from the .env file.
+    /// </summary>
+    [MaxLength(100)]
+    public string? LlmDeploymentId { get; set; }
+
     [NotMapped]
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(ApiKey);

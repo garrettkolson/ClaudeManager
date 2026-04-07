@@ -98,6 +98,7 @@ public class SweAfConfigService : IHostedService
             existing.SudoPassword       = config.SudoPassword;
             existing.AnthropicApiKey    = config.AnthropicApiKey;
             existing.SweAfRepoPath      = config.SweAfRepoPath;
+            existing.LlmDeploymentId    = config.LlmDeploymentId;
         }
         await db.SaveChangesAsync(ct);
 

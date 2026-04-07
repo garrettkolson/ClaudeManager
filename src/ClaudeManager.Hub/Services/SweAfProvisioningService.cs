@@ -42,7 +42,8 @@ public class SweAfProvisioningService(
             config.ProvisionHost, repoPath);
 
         // Step 1: Write .env for docker compose
-        var writeEnvCmd = BuildWriteEnvCommand(config, repoPath);
+        var anthropicBaseUrl = await ResolveAnthropicBaseUrlAsync(config, ct);
+        var writeEnvCmd = BuildWriteEnvCommand(config, repoPath, anthropicBaseUrl);
         var (envStdout, envStderr, envExitCode) = IsLocalHost(config.ProvisionHost!)
             ? await ExecLocalShellAsync(writeEnvCmd, ct)
             : await ExecSshShellAsync(config, writeEnvCmd, ct);
@@ -81,17 +82,75 @@ public class SweAfProvisioningService(
         return (true, null, hostUrl);
     }
 
+    /// <summary>
+    /// Tears down the AgentField control plane on the configured host.
+    /// Returns an error message on failure, or null on success.
+    /// </summary>
+    public async Task<string?> StopControlPlaneAsync(CancellationToken ct = default)
+    {
+        var config = await GetConfigAsync(ct);
+
+        if (!IsProvisioningConfigured(config))
+            return "Provisioning host is not configured.";
+
+        var repoPath = string.IsNullOrWhiteSpace(config.SweAfRepoPath)
+            ? DefaultSweAfRepoPath
+            : config.SweAfRepoPath;
+
+        logger.LogInformation("Stopping SWE-AF stack via docker compose down on {Host}", config.ProvisionHost);
+
+        var downCmd = $"cd {repoPath} && docker compose down";
+        var (stdout, stderr, exitCode) = IsLocalHost(config.ProvisionHost!)
+            ? await ExecLocalShellAsync(downCmd, ct)
+            : await ExecSshShellAsync(config, downCmd, ct);
+
+        if (exitCode != 0)
+        {
+            var errorMsg = (stderr ?? stdout ?? "docker compose down failed").Trim();
+            logger.LogWarning("docker compose down failed on {Host}: {Error}", config.ProvisionHost, errorMsg);
+            return errorMsg;
+        }
+
+        logger.LogInformation("SWE-AF stack stopped on {Host}", config.ProvisionHost);
+        return null;
+    }
+
     private bool IsProvisioningConfigured(SweAfConfigEntity config) =>
         !string.IsNullOrWhiteSpace(config.ProvisionHost);
+
+    private async Task<string?> ResolveAnthropicBaseUrlAsync(SweAfConfigEntity config, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(config.LlmDeploymentId))
+            return null;
+
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var deployment = await db.LlmDeployments
+            .FirstOrDefaultAsync(d => d.DeploymentId == config.LlmDeploymentId, ct);
+        if (deployment is null)
+            return null;
+
+        var host = await db.GpuHosts
+            .FirstOrDefaultAsync(h => h.HostId == deployment.HostId, ct);
+        if (host is null)
+            return null;
+
+        // Prefer the nginx proxy when configured — it round-robins across all running
+        // vLLM instances on the host rather than pinning to a single container port.
+        if (host.ProxyPort.HasValue)
+            return $"http://{host.Host}:{host.ProxyPort}";
+
+        return $"http://{host.Host}:{deployment.HostPort}";
+    }
 
     /// <summary>
     /// Builds a shell command that writes a .env file for docker compose,
     /// using single-quoted heredoc so values are never shell-expanded.
     /// </summary>
-    private static string BuildWriteEnvCommand(SweAfConfigEntity config, string repoPath)
+    private static string BuildWriteEnvCommand(SweAfConfigEntity config, string repoPath, string? anthropicBaseUrl)
     {
         var lines = new List<string>();
-        lines.Add($"ANTHROPIC_BASE_URL=http://192.168.4.28:8000");
+        if (!string.IsNullOrWhiteSpace(anthropicBaseUrl))
+            lines.Add($"ANTHROPIC_BASE_URL={anthropicBaseUrl}");
         if (!string.IsNullOrWhiteSpace(config.AnthropicApiKey))
             lines.Add($"ANTHROPIC_API_KEY={config.AnthropicApiKey}");
         if (!string.IsNullOrWhiteSpace(config.RepositoryApiToken))

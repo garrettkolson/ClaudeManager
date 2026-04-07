@@ -351,6 +351,10 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("LlmDeploymentId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("WebhookSecret")
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");

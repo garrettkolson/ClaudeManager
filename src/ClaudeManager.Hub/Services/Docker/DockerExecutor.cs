@@ -23,6 +23,15 @@ public record ExecResult(
 );
 
 /// <summary>
+/// Represents an arbitrary shell command (no "docker" prefix) that can be executed locally or via SSH.
+/// </summary>
+public record ShellCommand(
+    string Command,
+    bool RequiresSudo = false,
+    string? SudoPassword = null
+);
+
+/// <summary>
 /// Abstraction over Docker command execution on local or remote hosts.
 /// Eliminates duplication across services by centralizing execution logic.
 /// </summary>
@@ -42,6 +51,11 @@ public interface IDockerExecutor
     /// Executes a Docker command via SSH on a remote host.
     /// </summary>
     Task<DockerExecutionResult> ExecuteRemoteAsync(DockerCommand command, string remoteHost, ExecutionHost host, CancellationToken ct);
+
+    /// <summary>
+    /// Executes an arbitrary shell command (not docker-prefixed) locally or via SSH.
+    /// </summary>
+    Task<DockerExecutionResult> ExecuteShellAsync(ShellCommand command, ExecutionHost host, CancellationToken ct);
 }
 
 /// <summary>
@@ -199,6 +213,94 @@ public class DockerExecutor : IDockerExecutor
         catch (Exception ex)
         {
             _logger.LogError(ex, "SSH Docker command failed on {Host}: {Command}", remoteHost, command.Args);
+            return new DockerExecutionResult(null, ex.Message, 1, false);
+        }
+    }
+
+    public async Task<DockerExecutionResult> ExecuteShellAsync(ShellCommand command, ExecutionHost host, CancellationToken ct)
+    {
+        return IsLocalHost(host.Host)
+            ? await ExecuteLocalShellInternalAsync(command.Command, ct)
+            : await ExecuteRemoteShellInternalAsync(command, host, ct);
+    }
+
+    private async Task<DockerExecutionResult> ExecuteLocalShellInternalAsync(string command, CancellationToken ct)
+    {
+        try
+        {
+            var psi = OperatingSystem.IsWindows()
+                ? new ProcessStartInfo("cmd.exe", $"/C {command}")
+                : new ProcessStartInfo("bash", $"-c '{command.Replace("'", "'\\''")}'");
+
+            psi.UseShellExecute = false;
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.CreateNoWindow = true;
+
+            using var proc = Process.Start(psi)!;
+            var stdout = await proc.StandardOutput.ReadToEndAsync(ct);
+            var stderr = await proc.StandardError.ReadToEndAsync(ct);
+            await proc.WaitForExitAsync(ct);
+            return new DockerExecutionResult(stdout, stderr, proc.ExitCode, proc.ExitCode == 0);
+        }
+        catch (OperationCanceledException)
+        {
+            return new DockerExecutionResult(null, "Operation cancelled.", 1, false);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Local shell command failed");
+            return new DockerExecutionResult(null, ex.Message, 1, false);
+        }
+    }
+
+    private async Task<DockerExecutionResult> ExecuteRemoteShellInternalAsync(
+        ShellCommand command, ExecutionHost host, CancellationToken ct)
+    {
+        var authMethod = BuildAuthMethod(host);
+        if (authMethod is null)
+            return new DockerExecutionResult(null, "No SSH authentication configured.", 1, false);
+
+        try
+        {
+            var connInfo = new Renci.SshNet.ConnectionInfo(host.Host, host.Port, host.User, authMethod);
+            using var client = new SshClient(connInfo);
+            await Task.Run(() => client.Connect(), ct);
+
+            string stdout, stderr;
+            int exitCode;
+
+            var sudoPassword = !string.IsNullOrEmpty(command.SudoPassword)
+                ? command.SudoPassword
+                : host.SudoPassword;
+
+            if (command.RequiresSudo && !string.IsNullOrEmpty(sudoPassword))
+            {
+                (stdout, stderr, exitCode) = await ExecuteWithSudoAsync(client, command.Command, sudoPassword!, ct);
+            }
+            else if (command.RequiresSudo)
+            {
+                client.Disconnect();
+                return new DockerExecutionResult(null, $"Sudo required on {host.Host} but no sudo password configured.", 1, false);
+            }
+            else
+            {
+                using var cmd = client.RunCommand(command.Command);
+                stdout = cmd.Result;
+                stderr = cmd.Error;
+                exitCode = cmd.ExitStatus ?? 0;
+            }
+
+            client.Disconnect();
+            return new DockerExecutionResult(stdout, stderr, exitCode, exitCode == 0);
+        }
+        catch (OperationCanceledException)
+        {
+            return new DockerExecutionResult(null, "Operation cancelled.", 1, false);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "SSH shell command failed on {Host}", host.Host);
             return new DockerExecutionResult(null, ex.Message, 1, false);
         }
     }

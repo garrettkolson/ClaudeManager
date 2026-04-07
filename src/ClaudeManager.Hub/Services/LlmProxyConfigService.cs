@@ -18,7 +18,7 @@ public class LlmProxyConfigService
     private readonly ILogger<LlmProxyConfigService> _logger;
 
     private object _cacheLock = new();
-    private LlmProxyConfig _cachedConfig = new("", []);
+    private LlmProxyConfig _cachedConfig = new("");
     private DateTimeOffset _cacheTime = DateTimeOffset.MinValue;
 
     public LlmProxyConfigService(
@@ -83,7 +83,7 @@ public class LlmProxyConfigService
         var hostWithProxy = hosts.FirstOrDefault(h => h.ProxyPort.HasValue);
 
         if (hostWithProxy is null)
-            return new LlmProxyConfig(ProxyUrl: "", ModelSlugs: []);
+            return new LlmProxyConfig(ProxyUrl: "");
 
         await using var db = _dbFactory.CreateDbContext();
         var runningModels = await db.LlmDeployments
@@ -92,12 +92,7 @@ public class LlmProxyConfigService
             .Distinct()
             .ToListAsync(ct);
 
-        var modelSlugs = runningModels
-            .Select(NginxProxyService.ModelToPathSlug)
-            .OrderBy(s => s)
-            .ToList();
-
         var proxyUrl = $"http://{hostWithProxy.Host}:{hostWithProxy.ProxyPort}";
-        return new LlmProxyConfig(ProxyUrl: proxyUrl, ModelSlugs: modelSlugs);
+        return new LlmProxyConfig(ProxyUrl: proxyUrl);
     }
 }

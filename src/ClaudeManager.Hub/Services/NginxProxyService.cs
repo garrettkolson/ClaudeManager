@@ -1,8 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text;
-using System.Text.RegularExpressions;
 using ClaudeManager.Hub.Persistence.Entities;
-using Renci.SshNet;
+using ClaudeManager.Hub.Services.Docker;
 
 namespace ClaudeManager.Hub.Services;
 
@@ -11,7 +10,7 @@ namespace ClaudeManager.Hub.Services;
 /// One upstream block is generated per distinct model ID; instances of the same model
 /// are load-balanced within that upstream.
 /// </summary>
-public class NginxProxyService(ILogger<NginxProxyService> logger)
+public class NginxProxyService(ILogger<NginxProxyService> logger, IDockerExecutor executor)
 {
     private readonly ConcurrentDictionary<string, (NginxProxyStatus Status, string? Error, DateTimeOffset UpdatedAt)>
         _statusCache = new();
@@ -43,12 +42,7 @@ public class NginxProxyService(ILogger<NginxProxyService> logger)
         sb.AppendLine("    keepalive_timeout 65;");
         sb.AppendLine();
 
-        var byModel = runningDeployments
-            .GroupBy(d => d.ModelId)
-            .OrderBy(g => g.Key)
-            .ToList();
-
-        if (byModel.Count == 0)
+        if (runningDeployments.Count == 0)
         {
             // No running instances — return 503 for all requests
             sb.AppendLine($"    server {{");
@@ -58,66 +52,31 @@ public class NginxProxyService(ILogger<NginxProxyService> logger)
         }
         else
         {
-            // Upstream block per model
-            foreach (var group in byModel)
-            {
-                var upstreamName = ModelToUpstreamName(group.Key);
-                sb.AppendLine($"    upstream {upstreamName} {{");
-                foreach (var d in group.OrderBy(x => x.HostPort))
-                    sb.AppendLine($"        server 127.0.0.1:{d.HostPort};");
-                sb.AppendLine($"        keepalive 32;");
-                sb.AppendLine($"    }}");
-                sb.AppendLine();
-            }
+            // Single upstream — round-robin across all running vLLM instances
+            sb.AppendLine($"    upstream vllm_pool {{");
+            foreach (var d in runningDeployments.OrderBy(d => d.HostPort))
+                sb.AppendLine($"        server 127.0.0.1:{d.HostPort};");
+            sb.AppendLine($"        keepalive 32;");
+            sb.AppendLine($"    }}");
+            sb.AppendLine();
 
-            // Server block with per-model location routing
             sb.AppendLine($"    server {{");
             sb.AppendLine($"        listen {proxyPort};");
             sb.AppendLine($"        client_max_body_size 0;");
             sb.AppendLine();
-
-            foreach (var group in byModel)
-            {
-                var upstreamName = ModelToUpstreamName(group.Key);
-                var pathSlug     = ModelToPathSlug(group.Key);
-                sb.AppendLine($"        # {group.Key}");
-                sb.AppendLine($"        location /{pathSlug}/ {{");
-                sb.AppendLine($"            proxy_pass http://{upstreamName}/;");
-                sb.AppendLine($"            proxy_http_version 1.1;");
-                sb.AppendLine($"            proxy_set_header Connection \"\";");
-                sb.AppendLine($"            proxy_set_header Host $host;");
-                sb.AppendLine($"            proxy_read_timeout 300s;");
-                sb.AppendLine($"            proxy_connect_timeout 10s;");
-                sb.AppendLine($"        }}");
-                sb.AppendLine();
-            }
-
+            sb.AppendLine($"        location / {{");
+            sb.AppendLine($"            proxy_pass http://vllm_pool;");
+            sb.AppendLine($"            proxy_http_version 1.1;");
+            sb.AppendLine($"            proxy_set_header Connection \"\";");
+            sb.AppendLine($"            proxy_set_header Host $host;");
+            sb.AppendLine($"            proxy_read_timeout 300s;");
+            sb.AppendLine($"            proxy_connect_timeout 10s;");
+            sb.AppendLine($"        }}");
             sb.AppendLine($"    }}");
         }
 
         sb.AppendLine("}");
         return sb.ToString();
-    }
-
-    /// <summary>
-    /// Converts a HuggingFace model ID to a valid nginx upstream identifier.
-    /// e.g. "meta-llama/Llama-3.1-8B-Instruct" → "vllm_meta_llama_llama_3_1_8b_instruct"
-    /// </summary>
-    internal static string ModelToUpstreamName(string modelId)
-    {
-        var slug = Regex.Replace(modelId.ToLowerInvariant(), @"[^a-z0-9]+", "_").Trim('_');
-        return "vllm_" + slug;
-    }
-
-    /// <summary>
-    /// Converts a HuggingFace model ID to a URL-safe path prefix.
-    /// e.g. "meta-llama/Llama-3.1-8B-Instruct" → "meta-llama-llama-3.1-8b-instruct"
-    /// </summary>
-    internal static string ModelToPathSlug(string modelId)
-    {
-        // Keep dots (valid in URLs), replace everything else non-alphanumeric with dashes
-        var slug = Regex.Replace(modelId.ToLowerInvariant(), @"[^a-z0-9.\-]+", "-").Trim('-');
-        return Regex.Replace(slug, @"-{2,}", "-");
     }
 
     // ── Remote operations ─────────────────────────────────────────────────────
@@ -230,76 +189,10 @@ public class NginxProxyService(ILogger<NginxProxyService> logger)
     private async Task<(string? Stdout, string? Stderr, int ExitCode)> ExecAsync(
         GpuHostEntity host, string command, CancellationToken ct)
     {
-        if (IsLocalHost(host.Host))
-            return await ExecLocalAsync(command, ct);
-
-        var auth = BuildAuth(host);
-        if (auth is null)
-            return (null, "No SSH authentication configured (SshKeyPath or SshPassword required).", 1);
-
-        try
-        {
-            var connInfo = new Renci.SshNet.ConnectionInfo(host.Host, host.SshPort, host.SshUser!, auth);
-            using var client = new SshClient(connInfo);
-            await Task.Run(() => client.Connect(), ct);
-            using var cmd = client.RunCommand(command);
-            client.Disconnect();
-            return (cmd.Result, cmd.Error, cmd.ExitStatus ?? 0);
-        }
-        catch (OperationCanceledException)
-        {
-            return (null, "Operation cancelled.", 1);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "SSH command failed on {Host}", host.Host);
-            return (null, ex.Message, 1);
-        }
-    }
-
-    private static async Task<(string? Stdout, string? Stderr, int ExitCode)> ExecLocalAsync(
-        string command, CancellationToken ct)
-    {
-        try
-        {
-            var psi = OperatingSystem.IsWindows()
-                ? new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/C {command}")
-                : new System.Diagnostics.ProcessStartInfo("bash", $"-c \"{command.Replace("\"", "\\\"")}\"");
-
-            psi.UseShellExecute        = false;
-            psi.RedirectStandardOutput = true;
-            psi.RedirectStandardError  = true;
-            psi.CreateNoWindow         = true;
-
-            using var proc = System.Diagnostics.Process.Start(psi)!;
-            var stdout = await proc.StandardOutput.ReadToEndAsync(ct);
-            var stderr = await proc.StandardError.ReadToEndAsync(ct);
-            await proc.WaitForExitAsync(ct);
-            return (stdout, stderr, proc.ExitCode);
-        }
-        catch (OperationCanceledException)
-        {
-            return (null, "Operation cancelled.", 1);
-        }
-        catch (Exception ex)
-        {
-            return (null, ex.Message, 1);
-        }
-    }
-
-    private static bool IsLocalHost(string host) =>
-        host is "localhost" or "127.0.0.1" or "::1";
-
-    private static AuthenticationMethod? BuildAuth(GpuHostEntity host)
-    {
-        if (host.SshKeyPath is not null)
-        {
-            var path = host.SshKeyPath.Replace("~",
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
-            return new PrivateKeyAuthenticationMethod(host.SshUser, new PrivateKeyFile(path));
-        }
-        if (host.SshPassword is not null)
-            return new PasswordAuthenticationMethod(host.SshUser, host.SshPassword);
-        return null;
+        var result = await executor.ExecuteShellAsync(
+            new ShellCommand(command, host.RequiresSudo, host.SudoPassword),
+            host.ToExecutionHost(),
+            ct);
+        return (result.Stdout, result.Stderr, result.ExitCode);
     }
 }

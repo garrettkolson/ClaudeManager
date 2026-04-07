@@ -3,6 +3,7 @@
 @inject SweAfConfigService ConfigSvc
 @inject SweAfHostService HostSvc
 @inject SweAfProvisioningService ProvisioningSvc
+@inject LlmDeploymentService DeploymentSvc
 @inject ILogger<SweAfServers> _logger
 @using ClaudeManager.Hub.Persistence.Entities
 @using ClaudeManager.Hub.Services
@@ -90,6 +91,15 @@
                 <input class="llm-input" type="password" @bind="_cfgForm.NewAnthropicApiKey"
                        placeholder="sk-ant-… (injected as ANTHROPIC_API_KEY into agent container)" />
 
+                <label class="llm-label">LLM Deployment (Base URL)</label>
+                <select class="llm-input" @bind="_cfgForm.LlmDeploymentId">
+                    <option value="">— use Anthropic API directly —</option>
+                    @foreach (var dep in _deployments)
+                    {
+                        <option value="@dep.DeploymentId">@dep.DeploymentId (@dep.ModelId)</option>
+                    }
+                </select>
+
                 <label class="llm-label">SWE-AF Repo Path</label>
                 <input class="llm-input" @bind="_cfgForm.SweAfRepoPath"
                        placeholder="~/swe-af  (path to cloned Agent-Field/SWE-AF repo on provision host)" />
@@ -125,8 +135,11 @@
                 }
 
                 <div class="llm-form-actions" style="margin-top:1rem;">
-                    <button class="btn-primary" @onclick="ProvisionControlPlane" disabled="@_provisioning">
+                    <button class="btn-primary" @onclick="ProvisionControlPlane" disabled="@(_provisioning || _stopping)">
                         @(_provisioning ? "Provisioning…" : "Provision Control Plane")
+                    </button>
+                    <button class="btn-sm btn-danger-sm" @onclick="StopControlPlane" disabled="@(_stopping || _provisioning)">
+                        @(_stopping ? "Stopping…" : "Stop")
                     </button>
                 </div>
             </div>
@@ -244,8 +257,13 @@
     // ── State — provisioning ───────────────────────────────────────────────────
 
     private bool      _provisioning;
+    private bool      _stopping;
     private string?   _provisionStatus;
     private ProvisionForm _provisionForm = new();
+
+    // ── State — LLM deployments (for dropdown) ────────────────────────────────
+
+    private List<LlmDeploymentEntity> _deployments = [];
 
     // ── State — hosts ─────────────────────────────────────────────────────────
 
@@ -272,6 +290,7 @@
         _configLoading = false;
 
         _hosts = await HostSvc.GetAllAsync();
+        _deployments = await DeploymentSvc.GetAllAsync();
     }
 
     public void Dispose() { }
@@ -299,6 +318,7 @@
                 RepositoryApiToken = NullIfBlank(_cfgForm.NewRepositoryApiToken) ?? _cfgForm.RepositoryApiToken,
                 AnthropicApiKey    = NullIfBlank(_cfgForm.NewAnthropicApiKey) ?? _cfgForm.AnthropicApiKey,
                 SweAfRepoPath      = NullIfBlank(_cfgForm.SweAfRepoPath),
+                LlmDeploymentId    = NullIfBlank(_cfgForm.LlmDeploymentId),
                 ProvisionHost      = _provisionForm.Host.Trim(),
                 SshUser            = _provisionForm.SshUser,
                 SshKeyPath         = _provisionForm.SshKeyPath,
@@ -355,6 +375,28 @@
         finally
         {
             _provisioning = false;
+        }
+    }
+
+    private async Task StopControlPlane()
+    {
+        _stopping = true;
+        _provisionStatus = null;
+        try
+        {
+            var error = await ProvisioningSvc.StopControlPlaneAsync();
+            _provisionStatus = error is null
+                ? "Control plane stopped."
+                : $"Error: {error}";
+        }
+        catch (Exception ex)
+        {
+            _provisionStatus = $"Error: {ex.Message}";
+            _logger.LogWarning(ex, "Stop control plane failed");
+        }
+        finally
+        {
+            _stopping = false;
         }
     }
 
@@ -495,6 +537,7 @@
         public string  ModelQa               = "";
         public string  DefaultRepoUrl        = "";
         public string  SweAfRepoPath         = "";
+        public string  LlmDeploymentId      = "";
         public string  ApiKey                = "";       // current value (for preservation)
         public string  WebhookSecret         = "";       // current value (for preservation)
         public string  RepositoryApiToken    = "";       // current value (for preservation)
@@ -510,6 +553,7 @@
             ModelQa            = e.ModelQa         ?? "",
             DefaultRepoUrl     = e.DefaultRepoUrl  ?? "",
             SweAfRepoPath      = e.SweAfRepoPath  ?? "",
+            LlmDeploymentId    = e.LlmDeploymentId ?? "",
             ApiKey             = e.ApiKey,
             WebhookSecret      = e.WebhookSecret,
             RepositoryApiToken = e.RepositoryApiToken,
