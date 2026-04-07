@@ -190,9 +190,9 @@
                                 <button class="btn-secondary-sm"
                                         @onclick="() => ToggleLogs(job)"
                                         disabled="@(_viewingLogsId == job.Id || _loadingLogs)">
-                                    @_viewingLogsId == job.Id
+                                    @(_viewingLogsId == job.Id
                                         ? (_loadingLogs ? "Viewing…" : "Hide Logs")
-                                        : "View Logs"
+                                        : "View Logs")
                                 </button>
                             }
                         </td>
@@ -211,7 +211,7 @@
                         <h4>Build Logs — @Truncate(currentJob.Goal, 40)</h4>
                         <div class="builds-logs-actions">
                             <button class="btn-secondary-sm" @onclick="() => RefreshLogs(currentJob)" disabled="@_loadingLogs">
-                                @_loadingLogs ? "Refreshing…" : "Refresh Now"
+                                @(_loadingLogs ? "Refreshing…" : "Refresh Now")
                             </button>
                         </div>
                     </div>
