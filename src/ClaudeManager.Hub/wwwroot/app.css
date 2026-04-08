@@ -316,7 +316,7 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 .llm-host-addr { color: #aaa; font-family: monospace; font-size: 12px; }
 .llm-host-ssh  { color: #666; font-size: 12px; font-family: monospace; }
 .llm-host-added { color: #777; font-size: 12px; white-space: nowrap; }
-.llm-host-actions { display: flex; gap: 6px; white-space: nowrap; }
+.llm-host-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .llm-gpu-row td { background: #0f1722; padding: 0 12px 12px; }
 .llm-gpu-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
 .llm-gpu-table th, .llm-gpu-table td { padding: 5px 10px; font-size: 12px; text-align: left; }
