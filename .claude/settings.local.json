@@ -15,7 +15,8 @@
       "Bash(ls:*)",
       "WebFetch(domain:www.agentfield.ai)",
       "Bash(grep -rn \"agent\\\\|register\\\\|initialize\\\\|init\\\\|swe.planner\\\\|swe_planner\" src/ClaudeManager.Hub/Services/SweAf*.cs --include=\"*.cs\")",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Bash(grep -r \"SWE-AF\\\\|AgentField\\\\|swarm\\\\|build\" /d/Repos/claude_manager/src/ClaudeManager.Hub/Components/Pages/*.razor)"
     ]
   }
 }

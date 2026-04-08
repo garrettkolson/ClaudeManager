@@ -1,0 +1,1124 @@
+@page "/foundry"
+@implements IDisposable
+@inject SweAfConfigService ConfigSvc
+@inject SweAfHostService HostSvc
+@inject SweAfService BuildsSvc
+@inject BuildNotifier Notifier
+@inject LlmDeploymentService DeploymentSvc
+@using System.Text.Json
+@using ClaudeManager.Hub.Persistence.Entities
+@using ClaudeManager.Hub.Services
+
+<PageTitle>Foundry – Claude Manager</PageTitle>
+
+<div class="foundry-page">
+    <div class="foundry-tabs">
+        <button class="foundry-tab @(_activeTab == "builds" ? "active" : "")"
+                @onclick='() => _activeTab = "builds"'>Builds</button>
+        <button class="foundry-tab @(_activeTab == "settings" ? "active" : "")"
+                @onclick='() => _activeTab = "settings"'>Settings</button>
+    </div>
+
+    @* ══════════════════════════════════════════════════════════════════════════ *@
+    @*  BUILDS TAB                                                                *@
+    @* ══════════════════════════════════════════════════════════════════════════ *@
+
+    @if (_activeTab == "builds")
+    {
+        <div class="builds-page">
+            <div class="builds-header">
+                <h1>Builds</h1>
+                @foreach (var (host, cmd) in _hostCommands)
+                {
+                    var label   = cmd.Label;
+                    var command = cmd.Command;
+                    var h       = host;
+                    <button class="btn-host-cmd"
+                            @onclick="() => RunHostCommand(h, command, label)"
+                            disabled="@(_serviceOp is not null)">
+                        @(_serviceOp == label ? label + "…" : label)
+                    </button>
+                }
+                @if (BuildsSvc.IsConfigured)
+                {
+                    <button class="btn-primary" @onclick="OpenNewBuild">New Build</button>
+                    <button class="btn-secondary" @onclick="ToggleWebhookPanel">Webhook</button>
+                }
+            </div>
+
+            @if (_showWebhookPanel)
+            {
+                <div class="webhook-panel">
+                    <h4>Register observability webhook</h4>
+                    <p class="webhook-hint">
+                        Register this Hub's webhook endpoint with the Foundry control plane so it receives live build status events.
+                    </p>
+                    <div class="webhook-form">
+                        <label>Endpoint URL</label>
+                        <input @bind="_webhookUrl" placeholder="https://your-hub/api/webhooks/agentfield" />
+                        <label>HMAC Secret <span class="webhook-optional">(optional)</span></label>
+                        <input @bind="_webhookSecret" type="password" placeholder="Leave blank to disable signature verification" />
+                        @if (_webhookError is not null)
+                        {
+                            <div class="error-msg">@_webhookError</div>
+                        }
+                        @if (_webhookSuccess)
+                        {
+                            <div class="webhook-success">Webhook registered successfully.</div>
+                        }
+                        <div class="webhook-actions">
+                            <button class="btn-primary" @onclick="RegisterWebhook" disabled="@_webhookSaving">
+                                @(_webhookSaving ? "Registering…" : "Register")
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+
+            @if (_serviceError is not null)
+            {
+                <div class="error-msg builds-error">@_serviceError</div>
+            }
+
+            @if (!BuildsSvc.IsConfigured)
+            {
+                <div class="builds-unconfigured">
+                    Foundry is not configured.
+                    <a href="" @onclick:preventDefault @onclick='() => _activeTab = "settings"'>Go to Settings</a> to add the control plane URL and API key.
+                </div>
+            }
+            else if (_jobs is null)
+            {
+                <div class="loading">Loading…</div>
+            }
+            else if (_jobs.Count == 0)
+            {
+                <div class="empty-state">No builds yet. Start one to let the Foundry autonomously implement a feature or fix.</div>
+            }
+            else
+            {
+                <div class="builds-stats">
+                    <div class="builds-stat">
+                        <span class="builds-stat-value">@_jobs.Count</span>
+                        <span class="builds-stat-label">total</span>
+                    </div>
+                    @if (_jobs.Count(j => j.Status == BuildStatus.Succeeded) is > 0 and var nSuccess)
+                    {
+                        <div class="builds-stat succeeded">
+                            <span class="builds-stat-value">@nSuccess</span>
+                            <span class="builds-stat-label">succeeded</span>
+                        </div>
+                    }
+                    @if (_jobs.Count(j => j.Status == BuildStatus.Failed) is > 0 and var nFailed)
+                    {
+                        <div class="builds-stat failed">
+                            <span class="builds-stat-value">@nFailed</span>
+                            <span class="builds-stat-label">failed</span>
+                        </div>
+                    }
+                    @if (_jobs.Count(j => j.Status == BuildStatus.Running) is > 0 and var nRunning)
+                    {
+                        <div class="builds-stat running">
+                            <span class="builds-stat-value">@nRunning</span>
+                            <span class="builds-stat-label">running</span>
+                        </div>
+                    }
+                    @if (_jobs.Count(j => j.Status == BuildStatus.Waiting) is > 0 and var nWaiting)
+                    {
+                        <div class="builds-stat waiting">
+                            <span class="builds-stat-value">@nWaiting</span>
+                            <span class="builds-stat-label">waiting</span>
+                        </div>
+                    }
+                </div>
+
+                <table class="builds-table">
+                    <thead>
+                        <tr>
+                            <th>Goal</th>
+                            <th>Repository</th>
+                            <th>Status</th>
+                            <th>Source</th>
+                            <th>Started</th>
+                            <th>Duration</th>
+                            <th>PRs</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var job in _jobs)
+                        {
+                            <tr class="builds-row @StatusCss(job.Status)" title="@job.Goal">
+                                <td class="builds-goal">
+                                    <a href="/builds/@job.Id" class="build-goal-link">@Truncate(job.Goal, 55)</a>
+                                </td>
+                                <td class="builds-repo">@RepoName(job.RepoUrl)</td>
+                                <td><span class="build-badge @job.Status.ToString().ToLowerInvariant()">@job.Status</span></td>
+                                <td class="builds-source">@(job.TriggeredBy ?? "external")</td>
+                                <td class="builds-time">@job.CreatedAt.LocalDateTime.ToString("MM/dd HH:mm")</td>
+                                <td class="builds-duration">@FormatDuration(job)</td>
+                                <td class="builds-prs">
+                                    @foreach (var url in GetPrUrls(job))
+                                    {
+                                        <a href="@url" target="_blank" class="pr-link">PR ↗</a>
+                                    }
+                                    @if (job.Status == BuildStatus.Failed && job.ErrorMessage is not null)
+                                    {
+                                        <span class="build-error-hint" title="@job.ErrorMessage">error</span>
+                                    }
+                                </td>
+                                <td class="builds-actions">
+                                    @if (job.Status is BuildStatus.Queued or BuildStatus.Running or BuildStatus.Waiting)
+                                    {
+                                        <button class="btn-cancel-sm"
+                                                @onclick="() => CancelJob(job.Id)"
+                                                disabled="@_actionInProgress.GetValueOrDefault(job.Id)">
+                                            Cancel
+                                        </button>
+                                    }
+                                    @if (job.Status == BuildStatus.Waiting)
+                                    {
+                                        <button class="btn-approve-sm"
+                                                @onclick="() => ApproveJob(job.Id, true)"
+                                                disabled="@_actionInProgress.GetValueOrDefault(job.Id)">
+                                            Approve
+                                        </button>
+                                        <button class="btn-reject-sm"
+                                                @onclick="() => ApproveJob(job.Id, false)"
+                                                disabled="@_actionInProgress.GetValueOrDefault(job.Id)">
+                                            Reject
+                                        </button>
+                                    }
+                                    @if (job.Status is BuildStatus.Failed or BuildStatus.Cancelled)
+                                    {
+                                        <button class="btn-retry-sm"
+                                                @onclick="() => RetryJob(job.Id)"
+                                                disabled="@_actionInProgress.GetValueOrDefault(job.Id)">
+                                            Retry
+                                        </button>
+                                    }
+                                    @if (_actionError.TryGetValue(job.Id, out var actionErr) && actionErr is not null)
+                                    {
+                                        <span class="build-action-error">@actionErr</span>
+                                    }
+                                    @if (job.Status is BuildStatus.Running or BuildStatus.Queued)
+                                    {
+                                        <button class="btn-secondary-sm"
+                                                @onclick="() => ToggleLogs(job)"
+                                                disabled="@(_viewingLogsId == job.Id || _loadingLogs)">
+                                            @(_viewingLogsId == job.Id
+                                                ? (_loadingLogs ? "Viewing…" : "Hide Logs")
+                                                : "View Logs")
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+
+                @if (_viewingLogsId.HasValue && _jobs is not null)
+                {
+                    var currentJob = _jobs.FirstOrDefault(j => j.Id == _viewingLogsId);
+                    if (currentJob is not null)
+                    {
+                        <div class="builds-logs-panel">
+                            <div class="builds-logs-header">
+                                <h4>Build Logs — @Truncate(currentJob.Goal, 40)</h4>
+                                <div class="builds-logs-actions">
+                                    <button class="btn-secondary-sm" @onclick="() => RefreshLogs(currentJob)" disabled="@_loadingLogs">
+                                        @(_loadingLogs ? "Refreshing…" : "Refresh Now")
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="builds-logs-content">
+                                @if (_loadingLogs)
+                                {
+                                    <div class="builds-loading-logs">Loading logs…</div>
+                                }
+                                else if (_logsError is not null)
+                                {
+                                    <div class="error-msg">@_logsError</div>
+                                }
+                                else if (string.IsNullOrWhiteSpace(_buildLogs))
+                                {
+                                    <div class="builds-logs-empty">No logs available yet.</div>
+                                }
+                                else
+                                {
+                                    <pre>@_buildLogs</pre>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+            }
+        </div>
+
+        @if (_showModal)
+        {
+            <div class="modal-overlay" @onclick="CloseModal">
+                <div class="modal" @onclick:stopPropagation>
+                    <h3>New Build</h3>
+
+                    <label>Goal</label>
+                    <textarea @bind="_formGoal" rows="4"
+                        placeholder="Describe the feature or bug fix to implement…" />
+
+                    <label>Repository URL</label>
+                    <input @bind="_formRepoUrl" placeholder="https://github.com/org/repo" />
+
+                    @if (_modalError is not null)
+                    {
+                        <div class="error-msg">@_modalError</div>
+                    }
+                    <div class="modal-actions">
+                        <button class="btn-secondary" @onclick="CloseModal">Cancel</button>
+                        <button class="btn-primary" @onclick="TriggerBuild" disabled="@_saving">
+                            @(_saving ? "Triggering…" : "Start Build")
+                        </button>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+
+    @* ══════════════════════════════════════════════════════════════════════════ *@
+    @*  SETTINGS TAB                                                              *@
+    @* ══════════════════════════════════════════════════════════════════════════ *@
+
+    else
+    {
+        <div class="llm-page">
+            @* ── Foundry Configuration ──────────────────────────────────────────── *@
+
+            <section class="llm-section">
+                <h2>Foundry Configuration</h2>
+                <p class="llm-hint">
+                    Configure the Foundry control plane connection and deployment settings.
+                    Changes take effect immediately — no restart required.
+                </p>
+
+                @if (_configLoading)
+                {
+                    <div class="loading">Loading…</div>
+                }
+                else
+                {
+                    <div class="llm-form-grid">
+                        <div class="form-section-title">Control Plane Connection / Provisioning</div>
+
+                        <label class="llm-label">Provision Host *</label>
+                        <input class="llm-input" @bind="_provisionForm.Host"
+                               placeholder="localhost or 192.168.x.x" />
+
+                        <label class="llm-label">SSH User</label>
+                        <input class="llm-input" @bind="_provisionForm.SshUser"
+                               placeholder="ubuntu" />
+
+                        <label class="llm-label">SSH Key Path</label>
+                        <input class="llm-input" @bind="_provisionForm.SshKeyPath"
+                               placeholder="~/.ssh/id_rsa" />
+
+                        <label class="llm-label">SSH Password</label>
+                        <input class="llm-input" type="password" @bind="_provisionForm.SshPassword"
+                               placeholder="for keyless auth" />
+
+                        <label class="llm-label">SSH Port</label>
+                        <input class="llm-input" @bind="_provisionForm.SshPort" type="number" />
+
+                        <div class="llm-label" style="display:flex; align-items:center; gap:0.5rem; grid-column: 1 / -1;">
+                            <input type="checkbox" @bind="_provisionForm.RequiresSudo" />
+                            <span>Requires Sudo</span>
+                        </div>
+
+                        @if (_provisionForm.RequiresSudo)
+                        {
+                            <label class="llm-label">Sudo Password</label>
+                            <input class="llm-input" type="password" @bind="_provisionForm.SudoPassword"
+                                   placeholder="sudo password" />
+                        }
+
+                        <label class="llm-label">Port Range Start</label>
+                        <input class="llm-input" @bind="_cfgForm.PortRangeStart" type="number"
+                               placeholder="8100" />
+
+                        <label class="llm-label">Port Range End</label>
+                        <input class="llm-input" @bind="_cfgForm.PortRangeEnd" type="number"
+                               placeholder="8199" />
+
+                        <label class="llm-label">Control Plane Image Tag</label>
+                        <input class="llm-input" @bind="_cfgForm.ControlPlaneImageTag"
+                               placeholder="latest" />
+
+                        <p class="llm-hint" style="grid-column: 1 / -1;">
+                            Each build gets its own isolated container on a unique port. Max concurrent builds =
+                            range size. Ensure these ports are reachable on the provision host.
+                        </p>
+
+                        <label class="llm-label">API Key *</label>
+                        <input class="llm-input" type="password" @bind="_cfgForm.NewApiKey"
+                               placeholder="leave blank to keep current" />
+
+                        <label class="llm-label">Webhook Secret</label>
+                        <input class="llm-input" type="password" @bind="_cfgForm.NewWebhookSecret"
+                               placeholder="leave blank to disable HMAC verification" />
+
+                        <label class="llm-label">Hub Public URL</label>
+                        <input class="llm-input" @bind="_cfgForm.HubPublicUrl"
+                               placeholder="https://hub.example.com" />
+
+                        @* Runtime & Models *@
+                        <div class="form-section-title">Runtime Configuration</div>
+
+                        <label class="llm-label">Runtime</label>
+                        <select class="llm-input" @bind="_cfgForm.Runtime">
+                            <option value="claude_code">claude_code (Claude Code backend)</option>
+                            <option value="open_code">open_code (open-source models)</option>
+                        </select>
+
+                        <label class="llm-label">Default Model</label>
+                        <input class="llm-input" @bind="_cfgForm.ModelDefault"
+                               placeholder="sonnet  (leave blank for Foundry default)" />
+
+                        <label class="llm-label">Coder Model</label>
+                        <input class="llm-input" @bind="_cfgForm.ModelCoder"
+                               placeholder="opus" />
+
+                        <label class="llm-label">QA Model</label>
+                        <input class="llm-input" @bind="_cfgForm.ModelQa"
+                               placeholder="sonnet" />
+
+                        @* Repository Settings *@
+                        <div class="form-section-title">Repository Settings</div>
+
+                        <label class="llm-label">Default Repo URL</label>
+                        <input class="llm-input" @bind="_cfgForm.DefaultRepoUrl"
+                               placeholder="https://github.com/org/repo  (pre-filled in New Build modal)" />
+
+                        <label class="llm-label">Repository API Token</label>
+                        <input class="llm-input" type="password" @bind="_cfgForm.NewRepositoryApiToken"
+                               placeholder="leave blank to keep current  (GitHub/GitLab PAT for private repos)" />
+
+                        @* Agent Configuration *@
+                        <div class="form-section-title">Agent Configuration</div>
+
+                        <label class="llm-label">Anthropic API Key</label>
+                        <input class="llm-input" type="password" @bind="_cfgForm.NewAnthropicApiKey"
+                               placeholder="sk-ant-… (injected as ANTHROPIC_API_KEY into agent container)" />
+
+                        <label class="llm-label">LLM Deployment (Base URL)</label>
+                        <select class="llm-input" @bind="_cfgForm.LlmDeploymentId">
+                            <option value="">— use Anthropic API directly —</option>
+                            @foreach (var dep in _deployments)
+                            {
+                                <option value="@dep.DeploymentId">@dep.DeploymentId (@dep.ModelId)</option>
+                            }
+                        </select>
+
+                        <label class="llm-label">Foundry Repo Path</label>
+                        <input class="llm-input" @bind="_cfgForm.SweAfRepoPath"
+                               placeholder="~/foundry  (path to cloned Foundry repo on provision host)" />
+
+                        <label class="llm-label">docker-compose.override.yml</label>
+                        <textarea class="llm-input llm-textarea" @bind="_cfgForm.ComposeOverride" rows="8"
+                                  placeholder="# Written alongside .env on every provisioning run.&#10;# Use named volumes to persist build history across docker compose down/up.&#10;# Example:&#10;#&#10;# services:&#10;#   backend:&#10;#     volumes:&#10;#       - swe_af_data:/app/data&#10;# volumes:&#10;#   swe_af_data:"></textarea>
+
+                    </div>
+
+                    @if (_cfgError is not null) { <div class="error-msg">@_cfgError</div> }
+                    @if (_cfgSaved)             { <div class="llm-success">Configuration saved.</div> }
+
+                    <div class="llm-form-actions">
+                        <button class="btn-primary" @onclick="SaveConfig" disabled="@_savingCfg">
+                            @(_savingCfg ? "Saving…" : "Save")
+                        </button>
+                    </div>
+                }
+            </section>
+
+            @* ── Agents ──────────────────────────────────────────────────────────── *@
+
+            <section class="llm-section">
+                <div class="llm-section-header">
+                    <h2>Agents</h2>
+                    <button class="btn-primary" @onclick="() => _showAddForm = !_showAddForm">
+                        @(_showAddForm ? "Cancel" : "Add Agent")
+                    </button>
+                </div>
+
+                <p class="llm-hint">
+                    Configure agents that will connect to the Foundry control plane. Each agent can have
+                    custom buttons (e.g. Start, Stop) that appear on the Builds tab.
+                </p>
+
+                @if (_showAddForm)
+                {
+                    <div class="llm-add-form">
+                        <h3>New Agent</h3>
+                        @RenderHostForm(_addForm)
+                        @if (_addHostError is not null) { <div class="error-msg">@_addHostError</div> }
+                        <div class="llm-form-actions">
+                            <button class="btn-primary" @onclick="AddHost" disabled="@_addingHost">
+                                @(_addingHost ? "Adding…" : "Add Agent")
+                            </button>
+                        </div>
+                    </div>
+                }
+
+                @if (_hosts is null)
+                {
+                    <div class="loading">Loading…</div>
+                }
+                else if (_hosts.Count == 0)
+                {
+                    <div class="empty-state">No agents configured yet.</div>
+                }
+                else
+                {
+                    <table class="llm-hosts-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Commands</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var host in _hosts)
+                            {
+                                var cmds = SweAfHostService.GetCommands(host);
+                                <tr>
+                                    <td>@host.DisplayName</td>
+                                    <td>@(cmds.Count > 0 ? string.Join(", ", cmds.Select(c => c.Label)) : "—")</td>
+                                    <td class="llm-host-actions">
+                                        <button class="btn-sm" @onclick="() => OpenHostEdit(host)">Edit</button>
+                                        <button class="btn-sm btn-danger-sm"
+                                                @onclick="() => DeleteHost(host)">Remove</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </section>
+        </div>
+
+        @* ── Edit Host Modal ──────────────────────────────────────────────────── *@
+        @if (_showEditModal)
+        {
+            <div class="modal-overlay" @onclick="CloseHostEdit">
+                <div class="modal" @onclick:stopPropagation>
+                    <h3>Edit Agent Host</h3>
+                    @RenderHostForm(_editForm)
+                    @if (_editHostError is not null) { <div class="error-msg">@_editHostError</div> }
+                    <div class="modal-actions">
+                        <button class="btn-secondary" @onclick="CloseHostEdit">Cancel</button>
+                        <button class="btn-primary" @onclick="SaveHostEdit" disabled="@_savingEdit">
+                            @(_savingEdit ? "Saving…" : "Save")
+                        </button>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private string _activeTab = "builds";
+
+    // ── State — builds ────────────────────────────────────────────────────────
+
+    private List<SweAfJobEntity>? _jobs;
+    private List<(SweAfHostEntity Host, SweAfHostCommand Cmd)> _hostCommands = [];
+
+    private bool    _showModal;
+    private string  _formGoal    = string.Empty;
+    private string  _formRepoUrl = string.Empty;
+    private string? _modalError;
+    private bool    _saving;
+
+    private string? _serviceOp;
+    private string? _serviceError;
+    private Dictionary<long, bool>    _actionInProgress = new();
+    private Dictionary<long, string?> _actionError      = new();
+
+    private bool    _showWebhookPanel;
+    private string  _webhookUrl    = string.Empty;
+    private string  _webhookSecret = string.Empty;
+    private string? _webhookError;
+    private bool    _webhookSuccess;
+    private bool    _webhookSaving;
+
+    private long?                    _viewingLogsId;
+    private string?                  _buildLogs;
+    private bool                     _loadingLogs;
+    private string?                  _logsError;
+    private CancellationTokenSource? _logStreamCts;
+
+    // ── State — settings ──────────────────────────────────────────────────────
+
+    private bool      _configLoading = true;
+    private bool      _savingCfg;
+    private bool      _cfgSaved;
+    private string?   _cfgError;
+    private CfgForm   _cfgForm = new();
+
+    private ProvisionForm _provisionForm = new();
+
+    private List<LlmDeploymentEntity> _deployments = [];
+
+    private List<SweAfHostEntity>? _hosts;
+    private bool    _showAddForm;
+    private bool    _addingHost;
+    private string? _addHostError;
+    private HostForm _addForm = new();
+
+    private bool              _showEditModal;
+    private SweAfHostEntity?  _editingHost;
+    private HostForm          _editForm      = new();
+    private string?           _editHostError;
+    private bool              _savingEdit;
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    protected override async Task OnInitializedAsync()
+    {
+        _jobs = await BuildsSvc.GetAllJobsAsync();
+
+        _hosts = await HostSvc.GetAllAsync();
+        _hostCommands = _hosts
+            .SelectMany(h => SweAfHostService.GetCommands(h).Select(c => (h, c)))
+            .ToList();
+
+        _deployments = await DeploymentSvc.GetAllAsync();
+
+        var cfg = await ConfigSvc.GetConfigAsync();
+        _cfgForm = CfgForm.From(cfg);
+        _provisionForm = ProvisionForm.From(cfg);
+        _configLoading = false;
+
+        Notifier.BuildChanged += OnBuildChanged;
+    }
+
+    private void OnBuildChanged(SweAfJobEntity updated)
+    {
+        if (_jobs is null) return;
+        var idx = _jobs.FindIndex(j => j.Id == updated.Id);
+        if (idx >= 0)
+            _jobs[idx] = updated;
+        else
+            _jobs.Insert(0, updated);
+
+        if (_viewingLogsId == updated.Id && !string.IsNullOrWhiteSpace(updated.Logs))
+            _buildLogs = updated.Logs;
+
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Notifier.BuildChanged -= OnBuildChanged;
+        StopLogStream();
+    }
+
+    // ── Webhook panel ─────────────────────────────────────────────────────────
+
+    private void ToggleWebhookPanel()
+    {
+        _showWebhookPanel = !_showWebhookPanel;
+        if (_showWebhookPanel)
+        {
+            var baseUrl = BuildsSvc.HubPublicUrl?.TrimEnd('/');
+            _webhookUrl    = baseUrl is not null
+                ? $"{baseUrl}/api/webhooks/agentfield"
+                : string.Empty;
+            _webhookSecret = BuildsSvc.WebhookSecret ?? string.Empty;
+            _webhookError   = null;
+            _webhookSuccess = false;
+        }
+    }
+
+    private async Task RegisterWebhook()
+    {
+        if (string.IsNullOrWhiteSpace(_webhookUrl))
+        {
+            _webhookError = "Endpoint URL is required.";
+            return;
+        }
+
+        _webhookSaving  = true;
+        _webhookError   = null;
+        _webhookSuccess = false;
+
+        var secret = string.IsNullOrWhiteSpace(_webhookSecret) ? null : _webhookSecret.Trim();
+        var (ok, err) = await BuildsSvc.RegisterWebhookAsync(_webhookUrl.Trim(), secret);
+
+        _webhookSaving = false;
+        if (ok)
+            _webhookSuccess = true;
+        else
+            _webhookError = err ?? "Registration failed.";
+    }
+
+    // ── Service controls ──────────────────────────────────────────────────────
+
+    private async Task RunHostCommand(SweAfHostEntity host, string command, string label)
+    {
+        _serviceOp = label; _serviceError = null;
+        StateHasChanged();
+        var (ok, err) = await HostSvc.RunCommandAsync(host, command, label);
+        _serviceOp = null;
+        if (!ok) _serviceError = $"{label} failed: {err}";
+    }
+
+    // ── Job actions ───────────────────────────────────────────────────────────
+
+    private async Task CancelJob(long jobId)
+    {
+        _actionInProgress[jobId] = true;
+        _actionError.Remove(jobId);
+        StateHasChanged();
+        var (ok, err) = await BuildsSvc.CancelJobAsync(jobId);
+        _actionInProgress[jobId] = false;
+        if (!ok) _actionError[jobId] = err ?? "Cancel failed.";
+    }
+
+    private async Task ApproveJob(long jobId, bool approved)
+    {
+        _actionInProgress[jobId] = true;
+        _actionError.Remove(jobId);
+        StateHasChanged();
+        var (ok, err) = await BuildsSvc.ApproveJobAsync(jobId, approved);
+        _actionInProgress[jobId] = false;
+        if (!ok) _actionError[jobId] = err ?? "Request failed.";
+    }
+
+    private async Task RetryJob(long jobId)
+    {
+        _actionInProgress[jobId] = true;
+        _actionError.Remove(jobId);
+        StateHasChanged();
+        var (ok, err) = await BuildsSvc.RetryJobAsync(jobId);
+        _actionInProgress[jobId] = false;
+        if (!ok) _actionError[jobId] = err ?? "Retry failed.";
+    }
+
+    // ── New build modal ───────────────────────────────────────────────────────
+
+    private void OpenNewBuild()
+    {
+        _formGoal    = string.Empty;
+        _formRepoUrl = string.Empty;
+        _modalError  = null;
+        _saving      = false;
+        _showModal   = true;
+    }
+
+    private void CloseModal() => _showModal = false;
+
+    private async Task TriggerBuild()
+    {
+        if (string.IsNullOrWhiteSpace(_formGoal))    { _modalError = "Goal is required.";           return; }
+        if (string.IsNullOrWhiteSpace(_formRepoUrl)) { _modalError = "Repository URL is required."; return; }
+
+        _saving     = true;
+        _modalError = null;
+
+        try
+        {
+            await BuildsSvc.TriggerBuildAsync(_formGoal.Trim(), _formRepoUrl.Trim());
+            _showModal = false;
+            _jobs = await BuildsSvc.GetAllJobsAsync();
+        }
+        catch (Exception ex)
+        {
+            _modalError = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    // ── Log viewer ────────────────────────────────────────────────────────────
+
+    private async Task ToggleLogs(SweAfJobEntity job)
+    {
+        StopLogStream();
+        if (_viewingLogsId == job.Id) { _viewingLogsId = null; return; }
+        _viewingLogsId  = job.Id;
+        _buildLogs      = null;
+        _logsError      = null;
+        await RefreshLogs(job);
+        StartLogStream(job);
+    }
+
+    private async Task RefreshLogs(SweAfJobEntity job)
+    {
+        _loadingLogs = true;
+        _logsError   = null;
+        StateHasChanged();
+        try
+        {
+            var (logs, error) = await BuildsSvc.GetLogsAsync(job.Id);
+            _buildLogs = logs;
+            _logsError = error;
+        }
+        finally { _loadingLogs = false; }
+    }
+
+    private void StartLogStream(SweAfJobEntity job)
+    {
+        _logStreamCts = new CancellationTokenSource();
+        var ct = _logStreamCts.Token;
+        _ = Task.Run(async () =>
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+            try
+            {
+                while (await timer.WaitForNextTickAsync(ct))
+                {
+                    var (logs, error) = await BuildsSvc.GetLogsAsync(job.Id, ct: ct);
+                    if (ct.IsCancellationRequested) break;
+                    await InvokeAsync(() =>
+                    {
+                        _buildLogs = logs;
+                        _logsError = error;
+                        StateHasChanged();
+                    });
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                await InvokeAsync(() =>
+                {
+                    _logsError = $"Log stream stopped: {ex.Message}";
+                    StateHasChanged();
+                });
+            }
+        });
+    }
+
+    private void StopLogStream()
+    {
+        _logStreamCts?.Cancel();
+        _logStreamCts?.Dispose();
+        _logStreamCts = null;
+    }
+
+    // ── Config ────────────────────────────────────────────────────────────────
+
+    private async Task SaveConfig()
+    {
+        _savingCfg = true;
+        _cfgSaved  = false;
+        _cfgError  = null;
+        try
+        {
+            var entity = new SweAfConfigEntity
+            {
+                BaseUrl            = _cfgForm.BaseUrl.Trim(),
+                ApiKey             = NullIfBlank(_cfgForm.NewApiKey) ?? _cfgForm.ApiKey,
+                WebhookSecret      = NullIfBlank(_cfgForm.NewWebhookSecret) ?? _cfgForm.WebhookSecret,
+                HubPublicUrl       = NullIfBlank(_cfgForm.HubPublicUrl),
+                Runtime            = string.IsNullOrWhiteSpace(_cfgForm.Runtime) ? "claude_code" : _cfgForm.Runtime,
+                ModelDefault       = NullIfBlank(_cfgForm.ModelDefault),
+                ModelCoder         = NullIfBlank(_cfgForm.ModelCoder),
+                ModelQa            = NullIfBlank(_cfgForm.ModelQa),
+                DefaultRepoUrl     = NullIfBlank(_cfgForm.DefaultRepoUrl),
+                RepositoryApiToken = NullIfBlank(_cfgForm.NewRepositoryApiToken) ?? _cfgForm.RepositoryApiToken,
+                AnthropicApiKey      = NullIfBlank(_cfgForm.NewAnthropicApiKey) ?? _cfgForm.AnthropicApiKey,
+                SweAfRepoPath        = NullIfBlank(_cfgForm.SweAfRepoPath),
+                LlmDeploymentId      = NullIfBlank(_cfgForm.LlmDeploymentId),
+                ComposeOverride      = NullIfBlank(_cfgForm.ComposeOverride),
+                PortRangeStart       = _cfgForm.PortRangeStart,
+                PortRangeEnd         = _cfgForm.PortRangeEnd,
+                ControlPlaneImageTag = NullIfBlank(_cfgForm.ControlPlaneImageTag),
+                ProvisionHost        = _provisionForm.Host.Trim(),
+                SshUser            = _provisionForm.SshUser,
+                SshKeyPath         = _provisionForm.SshKeyPath,
+                SshPassword        = _provisionForm.SshPassword,
+                SshPort            = _provisionForm.SshPort,
+                RequiresSudo       = _provisionForm.RequiresSudo,
+                SudoPassword       = _provisionForm.SudoPassword,
+            };
+            await ConfigSvc.SaveAsync(entity);
+            _cfgSaved = true;
+
+            var saved = await ConfigSvc.GetConfigAsync();
+            _cfgForm = CfgForm.From(saved);
+            _provisionForm = ProvisionForm.From(saved);
+        }
+        catch (Exception ex) { _cfgError = ex.Message; }
+        finally { _savingCfg = false; }
+    }
+
+    // ── Host CRUD ─────────────────────────────────────────────────────────────
+
+    private async Task AddHost()
+    {
+        if (string.IsNullOrWhiteSpace(_addForm.DisplayName))
+        { _addHostError = "Display name is required."; return; }
+
+        _addingHost   = true;
+        _addHostError = null;
+        try
+        {
+            var cmds = _addForm.Commands
+                .Where(c => !string.IsNullOrWhiteSpace(c.Label))
+                .Select(c => new SweAfHostCommand { Label = c.Label.Trim(), Command = c.Command.Trim() })
+                .ToList();
+
+            await HostSvc.CreateAsync(
+                _addForm.DisplayName,
+                NullIfBlank(_addForm.AnthropicBaseUrl), NullIfBlank(_addForm.AnthropicApiKey),
+                cmds.Count > 0 ? cmds : null);
+
+            _hosts       = await HostSvc.GetAllAsync();
+            _hostCommands = _hosts
+                .SelectMany(h => SweAfHostService.GetCommands(h).Select(c => (h, c)))
+                .ToList();
+            _showAddForm = false;
+            _addForm     = new();
+        }
+        catch (Exception ex) { _addHostError = ex.Message; }
+        finally { _addingHost = false; }
+    }
+
+    private void OpenHostEdit(SweAfHostEntity host)
+    {
+        _editingHost   = host;
+        _editHostError = null;
+        _editForm      = HostForm.From(host);
+        _showEditModal = true;
+    }
+
+    private void CloseHostEdit() => _showEditModal = false;
+
+    private async Task SaveHostEdit()
+    {
+        if (_editingHost is null) return;
+        if (string.IsNullOrWhiteSpace(_editForm.DisplayName))
+        { _editHostError = "Display name is required."; return; }
+
+        _savingEdit    = true;
+        _editHostError = null;
+        try
+        {
+            var cmds = _editForm.Commands
+                .Where(c => !string.IsNullOrWhiteSpace(c.Label))
+                .Select(c => new SweAfHostCommand { Label = c.Label.Trim(), Command = c.Command.Trim() })
+                .ToList();
+
+            _editingHost.DisplayName       = _editForm.DisplayName.Trim();
+            _editingHost.AnthropicBaseUrl  = NullIfBlank(_editForm.AnthropicBaseUrl);
+            _editingHost.AnthropicApiKey   = NullIfBlank(_editForm.AnthropicApiKey);
+            _editingHost.CommandsJson      = SweAfHostService.SerializeCommands(cmds);
+
+            await HostSvc.UpdateAsync(_editingHost);
+            _hosts         = await HostSvc.GetAllAsync();
+            _hostCommands  = _hosts
+                .SelectMany(h => SweAfHostService.GetCommands(h).Select(c => (h, c)))
+                .ToList();
+            _showEditModal = false;
+        }
+        catch (Exception ex) { _editHostError = ex.Message; }
+        finally { _savingEdit = false; }
+    }
+
+    private async Task DeleteHost(SweAfHostEntity host)
+    {
+        await HostSvc.DeleteAsync(host.Id);
+        _hosts = await HostSvc.GetAllAsync();
+        _hostCommands = _hosts
+            .SelectMany(h => SweAfHostService.GetCommands(h).Select(c => (h, c)))
+            .ToList();
+    }
+
+    // ── Host form render ──────────────────────────────────────────────────────
+
+    private RenderFragment RenderHostForm(HostForm form) => __builder =>
+    {
+        <div class="llm-form-grid">
+            <label class="llm-label">Display Name *</label>
+            <input class="llm-input" @bind="form.DisplayName" placeholder="My Swarm Agent" />
+
+            <label class="llm-label">Anthropic Base URL</label>
+            <input class="llm-input" @bind="form.AnthropicBaseUrl"
+                   placeholder="https://api.anthropic.com (injected as ANTHROPIC_BASE_URL)" />
+
+            <label class="llm-label">Anthropic API Key</label>
+            <input class="llm-input" type="password" @bind="form.AnthropicApiKey"
+                   placeholder="sk-ant-… (injected as ANTHROPIC_API_KEY)" />
+        </div>
+
+        <div class="llm-label" style="margin-top:1rem;">Commands</div>
+        <p class="llm-hint">
+            Each command becomes a button on the Builds tab (e.g. Start, Stop, Restart).
+        </p>
+        <div class="sweaf-commands-list">
+            @for (int i = 0; i < form.Commands.Count; i++)
+            {
+                var idx = i;
+                <div class="sweaf-command-row">
+                    <input class="llm-input sweaf-cmd-label"
+                           @bind="form.Commands[idx].Label"
+                           placeholder="Label (e.g. Start)" />
+                    <input class="llm-input sweaf-cmd-command"
+                           @bind="form.Commands[idx].Command"
+                           placeholder="Shell command (e.g. docker compose up -d)" />
+                    <button type="button" class="btn-sm btn-danger-sm"
+                            @onclick="() => form.Commands.RemoveAt(idx)">✕</button>
+                </div>
+            }
+            <button type="button" class="btn-sm"
+                    @onclick="() => form.Commands.Add(new CommandEntry())">
+                + Add Command
+            </button>
+        </div>
+    };
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static string Truncate(string s, int max) =>
+        s.Length <= max ? s : s[..max] + "…";
+
+    private static string RepoName(string url)
+    {
+        try
+        {
+            var uri   = new Uri(url);
+            var parts = uri.AbsolutePath.Trim('/').Split('/');
+            return parts.Length >= 2 ? $"{parts[^2]}/{parts[^1]}" : url;
+        }
+        catch { return url; }
+    }
+
+    private static string FormatDuration(SweAfJobEntity job)
+    {
+        var end   = job.CompletedAt ?? DateTimeOffset.UtcNow;
+        var start = job.StartedAt  ?? job.CreatedAt;
+        var span  = end - start;
+        if (span.TotalHours >= 1)   return $"{(int)span.TotalHours}h {span.Minutes}m";
+        if (span.TotalMinutes >= 1) return $"{(int)span.TotalMinutes}m {span.Seconds}s";
+        return $"{(int)span.TotalSeconds}s";
+    }
+
+    private static IEnumerable<string> GetPrUrls(SweAfJobEntity job)
+    {
+        if (job.PrUrls is null) return [];
+        try { return JsonSerializer.Deserialize<string[]>(job.PrUrls) ?? []; }
+        catch { return []; }
+    }
+
+    private static string StatusCss(BuildStatus status) => status switch
+    {
+        BuildStatus.Running   => "running",
+        BuildStatus.Succeeded => "succeeded",
+        BuildStatus.Failed    => "failed",
+        _                     => string.Empty,
+    };
+
+    private static string? NullIfBlank(string? s) =>
+        string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    // ── Form models ───────────────────────────────────────────────────────────
+
+    private class CfgForm
+    {
+        public string  BaseUrl               = "";
+        public string  NewApiKey             = "";
+        public string  NewWebhookSecret      = "";
+        public string  NewRepositoryApiToken = "";
+        public string  NewAnthropicApiKey    = "";
+        public string  HubPublicUrl          = "";
+        public string  Runtime               = "claude_code";
+        public string  ModelDefault          = "";
+        public string  ModelCoder            = "";
+        public string  ModelQa               = "";
+        public string  DefaultRepoUrl        = "";
+        public string  SweAfRepoPath         = "";
+        public string  LlmDeploymentId       = "";
+        public string  ComposeOverride       = "";
+        public string  ApiKey                = "";
+        public string  WebhookSecret         = "";
+        public string  RepositoryApiToken    = "";
+        public string  AnthropicApiKey       = "";
+        public int     PortRangeStart        = 8100;
+        public int     PortRangeEnd          = 8199;
+        public string  ControlPlaneImageTag  = "";
+
+        public static CfgForm From(SweAfConfigEntity e) => new()
+        {
+            BaseUrl               = e.BaseUrl,
+            HubPublicUrl          = e.HubPublicUrl    ?? "",
+            Runtime               = e.Runtime,
+            ModelDefault          = e.ModelDefault    ?? "",
+            ModelCoder            = e.ModelCoder      ?? "",
+            ModelQa               = e.ModelQa         ?? "",
+            DefaultRepoUrl        = e.DefaultRepoUrl  ?? "",
+            SweAfRepoPath         = e.SweAfRepoPath   ?? "",
+            LlmDeploymentId       = e.LlmDeploymentId ?? "",
+            ComposeOverride       = e.ComposeOverride  ?? "",
+            ApiKey                = e.ApiKey,
+            WebhookSecret         = e.WebhookSecret,
+            RepositoryApiToken    = e.RepositoryApiToken,
+            AnthropicApiKey       = e.AnthropicApiKey,
+            PortRangeStart        = e.PortRangeStart,
+            PortRangeEnd          = e.PortRangeEnd,
+            ControlPlaneImageTag  = e.ControlPlaneImageTag ?? "",
+        };
+    }
+
+    private class HostForm
+    {
+        public string  DisplayName      = "";
+        public string  AnthropicBaseUrl = "";
+        public string  AnthropicApiKey  = "";
+        public List<CommandEntry> Commands = [];
+
+        public static HostForm From(SweAfHostEntity e)
+        {
+            var cmds = SweAfHostService.GetCommands(e)
+                .Select(c => new CommandEntry { Label = c.Label, Command = c.Command })
+                .ToList();
+            return new()
+            {
+                DisplayName      = e.DisplayName,
+                AnthropicBaseUrl = e.AnthropicBaseUrl ?? "",
+                AnthropicApiKey  = e.AnthropicApiKey  ?? "",
+                Commands         = cmds,
+            };
+        }
+    }
+
+    private class ProvisionForm
+    {
+        public string  Host        = "localhost";
+        public string  SshUser     = "";
+        public string  SshKeyPath  = "";
+        public string  SshPassword = "";
+        public int     SshPort     = 22;
+        public bool    RequiresSudo = false;
+        public string  SudoPassword = "";
+
+        public static ProvisionForm From(SweAfConfigEntity e) => new()
+        {
+            Host         = e.ProvisionHost ?? "localhost",
+            SshUser      = e.SshUser,
+            SshKeyPath   = e.SshKeyPath,
+            SshPassword  = e.SshPassword,
+            SshPort      = e.SshPort,
+            RequiresSudo = e.RequiresSudo,
+            SudoPassword = e.SudoPassword,
+        };
+    }
+
+    private class CommandEntry
+    {
+        public string Label   = "";
+        public string Command = "";
+    }
+}

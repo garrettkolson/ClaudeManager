@@ -151,10 +151,10 @@ public class SweAfService
 
     public async Task<SweAfJobEntity> TriggerBuildAsync(string goal, string repoUrl)
     {
-        var cfg = _configSvc.GetConfig();
+        var cfg = await _configSvc.GetConfigAsync();
         if (!cfg.IsConfigured)
             throw new InvalidOperationException(
-                "SWE-AF is not configured. Go to SWE-AF Servers to add the AgentField URL and API key.");
+                "Foundry is not configured. Go to Foundry settings to add the control plane URL and API key.");
 
         return await TriggerWithPerBuildProvisionAsync(goal, repoUrl, cfg);
     }

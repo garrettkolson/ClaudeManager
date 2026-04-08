@@ -11,7 +11,7 @@
 <div class="build-detail">
 
     <div class="build-detail-header">
-        <a href="/builds" class="back-link">← Builds</a>
+        <a href="/foundry" class="back-link">← Foundry</a>
         @if (_job is not null)
         {
             <h2 class="build-detail-goal">@_job.Goal</h2>
@@ -120,10 +120,10 @@
             </div>
         }
 
-        @* ── AgentField result ── *@
+        @* ── Foundry result ── *@
         <div class="build-detail-section">
             <div class="build-detail-section-header">
-                <h3>AgentField Result</h3>
+                <h3>Foundry Result</h3>
                 <button class="btn-secondary-sm" @onclick="RefreshDetail" disabled="@_detailLoading">
                     @(_detailLoading ? "Loading…" : "Refresh")
                 </button>
@@ -134,7 +134,7 @@
             }
             else if (_detail is null && !_detailLoading)
             {
-                <div class="build-detail-fetch-error">Not available — SWE-AF may not be configured or reachable.</div>
+                <div class="build-detail-fetch-error">Not available — Foundry may not be configured or reachable.</div>
             }
             else if (_detail?.ResultJson is not null)
             {
@@ -198,7 +198,7 @@
         _detailLoading = false;
 
         if (_detail is null)
-            _detailError = "Could not fetch execution detail from AgentField.";
+            _detailError = "Could not fetch execution detail from Foundry.";
     }
 
     // ── Actions ───────────────────────────────────────────────────────────

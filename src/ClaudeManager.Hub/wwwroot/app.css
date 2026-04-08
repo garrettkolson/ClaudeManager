@@ -369,3 +369,9 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 .llm-context-estimate-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .llm-maxlen-input { max-width: 180px; }
 .error-text { color: #e05555; font-style: italic; font-size: 12px; }
+/* Foundry tabs */
+.foundry-page { max-width: 1100px; }
+.foundry-tabs { display: flex; gap: 2px; margin-bottom: 24px; border-bottom: 1px solid #333; }
+.foundry-tab { background: none; border: none; border-bottom: 2px solid transparent; color: #888; cursor: pointer; font-family: inherit; font-size: 14px; padding: 8px 18px; margin-bottom: -1px; transition: color 0.15s, border-color 0.15s; }
+.foundry-tab:hover { color: #ccc; }
+.foundry-tab.active { color: #7cb8ff; border-bottom-color: #7cb8ff; }
