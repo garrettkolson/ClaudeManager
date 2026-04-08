@@ -98,6 +98,197 @@ public class SweAfProvisioningService(
         return (true, null, hostUrl);
     }
 
+    // ── Per-build provisioning ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Provisions an isolated AgentField control plane for a single build job.
+    /// Uses a unique Docker Compose project name so the container is fully isolated.
+    /// Returns the control plane URL on success, or an error message on failure.
+    /// </summary>
+    public async Task<(bool Success, string? Error, string? ControlPlaneUrl)>
+        ProvisionControlPlaneForJobAsync(long jobId, int port, CancellationToken ct = default)
+    {
+        var config = await GetConfigAsync(ct);
+
+        if (!IsProvisioningConfigured(config))
+            return (false, "Provisioning host is not configured.", null);
+
+        var projectName = $"agentfield-{jobId}";
+        var hostUrl     = $"http://{config.ProvisionHost}:{port}";
+        var repoPath    = string.IsNullOrWhiteSpace(config.SweAfRepoPath)
+            ? DefaultSweAfRepoPath
+            : config.SweAfRepoPath;
+
+        logger.LogInformation(
+            "Provisioning per-job SWE-AF stack (project={Project}, port={Port}) on {Host}",
+            projectName, port, config.ProvisionHost);
+
+        // Step 1: Write .env (includes AGENTFIELD_PORT for port mapping)
+        var anthropicBaseUrl = await ResolveAnthropicBaseUrlAsync(config, ct);
+        var writeEnvCmd = BuildWriteEnvCommand(config, repoPath, anthropicBaseUrl, port);
+        var (envOut, envErr, envCode) = IsLocalHost(config.ProvisionHost!)
+            ? await ExecLocalShellAsync(writeEnvCmd, ct)
+            : await ExecSshShellAsync(config, writeEnvCmd, ct);
+
+        if (envCode != 0)
+        {
+            var err = (envErr ?? envOut ?? "Failed to write .env").Trim();
+            logger.LogWarning("Per-job .env write failed on {Host}: {Error}", config.ProvisionHost, err);
+            return (false, $"Failed to write .env: {err}", null);
+        }
+
+        // Step 2: Write docker-compose.override.yml if configured
+        if (!string.IsNullOrWhiteSpace(config.ComposeOverride))
+        {
+            var writeOverrideCmd = BuildWriteOverrideCommand(config.ComposeOverride, repoPath);
+            var (ovOut, ovErr, ovCode) = IsLocalHost(config.ProvisionHost!)
+                ? await ExecLocalShellAsync(writeOverrideCmd, ct)
+                : await ExecSshShellAsync(config, writeOverrideCmd, ct);
+
+            if (ovCode != 0)
+            {
+                var err = (ovErr ?? ovOut ?? "Failed to write docker-compose.override.yml").Trim();
+                logger.LogWarning("Per-job override write failed: {Error}", err);
+                return (false, $"Failed to write docker-compose.override.yml: {err}", null);
+            }
+        }
+
+        // Step 3: Bring up the stack under the unique project name (no down-first — brand new project)
+        var upCmd = $"cd {repoPath} && docker compose --project-name {projectName} up -d --build";
+        var (compOut, compErr, compCode) = IsLocalHost(config.ProvisionHost!)
+            ? await ExecLocalShellAsync(upCmd, ct)
+            : await ExecSshShellAsync(config, upCmd, ct);
+
+        if (compCode != 0)
+        {
+            var err = (compErr ?? compOut ?? "docker compose failed").Trim();
+            logger.LogWarning("Per-job docker compose up failed (project={Project}): {Error}", projectName, err);
+            return (false, $"docker compose up failed: {err}", null);
+        }
+
+        logger.LogInformation(
+            "Per-job SWE-AF stack started (project={Project}) -> {Url}", projectName, hostUrl);
+        return (true, null, hostUrl);
+    }
+
+    /// <summary>
+    /// Tears down the compose stack for a specific build job by project name.
+    /// Returns an error message on failure, or null on success.
+    /// </summary>
+    public async Task<string?> StopControlPlaneForJobAsync(
+        string projectName, CancellationToken ct = default)
+    {
+        var config = await GetConfigAsync(ct);
+
+        if (!IsProvisioningConfigured(config))
+            return "Provisioning host is not configured.";
+
+        var repoPath = string.IsNullOrWhiteSpace(config.SweAfRepoPath)
+            ? DefaultSweAfRepoPath
+            : config.SweAfRepoPath;
+
+        logger.LogInformation(
+            "Stopping per-job SWE-AF stack (project={Project}) on {Host}", projectName, config.ProvisionHost);
+
+        var downCmd = $"cd {repoPath} && docker compose --project-name {projectName} down";
+        var (stdout, stderr, exitCode) = IsLocalHost(config.ProvisionHost!)
+            ? await ExecLocalShellAsync(downCmd, ct)
+            : await ExecSshShellAsync(config, downCmd, ct);
+
+        if (exitCode != 0)
+        {
+            var err = (stderr ?? stdout ?? "docker compose down failed").Trim();
+            logger.LogWarning("Per-job compose down failed (project={Project}): {Error}", projectName, err);
+            return err;
+        }
+
+        logger.LogInformation("Per-job SWE-AF stack stopped (project={Project})", projectName);
+        return null;
+    }
+
+    /// <summary>
+    /// Lists the names of running Docker Compose projects on the provision host whose
+    /// names match the pattern "agentfield-{number}". Used by the recovery service
+    /// to detect and clean up orphaned per-build containers.
+    /// Returns an empty list on error (logs a warning).
+    /// </summary>
+    public async Task<List<string>> ListActiveComposeProjectsAsync(CancellationToken ct = default)
+    {
+        var config = await GetConfigAsync(ct);
+        if (!IsProvisioningConfigured(config))
+            return [];
+
+        // "docker compose ls" lists all known projects (running or stopped).
+        // We filter to those whose name matches our per-job naming convention.
+        var lsCmd = "docker compose ls --all --format json";
+        string? output;
+        try
+        {
+            var (stdout, stderr, exitCode) = IsLocalHost(config.ProvisionHost!)
+                ? await ExecLocalShellAsync(lsCmd, ct)
+                : await ExecSshShellAsync(config, lsCmd, ct);
+
+            if (exitCode != 0)
+            {
+                logger.LogWarning("docker compose ls failed on {Host}: {Error}",
+                    config.ProvisionHost, (stderr ?? stdout ?? "").Trim());
+                return [];
+            }
+
+            output = stdout;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to list compose projects on {Host}", config.ProvisionHost);
+            return [];
+        }
+
+        return ParseComposeProjectNames(output);
+    }
+
+    private static List<string> ParseComposeProjectNames(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return [];
+
+        try
+        {
+            // docker compose ls --format json returns an array like:
+            // [{"Name":"agentfield-42","Status":"running","ConfigFiles":"/path/…"}]
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array)
+                return [];
+
+            var results = new List<string>();
+            foreach (var element in doc.RootElement.EnumerateArray())
+            {
+                if (!element.TryGetProperty("Name", out var nameProp))
+                    continue;
+                var name = nameProp.GetString();
+                if (name is not null && System.Text.RegularExpressions.Regex.IsMatch(name, @"^agentfield-\d+$"))
+                    results.Add(name);
+            }
+            return results;
+        }
+        catch
+        {
+            // Fallback: parse line by line (some older Compose versions output differently)
+            var results = new List<string>();
+            foreach (var line in json.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var trimmed = line.Trim();
+                if (System.Text.RegularExpressions.Regex.IsMatch(trimmed, @"^agentfield-\d+"))
+                {
+                    var name = trimmed.Split(' ', '\t')[0];
+                    results.Add(name);
+                }
+            }
+            return results;
+        }
+    }
+
+    // ── Shared control plane (legacy) ─────────────────────────────────────────
+
     /// <summary>
     /// Tears down the AgentField control plane on the configured host.
     /// Returns an error message on failure, or null on success.
@@ -171,8 +362,10 @@ public class SweAfProvisioningService(
     /// <summary>
     /// Builds a shell command that writes a .env file for docker compose,
     /// using single-quoted heredoc so values are never shell-expanded.
+    /// When port is provided, writes AGENTFIELD_PORT so the compose file can map the correct host port.
     /// </summary>
-    private static string BuildWriteEnvCommand(SweAfConfigEntity config, string repoPath, string? anthropicBaseUrl)
+    private static string BuildWriteEnvCommand(
+        SweAfConfigEntity config, string repoPath, string? anthropicBaseUrl, int? port = null)
     {
         var lines = new List<string>();
         if (!string.IsNullOrWhiteSpace(anthropicBaseUrl))
@@ -183,6 +376,10 @@ public class SweAfProvisioningService(
             lines.Add($"GH_TOKEN={config.RepositoryApiToken}");
         if (!string.IsNullOrWhiteSpace(config.ApiKey))
             lines.Add($"CLAUDE_CODE_OAUTH_TOKEN={config.ApiKey}");
+        if (port.HasValue)
+            lines.Add($"AGENTFIELD_PORT={port.Value}");
+        if (!string.IsNullOrWhiteSpace(config.ControlPlaneImageTag))
+            lines.Add($"AGENTFIELD_IMAGE_TAG={config.ControlPlaneImageTag}");
 
         var quoted = string.Join(" ", lines.Select(l => "'" + l.Replace("'", "'\\''") + "'"));
         return $"printf '%s\\n' {quoted} > {repoPath}/.env";

@@ -124,6 +124,16 @@ public class SweAfConfigEntity
     /// </summary>
     public string? ComposeOverride { get; set; }
 
+    /// <summary>Lowest port in the pool allocated for per-build control plane containers.</summary>
+    public int PortRangeStart { get; set; } = 8100;
+
+    /// <summary>Highest port in the pool (inclusive). Range size = max concurrent builds.</summary>
+    public int PortRangeEnd { get; set; } = 8199;
+
+    /// <summary>Docker image tag for the AgentField control plane, e.g. "latest". Written into .env as AGENTFIELD_IMAGE_TAG.</summary>
+    [MaxLength(100)]
+    public string? ControlPlaneImageTag { get; set; }
+
     [NotMapped]
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(ApiKey);

@@ -16,6 +16,8 @@ public class SweAfService
     private readonly SweAfConfigService _configSvc;
     private readonly IDbContextFactory<ClaudeManagerDbContext> _dbFactory;
     private readonly BuildNotifier _notifier;
+    private readonly SweAfProvisioningService _provisioningSvc;
+    private readonly SweAfPortAllocator _portAllocator;
     private readonly ILogger<SweAfService> _logger;
 
     private static readonly JsonSerializerOptions _ignoreNulls = new()
@@ -32,13 +34,17 @@ public class SweAfService
         SweAfConfigService configSvc,
         IDbContextFactory<ClaudeManagerDbContext> dbFactory,
         BuildNotifier notifier,
+        SweAfProvisioningService provisioningSvc,
+        SweAfPortAllocator portAllocator,
         ILogger<SweAfService> logger)
     {
-        _httpFactory = httpFactory;
-        _configSvc   = configSvc;
-        _dbFactory   = dbFactory;
-        _notifier    = notifier;
-        _logger      = logger;
+        _httpFactory     = httpFactory;
+        _configSvc       = configSvc;
+        _dbFactory       = dbFactory;
+        _notifier        = notifier;
+        _provisioningSvc = provisioningSvc;
+        _portAllocator   = portAllocator;
+        _logger          = logger;
     }
 
     // ── HTTP helpers ──────────────────────────────────────────────────────────
@@ -46,12 +52,18 @@ public class SweAfService
     /// <summary>Creates a per-call HttpClient from the factory (safe for singletons).</summary>
     private HttpClient Http() => _httpFactory.CreateClient("sweaf");
 
-    /// <summary>Builds a request with the current BaseUrl and Bearer token.</summary>
+    /// <summary>Builds a request using cfg.BaseUrl as the base and the Bearer token.</summary>
     private HttpRequestMessage BuildRequest(
         HttpMethod method, string path, SweAfConfigEntity cfg,
         HttpContent? content = null)
+        => BuildRequestForUrl(method, path, cfg.BaseUrl, cfg, content);
+
+    /// <summary>Builds a request targeting an explicit base URL (for per-job control planes).</summary>
+    private static HttpRequestMessage BuildRequestForUrl(
+        HttpMethod method, string path, string baseUrl, SweAfConfigEntity cfg,
+        HttpContent? content = null)
     {
-        var baseUri = new Uri(cfg.BaseUrl.TrimEnd('/') + "/");
+        var baseUri = new Uri(baseUrl.TrimEnd('/') + "/");
         var request = new HttpRequestMessage(method, new Uri(baseUri, path.TrimStart('/')));
         request.Headers.Authorization =
             new AuthenticationHeaderValue("Bearer", cfg.ApiKey!);
@@ -106,7 +118,8 @@ public class SweAfService
     }
 
     public async Task<(bool Success, string? Error)> RegisterWebhookAsync(
-        string url, string? secret, CancellationToken ct = default)
+        string url, string? secret, CancellationToken ct = default,
+        string? controlPlaneBaseUrl = null)
     {
         var cfg = _configSvc.GetConfig();
         if (!cfg.IsConfigured) return (false, "SWE-AF is not configured.");
@@ -115,9 +128,11 @@ public class SweAfService
             ? new { url }
             : new { url, secret };
 
-        var request = BuildRequest(
+        var targetBase = controlPlaneBaseUrl ?? cfg.BaseUrl;
+        var request    = BuildRequestForUrl(
             HttpMethod.Post,
             "/api/v1/settings/observability-webhook",
+            targetBase,
             cfg,
             JsonContent.Create(payload));
 
@@ -141,9 +156,122 @@ public class SweAfService
             throw new InvalidOperationException(
                 "SWE-AF is not configured. Go to SWE-AF Servers to add the AgentField URL and API key.");
 
-        // Ensure the webhook is registered so we receive live status/log events.
-        await EnsureWebhookRegisteredAsync();
+        return await TriggerWithPerBuildProvisionAsync(goal, repoUrl, cfg);
+    }
 
+    /// <summary>Provisions a fresh isolated container, waits for health, then triggers the build.</summary>
+    private async Task<SweAfJobEntity> TriggerWithPerBuildProvisionAsync(
+        string goal, string repoUrl, SweAfConfigEntity cfg)
+    {
+        // Allocate a port from the configured range
+        var port = await _portAllocator.AllocatePortAsync(cfg, _dbFactory);
+        if (port is null)
+            throw new InvalidOperationException(
+                $"No ports available in the configured range ({cfg.PortRangeStart}–{cfg.PortRangeEnd}). " +
+                "All slots are occupied by active builds.");
+
+        var now = DateTimeOffset.UtcNow;
+        var projectName = $"agentfield-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+
+        // Persist the stub job first so the port is "claimed" immediately
+        var job = new SweAfJobEntity
+        {
+            ExternalJobId    = "",   // filled in after trigger
+            Goal             = goal,
+            RepoUrl          = repoUrl,
+            Status           = BuildStatus.Queued,
+            TriggeredBy      = "hub",
+            CreatedAt        = now,
+            AllocatedPort    = port,
+            ComposeProjectName = projectName,
+        };
+
+        await using var setupDb = await _dbFactory.CreateDbContextAsync();
+        setupDb.SweAfJobs.Add(job);
+        await setupDb.SaveChangesAsync();
+        // Re-derive the project name using the real DB id now
+        projectName = $"agentfield-{job.Id}";
+        job.ComposeProjectName = projectName;
+        await setupDb.SaveChangesAsync();
+        _notifier.NotifyBuildChanged(job);
+
+        // Provision the isolated container
+        var (provSuccess, provError, controlPlaneUrl) =
+            await _provisioningSvc.ProvisionControlPlaneForJobAsync(job.Id, port.Value);
+
+        if (!provSuccess || controlPlaneUrl is null)
+        {
+            job.Status       = BuildStatus.Failed;
+            job.ErrorMessage = $"Provisioning failed: {provError}";
+            job.CompletedAt  = DateTimeOffset.UtcNow;
+            await setupDb.SaveChangesAsync();
+            _notifier.NotifyBuildChanged(job);
+            _logger.LogWarning("Per-job provisioning failed for job {JobId}: {Error}", job.Id, provError);
+            throw new InvalidOperationException($"Control plane provisioning failed: {provError}");
+        }
+
+        // Wait for the container to be ready
+        var healthy = await WaitForHealthAsync(
+            $"{controlPlaneUrl}/health",
+            TimeSpan.FromSeconds(120));
+
+        if (!healthy)
+        {
+            job.Status       = BuildStatus.Failed;
+            job.ErrorMessage = "Control plane did not become healthy within 120 seconds.";
+            job.CompletedAt  = DateTimeOffset.UtcNow;
+            await setupDb.SaveChangesAsync();
+            _notifier.NotifyBuildChanged(job);
+            _ = Task.Run(() => TearDownJobContainerAsync(projectName));
+            throw new InvalidOperationException("Control plane health check timed out.");
+        }
+
+        job.ControlPlaneUrl = controlPlaneUrl;
+        await setupDb.SaveChangesAsync();
+        _notifier.NotifyBuildChanged(job);
+
+        // Register webhook on the per-job instance
+        var publicUrl = _configSvc.HubPublicUrl?.TrimEnd('/');
+        if (!string.IsNullOrWhiteSpace(publicUrl))
+        {
+            var webhookUrl = $"{publicUrl}/api/webhooks/agentfield";
+            var (ok, err)  = await RegisterWebhookAsync(webhookUrl, _configSvc.WebhookSecret,
+                controlPlaneBaseUrl: controlPlaneUrl);
+            if (!ok)
+                _logger.LogWarning("Per-job webhook registration failed for job {JobId}: {Error}", job.Id, err);
+        }
+
+        // Trigger the build on the per-job control plane
+        ExecuteResponse result;
+        try
+        {
+            (result, _) = await PostBuildTriggerAsync(goal, repoUrl, cfg, controlPlaneUrl);
+        }
+        catch (Exception ex)
+        {
+            job.Status       = BuildStatus.Failed;
+            job.ErrorMessage = ex.Message;
+            job.CompletedAt  = DateTimeOffset.UtcNow;
+            await setupDb.SaveChangesAsync();
+            _notifier.NotifyBuildChanged(job);
+            _ = Task.Run(() => TearDownJobContainerAsync(projectName));
+            throw;
+        }
+
+        job.ExternalJobId = result.ExecutionId;
+        await setupDb.SaveChangesAsync();
+        _notifier.NotifyBuildChanged(job);
+
+        _logger.LogInformation(
+            "Per-job SWE-AF build triggered: {ExternalJobId} for {RepoUrl} (project={Project})",
+            job.ExternalJobId, repoUrl, projectName);
+        return job;
+    }
+
+    /// <summary>Sends the swe-planner.build trigger payload to the specified control plane URL.</summary>
+    private async Task<(ExecuteResponse Result, HttpResponseMessage Response)> PostBuildTriggerAsync(
+        string goal, string repoUrl, SweAfConfigEntity cfg, string controlPlaneUrl)
+    {
         SweAfModelsConfig? models = null;
         if (cfg.ModelDefault is not null || cfg.ModelCoder is not null || cfg.ModelQa is not null)
             models = new SweAfModelsConfig
@@ -154,16 +282,17 @@ public class SweAfService
             input = new
             {
                 goal,
-                repo_url  = repoUrl,
+                repo_url   = repoUrl,
                 repo_token = string.IsNullOrWhiteSpace(cfg.RepositoryApiToken)
                     ? null : cfg.RepositoryApiToken,
-                config    = new { runtime = cfg.Runtime, models },
+                config     = new { runtime = cfg.Runtime, models },
             },
         };
 
-        var request = BuildRequest(
+        var request = BuildRequestForUrl(
             HttpMethod.Post,
             "/api/v1/execute/async/swe-planner.build",
+            controlPlaneUrl,
             cfg,
             JsonContent.Create(payload, options: _ignoreNulls));
 
@@ -180,26 +309,48 @@ public class SweAfService
 
         var result = await resp.Content.ReadFromJsonAsync<ExecuteResponse>()
             ?? throw new InvalidOperationException("Empty response from AgentField");
+        return (result, resp);
+    }
 
-        var now = DateTimeOffset.UtcNow;
-        var job = new SweAfJobEntity
+    /// <summary>
+    /// Polls the health endpoint until it returns 200 OK or the timeout elapses.
+    /// </summary>
+    private async Task<bool> WaitForHealthAsync(string healthUrl, TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        var http     = Http();
+        while (DateTimeOffset.UtcNow < deadline)
         {
-            ExternalJobId = result.ExecutionId,
-            Goal          = goal,
-            RepoUrl       = repoUrl,
-            Status        = BuildStatus.Queued,
-            TriggeredBy   = "hub",
-            CreatedAt     = now,
-        };
+            try
+            {
+                var resp = await http.GetAsync(healthUrl);
+                if (resp.IsSuccessStatusCode)
+                    return true;
+            }
+            catch
+            {
+                // Container not up yet — keep polling
+            }
+            await Task.Delay(2000);
+        }
+        return false;
+    }
 
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        db.SweAfJobs.Add(job);
-        await db.SaveChangesAsync();
-
-        _notifier.NotifyBuildChanged(job);
-        _logger.LogInformation(
-            "SWE-AF build triggered: {ExternalJobId} for {RepoUrl}", job.ExternalJobId, repoUrl);
-        return job;
+    /// <summary>Tears down a per-job container asynchronously. Failures are logged but not thrown.</summary>
+    private async Task TearDownJobContainerAsync(string projectName)
+    {
+        try
+        {
+            var error = await _provisioningSvc.StopControlPlaneForJobAsync(projectName);
+            if (error is not null)
+                _logger.LogWarning("Teardown of {Project} failed: {Error}", projectName, error);
+            else
+                _logger.LogInformation("Tore down control plane container for project {Project}", projectName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Teardown exception for project {Project}", projectName);
+        }
     }
 
     // ── Query ─────────────────────────────────────────────────────────────────
@@ -217,8 +368,9 @@ public class SweAfService
         if (!cfg.IsConfigured) return null;
         try
         {
-            var request = BuildRequest(
-                HttpMethod.Get, $"/api/v1/executions/{externalJobId}", cfg);
+            var controlPlaneUrl = await ResolveControlPlaneUrlAsync(externalJobId, cfg, ct);
+            var request = BuildRequestForUrl(
+                HttpMethod.Get, $"/api/v1/executions/{externalJobId}", controlPlaneUrl, cfg);
 
             var resp = await Http().SendAsync(request, ct);
             if (!resp.IsSuccessStatusCode) return null;
@@ -285,8 +437,9 @@ public class SweAfService
         if (job is null) return (false, "Job not found.");
 
         var cfg = _configSvc.GetConfig();
-        var request = BuildRequest(
-            HttpMethod.Post, $"/api/v1/executions/{job.ExternalJobId}/cancel", cfg);
+        var targetUrl = job.ControlPlaneUrl ?? cfg.BaseUrl;
+        var request   = BuildRequestForUrl(
+            HttpMethod.Post, $"/api/v1/executions/{job.ExternalJobId}/cancel", targetUrl, cfg);
 
         var resp = await Http().SendAsync(request, ct);
         if (!resp.IsSuccessStatusCode)
@@ -307,10 +460,11 @@ public class SweAfService
         var job = await db.SweAfJobs.FindAsync([jobId], ct);
         if (job is null) return (false, "Job not found.");
 
-        var cfg     = _configSvc.GetConfig();
-        var payload = new { execution_id = job.ExternalJobId, approved };
-        var request = BuildRequest(
-            HttpMethod.Post, "/api/v1/webhooks/approval-response", cfg,
+        var cfg       = _configSvc.GetConfig();
+        var targetUrl = job.ControlPlaneUrl ?? cfg.BaseUrl;
+        var payload   = new { execution_id = job.ExternalJobId, approved };
+        var request   = BuildRequestForUrl(
+            HttpMethod.Post, "/api/v1/webhooks/approval-response", targetUrl, cfg,
             JsonContent.Create(payload));
 
         var resp = await Http().SendAsync(request, ct);
@@ -415,6 +569,7 @@ public class SweAfService
                 job.CompletedAt = now;
                 break;
 
+
             case "execution_waiting":
             case "execution_paused":
                 job.Status = BuildStatus.Waiting;
@@ -428,6 +583,14 @@ public class SweAfService
 
         await db.SaveChangesAsync();
         _notifier.NotifyBuildChanged(job);
+
+        // Tear down per-job container when the build reaches a terminal state
+        if (job.Status is BuildStatus.Succeeded or BuildStatus.Failed or BuildStatus.Cancelled
+            && !string.IsNullOrWhiteSpace(job.ComposeProjectName))
+        {
+            var projectName = job.ComposeProjectName;
+            _ = Task.Run(() => TearDownJobContainerAsync(projectName), CancellationToken.None);
+        }
     }
 
     // ── Startup reconciliation ────────────────────────────────────────────────
@@ -440,7 +603,14 @@ public class SweAfService
             ct.ThrowIfCancellationRequested();
             try
             {
-                var request = BuildRequest(HttpMethod.Get, $"/api/v1/executions/{id}", cfg);
+                await using var db = await _dbFactory.CreateDbContextAsync(ct);
+                var job = await db.SweAfJobs.FirstOrDefaultAsync(j => j.ExternalJobId == id, ct);
+                if (job is null) continue;
+
+                // Route reconciliation request to the per-job control plane if available
+                var controlPlaneUrl = job.ControlPlaneUrl ?? cfg.BaseUrl;
+                var request = BuildRequestForUrl(
+                    HttpMethod.Get, $"/api/v1/executions/{id}", controlPlaneUrl, cfg);
                 var resp = await Http().SendAsync(request, ct);
                 if (!resp.IsSuccessStatusCode) continue;
 
@@ -448,15 +618,16 @@ public class SweAfService
                     cancellationToken: ct);
                 if (status is null) continue;
 
-                await using var db = await _dbFactory.CreateDbContextAsync(ct);
-                var job = await db.SweAfJobs.FirstOrDefaultAsync(j => j.ExternalJobId == id, ct);
-                if (job is null) continue;
-
                 var prev   = job.Status;
                 job.Status = ParseStatus(status.Status);
 
                 if (job.Status is BuildStatus.Succeeded or BuildStatus.Failed or BuildStatus.Cancelled)
+                {
                     job.CompletedAt ??= DateTimeOffset.UtcNow;
+                    // Tear down per-job container if the build finished while hub was down
+                    if (!string.IsNullOrWhiteSpace(job.ComposeProjectName))
+                        _ = Task.Run(() => TearDownJobContainerAsync(job.ComposeProjectName), CancellationToken.None);
+                }
 
                 await db.SaveChangesAsync(ct);
 
@@ -467,6 +638,28 @@ public class SweAfService
             {
                 _logger.LogWarning(ex, "Failed to reconcile SWE-AF execution {Id}", id);
             }
+        }
+    }
+
+    /// <summary>
+    /// Resolves the control plane URL for a given external job ID.
+    /// Falls back to cfg.BaseUrl if the job has no per-job URL.
+    /// </summary>
+    private async Task<string> ResolveControlPlaneUrlAsync(
+        string externalJobId, SweAfConfigEntity cfg, CancellationToken ct)
+    {
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            var job = await db.SweAfJobs
+                .Where(j => j.ExternalJobId == externalJobId)
+                .Select(j => j.ControlPlaneUrl)
+                .FirstOrDefaultAsync(ct);
+            return job ?? cfg.BaseUrl;
+        }
+        catch
+        {
+            return cfg.BaseUrl;
         }
     }
 

@@ -14,7 +14,8 @@
       "Bash(grep -n \"public GpuHostService\\\\|public HubSecretService\\\\|public LlmDeploymentNotifier\\\\|public LlmProxyConfigService\\\\|public NginxProxyService\" D:/Repos/claude_manager/src/ClaudeManager.Hub/Services/*.cs)",
       "Bash(ls:*)",
       "WebFetch(domain:www.agentfield.ai)",
-      "Bash(grep -rn \"agent\\\\|register\\\\|initialize\\\\|init\\\\|swe.planner\\\\|swe_planner\" src/ClaudeManager.Hub/Services/SweAf*.cs --include=\"*.cs\")"
+      "Bash(grep -rn \"agent\\\\|register\\\\|initialize\\\\|init\\\\|swe.planner\\\\|swe_planner\" src/ClaudeManager.Hub/Services/SweAf*.cs --include=\"*.cs\")",
+      "Bash(xargs grep:*)"
     ]
   }
 }

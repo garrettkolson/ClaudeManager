@@ -43,4 +43,15 @@ public class SweAfJobEntity
     /// No max length — log content can be large.
     /// </summary>
     public string? Logs { get; set; }
+
+    /// <summary>Port allocated on the provision host for this job's dedicated control plane container.</summary>
+    public int? AllocatedPort { get; set; }
+
+    /// <summary>HTTP base URL of this job's dedicated control plane, e.g. "http://192.168.1.10:8101".</summary>
+    [MaxLength(500)]
+    public string? ControlPlaneUrl { get; set; }
+
+    /// <summary>Docker Compose project name for this job's control plane, e.g. "agentfield-42".</summary>
+    [MaxLength(200)]
+    public string? ComposeProjectName { get; set; }
 }

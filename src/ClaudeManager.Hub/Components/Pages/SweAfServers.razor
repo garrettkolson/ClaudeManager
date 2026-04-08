@@ -2,7 +2,6 @@
 @implements IDisposable
 @inject SweAfConfigService ConfigSvc
 @inject SweAfHostService HostSvc
-@inject SweAfProvisioningService ProvisioningSvc
 @inject SweAfService BuildsSvc
 @inject LlmDeploymentService DeploymentSvc
 @inject ILogger<SweAfServers> _logger
@@ -109,6 +108,26 @@
                 <textarea class="llm-input llm-textarea" @bind="_cfgForm.ComposeOverride" rows="8"
                           placeholder="# Written alongside .env on every provisioning run.&#10;# Use named volumes to persist build history across docker compose down/up.&#10;# Example:&#10;#&#10;# services:&#10;#   backend:&#10;#     volumes:&#10;#       - swe_af_data:/app/data&#10;# volumes:&#10;#   swe_af_data:"></textarea>
 
+                @* Per-Build Isolation *@
+                <div class="form-section-title">Per-Build Isolation</div>
+
+                <label class="llm-label">Port Range Start</label>
+                <input class="llm-input" @bind="_cfgForm.PortRangeStart" type="number"
+                       placeholder="8100" />
+
+                <label class="llm-label">Port Range End</label>
+                <input class="llm-input" @bind="_cfgForm.PortRangeEnd" type="number"
+                       placeholder="8199" />
+
+                <label class="llm-label">Control Plane Image Tag</label>
+                <input class="llm-input" @bind="_cfgForm.ControlPlaneImageTag"
+                       placeholder="latest" />
+
+                <p class="llm-hint">
+                    Each build gets its own isolated container on a unique port. Max concurrent builds =
+                    range size. Ensure these ports are reachable on the provision host.
+                </p>
+
                 @* Control Plane Provisioning *@
                 <div class="form-section-title">Provisioning Config</div>
 
@@ -139,17 +158,8 @@
                            placeholder="sudo password" />
                 }
 
-                <div class="llm-form-actions" style="margin-top:1rem;">
-                    <button class="btn-primary" @onclick="ProvisionControlPlane" disabled="@(_provisioning || _stopping)">
-                        @(_provisioning ? "Provisioning…" : "Provision Control Plane")
-                    </button>
-                    <button class="btn-sm btn-danger-sm" @onclick="StopControlPlane" disabled="@(_stopping || _provisioning)">
-                        @(_stopping ? "Stopping…" : "Stop")
-                    </button>
-                </div>
             </div>
 
-            @if (_provisionStatus is not null) { <div class="llm-success"> @_provisionStatus </div> }
             @if (_cfgError is not null) { <div class="error-msg">@_cfgError</div> }
             @if (_cfgSaved)             { <div class="llm-success">Configuration saved.</div> }
 
@@ -261,9 +271,6 @@
 
     // ── State — provisioning ───────────────────────────────────────────────────
 
-    private bool      _provisioning;
-    private bool      _stopping;
-    private string?   _provisionStatus;
     private ProvisionForm _provisionForm = new();
 
     // ── State — LLM deployments (for dropdown) ────────────────────────────────
@@ -321,11 +328,14 @@
                 ModelQa            = NullIfBlank(_cfgForm.ModelQa),
                 DefaultRepoUrl     = NullIfBlank(_cfgForm.DefaultRepoUrl),
                 RepositoryApiToken = NullIfBlank(_cfgForm.NewRepositoryApiToken) ?? _cfgForm.RepositoryApiToken,
-                AnthropicApiKey    = NullIfBlank(_cfgForm.NewAnthropicApiKey) ?? _cfgForm.AnthropicApiKey,
-                SweAfRepoPath      = NullIfBlank(_cfgForm.SweAfRepoPath),
-                LlmDeploymentId    = NullIfBlank(_cfgForm.LlmDeploymentId),
-                ComposeOverride    = NullIfBlank(_cfgForm.ComposeOverride),
-                ProvisionHost      = _provisionForm.Host.Trim(),
+                AnthropicApiKey      = NullIfBlank(_cfgForm.NewAnthropicApiKey) ?? _cfgForm.AnthropicApiKey,
+                SweAfRepoPath        = NullIfBlank(_cfgForm.SweAfRepoPath),
+                LlmDeploymentId      = NullIfBlank(_cfgForm.LlmDeploymentId),
+                ComposeOverride      = NullIfBlank(_cfgForm.ComposeOverride),
+                PortRangeStart       = _cfgForm.PortRangeStart,
+                PortRangeEnd         = _cfgForm.PortRangeEnd,
+                ControlPlaneImageTag = NullIfBlank(_cfgForm.ControlPlaneImageTag),
+                ProvisionHost        = _provisionForm.Host.Trim(),
                 SshUser            = _provisionForm.SshUser,
                 SshKeyPath         = _provisionForm.SshKeyPath,
                 SshPassword        = _provisionForm.SshPassword,
@@ -343,68 +353,6 @@
         }
         catch (Exception ex) { _cfgError = ex.Message; }
         finally { _savingCfg = false; }
-    }
-
-    private async Task ProvisionControlPlane()
-    {
-        _provisioning = true;
-        _provisionStatus = null;
-        try
-        {
-            // Save provisioning settings to config first
-            var cfg = ConfigSvc.GetConfig();
-            cfg.ProvisionHost = _provisionForm.Host.Trim();
-            cfg.SshUser = _provisionForm.SshUser;
-            cfg.SshKeyPath = _provisionForm.SshKeyPath;
-            cfg.SshPassword = _provisionForm.SshPassword;
-            cfg.SshPort = _provisionForm.SshPort;
-            cfg.RequiresSudo = _provisionForm.RequiresSudo;
-            cfg.SudoPassword = _provisionForm.SudoPassword;
-            await ConfigSvc.SaveAsync(cfg);
-
-            // Provision the control plane
-            var (success, error, controlPlaneUrl) = await ProvisioningSvc.ProvisionControlPlaneAsync();
-            if (success && !string.IsNullOrEmpty(controlPlaneUrl))
-            {
-                _provisionStatus = $"Success! Control plane is running at {controlPlaneUrl}. Click 'Save' to persist the configuration.";
-                await BuildsSvc.EnsureWebhookRegisteredAsync();
-            }
-            else
-            {
-                _provisionStatus = $"Error: {error ?? "Unknown error occurred."}";
-            }
-        }
-        catch (Exception ex)
-        {
-            _provisionStatus = $"Error: {ex.Message}";
-            _logger.LogWarning(ex, "Provisioning failed");
-        }
-        finally
-        {
-            _provisioning = false;
-        }
-    }
-
-    private async Task StopControlPlane()
-    {
-        _stopping = true;
-        _provisionStatus = null;
-        try
-        {
-            var error = await ProvisioningSvc.StopControlPlaneAsync();
-            _provisionStatus = error is null
-                ? "Control plane stopped."
-                : $"Error: {error}";
-        }
-        catch (Exception ex)
-        {
-            _provisionStatus = $"Error: {ex.Message}";
-            _logger.LogWarning(ex, "Stop control plane failed");
-        }
-        finally
-        {
-            _stopping = false;
-        }
     }
 
     // ── Host CRUD ─────────────────────────────────────────────────────────────
@@ -544,29 +492,36 @@
         public string  ModelQa               = "";
         public string  DefaultRepoUrl        = "";
         public string  SweAfRepoPath         = "";
-        public string  LlmDeploymentId      = "";
-        public string  ComposeOverride      = "";
+        public string  LlmDeploymentId       = "";
+        public string  ComposeOverride       = "";
         public string  ApiKey                = "";       // current value (for preservation)
         public string  WebhookSecret         = "";       // current value (for preservation)
         public string  RepositoryApiToken    = "";       // current value (for preservation)
         public string  AnthropicApiKey       = "";       // current value (for preservation)
+        // Per-build isolation
+        public int     PortRangeStart        = 8100;
+        public int     PortRangeEnd          = 8199;
+        public string  ControlPlaneImageTag  = "";
 
         public static CfgForm From(SweAfConfigEntity e) => new()
         {
-            BaseUrl            = e.BaseUrl,
-            HubPublicUrl       = e.HubPublicUrl    ?? "",
-            Runtime            = e.Runtime,
-            ModelDefault       = e.ModelDefault    ?? "",
-            ModelCoder         = e.ModelCoder      ?? "",
-            ModelQa            = e.ModelQa         ?? "",
-            DefaultRepoUrl     = e.DefaultRepoUrl  ?? "",
-            SweAfRepoPath      = e.SweAfRepoPath  ?? "",
-            LlmDeploymentId    = e.LlmDeploymentId ?? "",
-            ComposeOverride    = e.ComposeOverride  ?? "",
-            ApiKey             = e.ApiKey,
-            WebhookSecret      = e.WebhookSecret,
-            RepositoryApiToken = e.RepositoryApiToken,
-            AnthropicApiKey    = e.AnthropicApiKey,
+            BaseUrl               = e.BaseUrl,
+            HubPublicUrl          = e.HubPublicUrl    ?? "",
+            Runtime               = e.Runtime,
+            ModelDefault          = e.ModelDefault    ?? "",
+            ModelCoder            = e.ModelCoder      ?? "",
+            ModelQa               = e.ModelQa         ?? "",
+            DefaultRepoUrl        = e.DefaultRepoUrl  ?? "",
+            SweAfRepoPath         = e.SweAfRepoPath   ?? "",
+            LlmDeploymentId       = e.LlmDeploymentId ?? "",
+            ComposeOverride       = e.ComposeOverride  ?? "",
+            ApiKey                = e.ApiKey,
+            WebhookSecret         = e.WebhookSecret,
+            RepositoryApiToken    = e.RepositoryApiToken,
+            AnthropicApiKey       = e.AnthropicApiKey,
+            PortRangeStart        = e.PortRangeStart,
+            PortRangeEnd          = e.PortRangeEnd,
+            ControlPlaneImageTag  = e.ControlPlaneImageTag ?? "",
         };
     }
 

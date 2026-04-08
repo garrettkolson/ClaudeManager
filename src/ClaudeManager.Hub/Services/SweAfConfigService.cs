@@ -96,10 +96,13 @@ public class SweAfConfigService : IHostedService
             existing.SshPort            = config.SshPort;
             existing.RequiresSudo       = config.RequiresSudo;
             existing.SudoPassword       = config.SudoPassword;
-            existing.AnthropicApiKey    = config.AnthropicApiKey;
-            existing.SweAfRepoPath      = config.SweAfRepoPath;
-            existing.LlmDeploymentId    = config.LlmDeploymentId;
-            existing.ComposeOverride    = config.ComposeOverride;
+            existing.AnthropicApiKey       = config.AnthropicApiKey;
+            existing.SweAfRepoPath         = config.SweAfRepoPath;
+            existing.LlmDeploymentId       = config.LlmDeploymentId;
+            existing.ComposeOverride       = config.ComposeOverride;
+            existing.PortRangeStart        = config.PortRangeStart;
+            existing.PortRangeEnd          = config.PortRangeEnd;
+            existing.ControlPlaneImageTag  = config.ControlPlaneImageTag;
         }
         await db.SaveChangesAsync(ct);
 

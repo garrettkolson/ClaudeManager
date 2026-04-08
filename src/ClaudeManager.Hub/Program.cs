@@ -82,9 +82,10 @@ builder.Services.AddSingleton<SweAfConfigService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<SweAfConfigService>());
 builder.Services.AddHttpClient("sweaf");
 builder.Services.AddSingleton<BuildNotifier>();
+builder.Services.AddSingleton<SweAfPortAllocator>();
+builder.Services.AddSingleton<SweAfProvisioningService>();
 builder.Services.AddSingleton<SweAfService>();
 builder.Services.AddSingleton<SweAfHostService>();
-builder.Services.AddSingleton<SweAfProvisioningService>();
 builder.Services.AddHostedService<SweAfRecoveryService>();
 builder.Services.AddSingleton<NotificationService>();
 
