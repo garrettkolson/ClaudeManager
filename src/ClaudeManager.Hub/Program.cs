@@ -180,6 +180,8 @@ app.MapPost("/api/webhooks/agentfield", async (HttpRequest req, SweAfService svc
     return Results.Ok();
 });
 
+app.MapComponent("/agentfield", "Components/Pages/AgentField.razor");
+
 app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");
 

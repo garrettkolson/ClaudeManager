@@ -1,0 +1,109 @@
+@page "/agentfield"
+@implements IDisposable
+@inject SweAfConfigService ConfigSvc
+@PageTitle("AgentField Control Plane")
+
+<div class="agent-field-page">
+    @if (ConfigSvc.IsConfigured && !string.IsNullOrWhiteSpace(ConfigSvc.GetConfig().BaseUrl?.Trim()))
+    {
+        <div class="llm-page">
+            @if (_isLoading)
+            {
+                <div class="loading-state">Loading AgentField control plane...</div>
+            }
+            else if (!IsSafeUrl(ConfigSvc.GetConfig().BaseUrl?.Trim()))
+            {
+                <div class="placeholder-message">
+                    Failed to load AgentField control plane. Please verify your configuration on the SWE-AF Servers page.
+                    <a href="@Url.Page("agentfield")" class="btn-primary" onclick="redirectToSweafServers(event)">
+                        Provision AgentField Control Plane →
+                    </a>
+                </div>
+            }
+            else
+            {
+                <iframe
+                    src="@ConfigSvc.GetConfig().BaseUrl"
+                    sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+                    frameborder="0"
+                    style="width:100%; height:100%; border:none;"
+                    allow="clipboard-read; clipboard-write;"
+                    onload="OnIframeLoaded()"
+                    onerror="OnIframeLoadFailed()">
+                </iframe>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="llm-page">
+            <h1>AgentField Control Plane</h1>
+            <div class="placeholder-message">
+                No control plane configured — provision the control plane on the SWE-AF Servers page.
+                <a href="@Url.Page("agentfield")" class="btn-primary" onclick="redirectToSweafServers(event)">
+                    Provision AgentField Control Plane →
+                </a>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private readonly IJSRuntime JSRuntime;
+    private bool _isLoading = true;
+    private bool _isLoaded = false;
+
+    public AgentFieldPage(IJSRuntime jsRuntime)
+    {
+        JSRuntime = jsRuntime;
+    }
+
+    private void redirectToSweafServers(System.EventArgs e)
+    {
+        JSRuntime.InvokeVoidAsync("window.location.href = '/sweaf';");
+    }
+
+    [JSInvokable]
+    private async Task OnIframeLoaded()
+    {
+        Console.WriteLine("Iframe loaded!");
+        _isLoaded = true;
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    private async Task OnIframeLoadFailed()
+    {
+        Console.WriteLine("Iframe load failed!");
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private bool IsConfigured =>
+        ConfigSvc.IsConfigured &&
+        !string.IsNullOrWhiteSpace(ConfigSvc.GetConfig().BaseUrl?.Trim());
+
+    private bool IsSafeUrl(string? baseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            return false;
+
+        try
+        {
+            var uri = new Uri(baseUrl);
+            if (uri.Scheme is not ("http" or "https"))
+                return false;
+
+            return true;
+        }
+        catch (UriFormatException)
+        {
+            return false;
+        }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+    }
+}
