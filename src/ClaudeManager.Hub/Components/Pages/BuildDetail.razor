@@ -120,6 +120,15 @@
             </div>
         }
 
+        @* ── Build log ── *@
+        @if (!string.IsNullOrWhiteSpace(_job.Logs))
+        {
+            <div class="build-detail-section">
+                <h3>Build Log</h3>
+                <pre class="build-detail-pre">@_job.Logs</pre>
+            </div>
+        }
+
         @* ── Foundry result ── *@
         <div class="build-detail-section">
             <div class="build-detail-section-header">

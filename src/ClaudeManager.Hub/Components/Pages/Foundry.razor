@@ -272,10 +272,14 @@
                     {
                         <div class="error-msg">@_modalError</div>
                     }
+                    @if (_triggerStatus is not null)
+                    {
+                        <div class="trigger-status">@_triggerStatus</div>
+                    }
                     <div class="modal-actions">
-                        <button class="btn-secondary" @onclick="CloseModal">Cancel</button>
+                        <button class="btn-secondary" @onclick="CloseModal" disabled="@_saving">Cancel</button>
                         <button class="btn-primary" @onclick="TriggerBuild" disabled="@_saving">
-                            @(_saving ? "Triggering…" : "Start Build")
+                            @(_saving ? "Starting…" : "Start Build")
                         </button>
                     </div>
                 </div>
@@ -533,9 +537,10 @@
     private List<(SweAfHostEntity Host, SweAfHostCommand Cmd)> _hostCommands = [];
 
     private bool    _showModal;
-    private string  _formGoal    = string.Empty;
-    private string  _formRepoUrl = string.Empty;
+    private string  _formGoal      = string.Empty;
+    private string  _formRepoUrl   = string.Empty;
     private string? _modalError;
+    private string? _triggerStatus;
     private bool    _saving;
 
     private string? _serviceOp;
@@ -715,25 +720,38 @@
         _showModal   = true;
     }
 
-    private void CloseModal() => _showModal = false;
+    private void CloseModal()
+    {
+        _showModal     = false;
+        _triggerStatus = null;
+    }
 
     private async Task TriggerBuild()
     {
         if (string.IsNullOrWhiteSpace(_formGoal))    { _modalError = "Goal is required.";           return; }
         if (string.IsNullOrWhiteSpace(_formRepoUrl)) { _modalError = "Repository URL is required."; return; }
 
-        _saving     = true;
-        _modalError = null;
+        _saving        = true;
+        _modalError    = null;
+        _triggerStatus = null;
+
+        var progress = new Progress<string>(msg => InvokeAsync(() =>
+        {
+            _triggerStatus = msg;
+            StateHasChanged();
+        }));
 
         try
         {
-            await BuildsSvc.TriggerBuildAsync(_formGoal.Trim(), _formRepoUrl.Trim());
-            _showModal = false;
+            await BuildsSvc.TriggerBuildAsync(_formGoal.Trim(), _formRepoUrl.Trim(), progress);
+            _showModal     = false;
+            _triggerStatus = null;
             _jobs = await BuildsSvc.GetAllJobsAsync();
         }
         catch (Exception ex)
         {
-            _modalError = ex.Message;
+            _triggerStatus = null;
+            _modalError    = ex.Message;
         }
         finally
         {

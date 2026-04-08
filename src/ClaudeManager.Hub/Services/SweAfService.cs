@@ -149,20 +149,22 @@ public class SweAfService
 
     // ── Trigger ───────────────────────────────────────────────────────────────
 
-    public async Task<SweAfJobEntity> TriggerBuildAsync(string goal, string repoUrl)
+    public async Task<SweAfJobEntity> TriggerBuildAsync(
+        string goal, string repoUrl, IProgress<string>? progress = null)
     {
         var cfg = await _configSvc.GetConfigAsync();
         if (!cfg.IsConfigured)
             throw new InvalidOperationException(
                 "Foundry is not configured. Go to Foundry settings to add the control plane URL and API key.");
 
-        return await TriggerWithPerBuildProvisionAsync(goal, repoUrl, cfg);
+        return await TriggerWithPerBuildProvisionAsync(goal, repoUrl, cfg, progress);
     }
 
     /// <summary>Provisions a fresh isolated container, waits for health, then triggers the build.</summary>
     private async Task<SweAfJobEntity> TriggerWithPerBuildProvisionAsync(
-        string goal, string repoUrl, SweAfConfigEntity cfg)
+        string goal, string repoUrl, SweAfConfigEntity cfg, IProgress<string>? progress = null)
     {
+        progress?.Report("Allocating port…");
         // Allocate a port from the configured range
         var port = await _portAllocator.AllocatePortAsync(cfg, _dbFactory);
         if (port is null)
@@ -193,7 +195,21 @@ public class SweAfService
         projectName = $"agentfield-{job.Id}";
         job.ComposeProjectName = projectName;
         await setupDb.SaveChangesAsync();
-        _notifier.NotifyBuildChanged(job);
+
+        // Helper: append a timestamped line to job.Logs, save, and push to UI
+        var logBuf = new System.Text.StringBuilder();
+        async Task LogStep(string line)
+        {
+            logBuf.AppendLine($"[{DateTimeOffset.UtcNow:HH:mm:ss}] {line}");
+            job.Logs = logBuf.ToString().TrimEnd();
+            await setupDb.SaveChangesAsync();
+            _notifier.NotifyBuildChanged(job);
+        }
+
+        await LogStep($"Port {port} allocated.");
+
+        progress?.Report("Provisioning agent server…");
+        await LogStep("Provisioning agent server…");
 
         // Provision the isolated container
         var (provSuccess, provError, controlPlaneUrl) =
@@ -211,9 +227,13 @@ public class SweAfService
         }
 
         // Wait for the container to be ready
+        progress?.Report("Waiting for agent server to be ready… (0s)");
+        await LogStep("Waiting for agent server to be ready…");
+        var waitStart = DateTimeOffset.UtcNow;
         var healthy = await WaitForHealthAsync(
             $"{controlPlaneUrl}/health",
-            TimeSpan.FromSeconds(120));
+            TimeSpan.FromSeconds(300),
+            progress);
 
         if (!healthy)
         {
@@ -226,9 +246,11 @@ public class SweAfService
             throw new InvalidOperationException("Control plane health check timed out.");
         }
 
+        var waitElapsed = (int)(DateTimeOffset.UtcNow - waitStart).TotalSeconds;
         job.ControlPlaneUrl = controlPlaneUrl;
-        await setupDb.SaveChangesAsync();
-        _notifier.NotifyBuildChanged(job);
+
+        progress?.Report("Registering webhook…");
+        await LogStep($"Agent server ready ({waitElapsed}s). Registering webhook…");
 
         // Register webhook on the per-job instance
         var publicUrl = _configSvc.HubPublicUrl?.TrimEnd('/');
@@ -240,6 +262,9 @@ public class SweAfService
             if (!ok)
                 _logger.LogWarning("Per-job webhook registration failed for job {JobId}: {Error}", job.Id, err);
         }
+
+        progress?.Report("Starting build…");
+        await LogStep("Triggering build…");
 
         // Trigger the build on the per-job control plane
         ExecuteResponse result;
@@ -259,8 +284,7 @@ public class SweAfService
         }
 
         job.ExternalJobId = result.ExecutionId;
-        await setupDb.SaveChangesAsync();
-        _notifier.NotifyBuildChanged(job);
+        await LogStep($"Build triggered (ID: {result.ExecutionId}).");
 
         _logger.LogInformation(
             "Per-job SWE-AF build triggered: {ExternalJobId} for {RepoUrl} (project={Project})",
@@ -315,22 +339,39 @@ public class SweAfService
     /// <summary>
     /// Polls the health endpoint until it returns 200 OK or the timeout elapses.
     /// </summary>
-    private async Task<bool> WaitForHealthAsync(string healthUrl, TimeSpan timeout)
+    private async Task<bool> WaitForHealthAsync(
+        string healthUrl, TimeSpan timeout, IProgress<string>? progress = null)
     {
-        var deadline = DateTimeOffset.UtcNow + timeout;
+        var started  = DateTimeOffset.UtcNow;
+        var deadline = started + timeout;
         var http     = Http();
+        _logger.LogInformation("Health polling: {Url}", healthUrl);
         while (DateTimeOffset.UtcNow < deadline)
         {
+            string pollResult;
             try
             {
-                var resp = await http.GetAsync(healthUrl);
+                using var cts  = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                var resp = await http.GetAsync(healthUrl, cts.Token);
                 if (resp.IsSuccessStatusCode)
+                {
+                    _logger.LogInformation("Health check passed: {Status}", (int)resp.StatusCode);
                     return true;
+                }
+                pollResult = $"HTTP {(int)resp.StatusCode}";
             }
-            catch
+            catch (OperationCanceledException)
             {
-                // Container not up yet — keep polling
+                pollResult = "request timed out";
             }
+            catch (Exception ex)
+            {
+                pollResult = ex.Message;
+            }
+
+            var elapsed = (int)(DateTimeOffset.UtcNow - started).TotalSeconds;
+            _logger.LogDebug("Health poll at {Elapsed}s: {Result}", elapsed, pollResult);
+            progress?.Report($"Waiting for agent server to be ready… ({elapsed}s — {pollResult})");
             await Task.Delay(2000);
         }
         return false;
