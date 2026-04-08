@@ -162,7 +162,7 @@
                                     {
                                         <a href="@url" target="_blank" class="pr-link">PR ↗</a>
                                     }
-                                    @if (job.Status == BuildStatus.Failed && job.ErrorMessage is not null)
+                                    @if (job is { Status: BuildStatus.Failed, ErrorMessage: not null })
                                     {
                                         <span class="build-error-hint" title="@job.ErrorMessage">error</span>
                                     }

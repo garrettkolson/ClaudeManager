@@ -624,6 +624,10 @@ public class SweAfService
                 if (job.Status is BuildStatus.Succeeded or BuildStatus.Failed or BuildStatus.Cancelled)
                 {
                     job.CompletedAt ??= DateTimeOffset.UtcNow;
+                    if (job.Status == BuildStatus.Succeeded
+                        && job.PrUrls is null
+                        && status.Result is { ValueKind: not JsonValueKind.Null } result)
+                        job.PrUrls = ExtractPrUrlsFromResult(result);
                     // Tear down per-job container if the build finished while hub was down
                     if (!string.IsNullOrWhiteSpace(job.ComposeProjectName))
                         _ = Task.Run(() => TearDownJobContainerAsync(job.ComposeProjectName), CancellationToken.None);
@@ -703,6 +707,11 @@ public class SweAfService
     private static string? ExtractPrUrls(JsonElement data)
     {
         if (!data.TryGetProperty("result", out var result)) return null;
+        return ExtractPrUrlsFromResult(result);
+    }
+
+    private static string? ExtractPrUrlsFromResult(JsonElement result)
+    {
         if (result.TryGetProperty("pr_urls", out var arr))
             return arr.GetRawText();
         if (result.TryGetProperty("pull_request_url", out var single))
