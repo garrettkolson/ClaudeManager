@@ -129,6 +129,23 @@
             </div>
         }
 
+        @* ── AgentField execution ── *@
+        @if (!string.IsNullOrEmpty(_job.ExternalJobId))
+        {
+            <div class="build-detail-section agentfield-execution">
+                <iframe src="./index.html?execution_id=@_job.ExternalJobId"
+                        class="agentfield-iframe"
+                        style="width: 100%; height: 500px; min-height: 500px; border: 1px solid #ccc; display: block;"
+                        scrolling="no"></iframe>
+            </div>
+        }
+        else
+        {
+            <div class="build-detail-section agentfield-execution">
+                <div class="agentfield-placeholder">AgentField execution not available for this build.</div>
+            </div>
+        }
+
         @* ── Foundry result ── *@
         <div class="build-detail-section">
             <div class="build-detail-section-header">
