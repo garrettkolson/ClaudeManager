@@ -145,21 +145,63 @@ A shared knowledge base at `/wiki`, readable and writable by both the UI and Cla
 - **Claude can read** the wiki by calling `wiki_list()`, which returns all non-archived entries.
 - The UI supports full CRUD plus archive/restore.
 
-### Builds (SWE-AF / AgentField)
+### Foundry (SWE-AF / AgentField)
 
-Autonomous build orchestration at `/builds`. Requires `SweAf` config; see [Configuration](#hub-configuration) below.
+Autonomous build orchestration at `/foundry`. All SWE-AF configuration is managed through the UI (stored in the database); no `appsettings.json` entries are required.
 
-- **Trigger a build** — provide a goal description and a GitHub repo URL. The Hub calls AgentField's `swe-planner.build` agent (using the configured `Runtime` and `Models`), which autonomously implements the feature and opens a draft PR.
+The Foundry page has two tabs:
+
+**Builds tab**
+
+- **Trigger a build** — provide a goal description and a GitHub repo URL. The Hub provisions a fresh isolated agent stack, waits for it to become healthy, registers the webhook on it, then calls AgentField's `swe-planner.build` agent, which autonomously implements the feature and opens a draft PR. Provisioning status messages are shown in the modal during the process and written to the build log for later reference.
 - **Build stats** — summary bar showing total, succeeded, failed, running, and waiting counts.
-- **Build detail page** — click any build goal to open `/builds/{id}` with full metadata, timeline, PR links, error details, and the raw AgentField execution result.
-- **Live status updates** — AgentField sends observability webhook events; the Hub verifies the HMAC-SHA256 signature and updates job status in real time.
-- **Externally-triggered builds** — the AgentField webhook fires for all executions under the API key, not just Hub-initiated ones. Builds triggered by Jira, CLI, or other sources are automatically discovered and shown in the dashboard.
-- **Recovery** — on startup the Hub polls AgentField for any in-flight jobs to reconcile state missed during downtime.
+- **Build detail page** — click any build goal to open `/builds/{id}` with full metadata, timeline, PR links, error details, build log, and the raw AgentField execution result.
+- **Live status updates** — AgentField sends observability webhook events per-job; the Hub verifies the HMAC-SHA256 signature and updates job status in real time.
+- **Externally-triggered builds** — the webhook fires for all executions under the API key, not just Hub-initiated ones. Builds triggered by Jira, CLI, or other sources are automatically discovered and shown.
+- **Recovery** — on startup the Hub polls AgentField for any in-flight jobs to reconcile state missed during downtime, including extracting PR URLs from completed jobs.
 - **Job controls** (visible for active jobs):
   - **Cancel** — sends a cancel request; status updates when the resulting webhook arrives.
-  - **Approve / Reject** — shown when a job is in `Waiting` state (human-in-the-loop approval gate). Sends the decision back to AgentField.
+  - **Approve / Reject** — shown when a job is in `Waiting` state (human-in-the-loop approval gate).
   - **Retry** — re-triggers a failed or cancelled build with the same goal and repository.
-- **Host service control** — configurable command buttons in the header when `SweAfHost` is set up. Connects via SSH (or locally) and runs shell commands to start, stop, or restart the SWE-AF service.
+
+**Settings tab**
+
+All Foundry configuration is set here and stored in the database:
+
+| Setting | Description |
+|---------|-------------|
+| Control Plane URL | Fallback AgentField URL (used when per-build provisioning is not configured). |
+| API Key | Bearer token for the AgentField API. |
+| Webhook Secret | HMAC-SHA256 secret for verifying webhook payloads. |
+| Hub Public URL | Public URL of this Hub — used to register the observability webhook on each per-job control plane. |
+| Runtime | `claude_code` (Claude) or `open_code` (open-source models). |
+| Models | Per-role model overrides (Default, Coder, QA). |
+| **Provisioning Host** | SSH host, port, user, key/password, and sudo settings for the machine that runs Docker. |
+| **SWE-AF Repo Path** | Path to the SWE-AF Docker Compose repo on the provisioning host (default: `~/swe-af`). |
+| **Port Range** | Start and end of the port block pool. Each build claims 3 consecutive ports (control-plane, swe-agent, swe-fast). |
+| **LLM Deployment** | Optional: select a configured LLM deployment. Sets `ANTHROPIC_BASE_URL` in the agent's `.env` to point at the nginx proxy for that host. |
+| **Control Plane Image Tag** | Overrides `AGENTFIELD_IMAGE_TAG` in the `.env` file (e.g. `latest`, `v1.2.3`). |
+| **Compose Override** | Raw YAML written to `docker-compose.override.yml` on the provisioning host before each build. |
+
+### Per-build isolated provisioning
+
+When provisioning is configured, each build gets a fully isolated Docker Compose stack:
+
+- The Hub allocates a block of 3 consecutive ports from the configured range (one each for control-plane, swe-agent, swe-fast).
+- A unique Compose project (`agentfield-{id}`) is created so multiple builds can run in parallel without port conflicts.
+- `docker-compose.hub.yml` is written to the repo on the provisioning host, overriding the port mappings for all three services and setting `AGENTFIELD_SERVER` / `AGENT_CALLBACK_URL` to Docker service DNS names so intra-stack communication is isolated to the project network.
+- The Hub polls the control plane's `/health` endpoint (5-second per-request timeout) until it responds, then registers the observability webhook on it and triggers the build. If the `swe-planner` agent hasn't finished registering yet, the trigger is retried up to 10 times (5 s apart) before failing.
+- On completion (succeeded, failed, or cancelled), the stack is torn down automatically via `docker compose down`.
+
+### LLM Servers
+
+GPU host and vLLM deployment management at `/llm`.
+
+- **GPU hosts** — register remote machines (SSH credentials, optional sudo) that run vLLM Docker containers.
+- **Deployments** — configure and start vLLM instances on a host, specifying model ID, GPU indices, quantization, host port, image tag, and extra args. The Hub starts the container and polls for health; large models that take longer than 30 s to load continue polling in the background.
+- **Detect containers** — scan a host for running vLLM containers and import any that aren't already tracked.
+- **nginx proxy** — each GPU host can have a proxy port configured. Clicking **Apply Proxy** generates a round-robin nginx config across all `Running` deployments on that host, writes it to `~/.vllm-proxy/nginx.conf` on the host, and starts or reloads the `vllm-nginx-proxy` container (`--network host`). The config is automatically regenerated whenever a deployment starts or stops. The proxy URL from a configured host is automatically used as `ANTHROPIC_BASE_URL` when triggering Foundry builds via that host's associated LLM deployment.
+- **GPU info** — query NVIDIA GPU status (model, VRAM, utilization) from the host via `nvidia-smi`.
 
 ---
 
@@ -208,95 +250,23 @@ Pre-configures machines so they appear in the dashboard before their Agent conne
 | `SshPassword` | One of | — | SSH password. Key-based auth preferred. |
 | `AgentCommand` | Yes | — | Full shell command to launch the Agent, including any backgrounding syntax. |
 
-**`SweAf`** *(optional — enables the Builds page)*
+**Foundry / SWE-AF** *(UI-configured — no `appsettings.json` entries required)*
 
-SWE-AF is a two-component system. Both must be running for the Builds page to work:
+All Foundry settings (API key, webhook secret, provisioning host, port range, LLM deployment, model overrides, etc.) are entered in the **Settings** tab of the Foundry page (`/foundry`) and stored in the SQLite database. There is nothing to add to `appsettings.json` for this feature.
 
-| Component | What it is | Default port |
-|-----------|------------|--------------|
-| **AgentField control plane** | REST API server (`agentfield/control-plane` Docker image) | 8080 |
-| **SWE-AF agent node** | Python build agent (`python -m swe_af`) | 8003 |
+The SWE-AF stack that the Hub provisions consists of three Docker Compose services:
 
-`BaseUrl` must point at the **control plane** (e.g. `http://localhost:8080`).
+| Service | Internal port | Role |
+|---------|--------------|------|
+| `control-plane` | 8080 | AgentField REST API |
+| `swe-agent` | 8003 | Planning / coding agent (`swe-planner` node) |
+| `swe-fast` | 8004 | Fast reasoning agent |
 
-```json
-{
-  "SweAf": {
-    "BaseUrl":        "http://localhost:8080",
-    "ApiKey":         "af_...",
-    "WebhookSecret":  "your-webhook-hmac-secret",
-    "HubPublicUrl":   "https://hub.example.com",
-    "Runtime":        "claude_code",
-    "Models": {
-      "Default": "sonnet",
-      "Coder":   "opus"
-    }
-  }
-}
-```
+Each build is assigned a block of 3 consecutive host ports from the configured range. The Hub writes a `docker-compose.hub.yml` to the provisioning host that overrides the port mappings for all three services and sets `AGENTFIELD_SERVER` / `AGENT_CALLBACK_URL` to Docker service-DNS names so the containers communicate within their isolated project network.
 
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `BaseUrl` | Yes | — | AgentField control plane URL (e.g. `http://localhost:8080`). |
-| `ApiKey` | Yes | — | Bearer token for the AgentField API. |
-| `WebhookSecret` | No | — | HMAC-SHA256 secret for verifying webhook payloads. Leave unset to skip signature verification. |
-| `HubPublicUrl` | No | — | Public URL of this Hub (e.g. `https://hub.example.com`). Pre-populates the webhook registration form on the Builds page. |
-| `Runtime` | No | `"claude_code"` | `"claude_code"` for Claude backends; `"open_code"` for open-source models (DeepSeek, Qwen, Llama, etc.) via OpenRouter/OpenAI/Google. |
-| `Models.Default` | No | — | Default model for most tasks. Short names (`"sonnet"`, `"opus"`) for Claude; `"provider/model-id"` format for open-source (e.g. `"deepseek/deepseek-chat"`). |
-| `Models.Coder` | No | — | Model for coding-intensive steps. |
-| `Models.Qa` | No | — | Model for QA/verification steps. |
+**LLM Servers** *(UI-configured — no `appsettings.json` entries required)*
 
-To receive webhook events, click **Webhook** on the Builds page and enter the Hub's public URL. This registers `{HubPublicUrl}/api/webhooks/agentfield` with the AgentField control plane. You can also register manually:
-```
-POST http://localhost:8080/api/v1/settings/observability-webhook
-{ "url": "https://<your-hub>/api/webhooks/agentfield", "secret": "<WebhookSecret>" }
-```
-
-**`SweAfHost`** *(optional — enables service control buttons on the Builds page)*
-
-Each entry in `Commands` becomes one button in the Builds page header. Clicking a button runs the corresponding shell command on the configured host. SWE-AF does not use systemd; the two common deployment modes are:
-
-**Docker Compose (recommended):**
-```json
-{
-  "SweAfHost": {
-    "Host":       "192.168.1.20",
-    "Port":       22,
-    "SshUser":    "ubuntu",
-    "SshKeyPath": "~/.ssh/id_rsa",
-    "Commands": [
-      { "Label": "Start",   "Command": "cd /opt/swe-af && docker compose up -d" },
-      { "Label": "Stop",    "Command": "cd /opt/swe-af && docker compose down" },
-      { "Label": "Restart", "Command": "cd /opt/swe-af && docker compose restart" }
-    ]
-  }
-}
-```
-
-**Bare metal (Python virtual environment):**
-```json
-{
-  "SweAfHost": {
-    "Host":            "192.168.1.20",
-    "Port":            22,
-    "SshUser":         "ubuntu",
-    "SshKeyPath":      "~/.ssh/id_rsa",
-    "AnthropicBaseUrl": "http://localhost:11434",
-    "AnthropicApiKey":  "local",
-    "Commands": [
-      { "Label": "Start", "Command": "cd /opt/swe-af && source .venv/bin/activate && nohup python -m swe_af > /tmp/swe-af.log 2>&1 &" },
-      { "Label": "Stop",  "Command": "pkill -f 'python -m swe_af'" }
-    ]
-  }
-}
-```
-
-Uses the same SSH transport as `KnownMachines`. Set `Host` to `"localhost"` to run commands locally via `Process.Start` instead of SSH. Commands that return a non-zero exit code are treated as success when stderr is empty (handles stop-when-already-stopped gracefully).
-
-`AnthropicBaseUrl` and `AnthropicApiKey` set `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` on the SWE-AF process:
-- **Localhost:** set directly on the child process environment.
-- **SSH / bare metal:** prepended as inline shell assignments (e.g. `ANTHROPIC_BASE_URL='...' nohup python -m swe_af &`).
-- **Docker Compose:** inline env vars cannot inject into container environments. Set `ANTHROPIC_BASE_URL` in the `.env` file on the host machine and leave `AnthropicBaseUrl` unset.
+GPU hosts and vLLM deployments are registered and managed entirely through the LLM Servers page (`/llm`). No `appsettings.json` configuration is needed.
 
 ### Agent configuration
 
