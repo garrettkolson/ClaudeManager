@@ -22,7 +22,13 @@
             General
         </button>
         <button class="llm-tab @(activeTab == 1 ? "llm-tab-active" : "")" @onclick="() => { _activeTab = 1; StateHasChanged(); }">
+            Host GPUs
+        </button>
+        <button class="llm-tab @(activeTab == 2 ? "llm-tab-active" : "")" @onclick="() => { _activeTab = 2; StateHasChanged(); }">
             Deployments
+        </button>
+        <button class="llm-tab @(activeTab == 3 ? "llm-tab-active" : "")" @onclick="() => { _activeTab = 3; StateHasChanged(); }">
+            Proxy
         </button>
     </div>
 
@@ -295,9 +301,82 @@
             </table>
         }
         </section>
+        @if (_activeTab == 1)
+        {
+            @* ── Host GPUs Tab ────────────────────────────────────────────────── *@
+            <section class="llm-section">
+                <div class="llm-section-header">
+                    <h2>Host GPUs</h2>
+                    @if (_hosts?.Count > 0)
+                    {
+                        <button class="btn-primary" @onclick="() => _showInspectHostGpus = !_showInspectHostGpus">
+                            @(_showInspectHostGpus ? "Cancel" : "Inspect GPUs")
+                        </button>
+                    }
+                </div>
+
+                @if (_showInspectHostGpus)
+                {
+                    @foreach (var host in _hosts ?? [])
+                    {
+                        var hostRef = host;
+                        <div class="llm-gpu-inspect-section">
+                            <h3>Inspecting GPUs on <code>@hostRef.DisplayName</code></h3>
+                            @if (_inspectingId == hostRef.Id)
+                            {
+                                <span class="llm-hint">Loading GPU info…</span>
+                            }
+                            else if (_gpuErrors.TryGetValue(hostRef.Id, out var gpuErr))
+                            {
+                                <div class="error-msg">Error: @gpuErr</div>
+                            }
+                            else if (_gpuResults.TryGetValue(hostRef.Id, out var gpus))
+                            {
+                                <table class="llm-gpu-table">
+                                    <thead>
+                                        <tr>
+                                            <th>#</th>
+                                            <th>GPU</th>
+                                            <th>VRAM Total</th>
+                                            <th>VRAM Free</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var gpu in gpus)
+                                        {
+                                            <tr>
+                                                <td>@gpu.Index</td>
+                                                <td>@gpu.Name</td>
+                                                <td>@FormatVram(gpu.MemoryTotalMb)</td>
+                                                <td>@FormatVram(gpu.MemoryFreeMb)</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            }
+                            else
+                            {
+                                <div class="llm-hint">No GPUs detected.</div>
+                            }
+                        </div>
+                    }
+                }
+                else
+                {
+                    @if (_detectingHostId.HasValue)
+                    {
+                        <div class="llm-hint">Detecting containers…</div>
+                    }
+                    else if (_detectingHostId == null)
+                    {
+                        <div class="llm-hint">Click on each host row and press "Detect Containers" to find running vLLM instances.</div>
+                    }
+                }
+            </section>
+        }
     }
 
-    @if (_activeTab == 1)
+    @if (_activeTab == 2)
     {
         @* ── Deployments Tab ────────────────────────────────────────────────── *@
         <section class="llm-section">
@@ -532,6 +611,22 @@
             }
         </section>
     }
+
+    @if (_activeTab == 3)
+    {
+        @* ── Proxy Tab ─────────────────────────────────────────────────────── *@
+        <section class="llm-section">
+            <div class="llm-section-header">
+                <h2>Proxy</h2>
+                @if (_hosts?.Count > 0)
+                {
+                    <button class="btn-primary" @onclick="() => RedirectToProxy()" type="button">
+                        Open Proxy Page
+                    </button>
+                }
+            </div>
+        </section>
+    }
 </div>
 
 @* ── Edit Host Modal ──────────────────────────────────────────────────────── *@
@@ -703,6 +798,9 @@
     private long?   _nativeMaxContext;
     private string? _contextEstimateError;
 
+    // Host GPU inspection (unused in current structure but required for tab
+    private bool    _showInspectHostGpus;
+
     // Action busy-state (by deployment ID)
     private HashSet<long> _busyIds = [];
 
@@ -721,6 +819,11 @@
         _hfToken     = await SecretSvc.GetAsync(HubSecretService.HuggingFaceTokenKey);
         _deployments = await DeploymentSvc.GetAllAsync();
         Notifier.DeploymentChanged += OnDeploymentChanged;
+    }
+
+    private void RedirectToProxy()
+    {
+        Navigation.NavigateTo("/proxy", "#proxy");
     }
 
     public void Dispose()
