@@ -1,0 +1,19 @@
+{
+  "iteration": 1,
+  "feedback": "Synthesizer failed and review has blocking issues \u2014 blocking.",
+  "files_changed": [
+    "src/ClaudeManager.Hub/Components/Pages/BuildDetail.razor.cs",
+    "tests/ClaudeManager.Hub.Tests/test_BuildDetail_Scripts.cs"
+  ],
+  "iteration_history": [
+    {
+      "iteration": 1,
+      "action": "block",
+      "summary": "Synthesizer failed and review has blocking issues \u2014 blocking.",
+      "qa_passed": false,
+      "review_approved": false,
+      "review_blocking": true,
+      "path": "flagged"
+    }
+  ]
+}

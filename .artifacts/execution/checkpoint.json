@@ -1,0 +1,333 @@
+{
+  "repo_path": "/workspaces/ClaudeManager",
+  "artifacts_dir": "/workspaces/ClaudeManager/.artifacts",
+  "prd_path": "/workspaces/ClaudeManager/.artifacts/plan/prd.md",
+  "architecture_path": "/workspaces/ClaudeManager/.artifacts/plan/architecture.md",
+  "issues_dir": "/workspaces/ClaudeManager/.artifacts/plan/issues",
+  "original_plan_summary": "Issue plan organized for maximum parallelism with sequential logical dependencies. Level 1: log-parser-service creates shared utility (no deps, small scope). Level 2: build-detail-native-logs-widget and build-detail-scripts-implementation can run in parallel since LogParser is independent; widget requires parser for log message rendering, scripts need parser for escape duties. Level 3: logs-widget-verification ensures all components integrate properly before moving forward. This structure minimizes critical path while respecting natural dependencies. Each issue is self-contained for autonomous coder agents with clear acceptance criteria and test strategies. Total 4 issues, 3 independent parallel opportunities (2 at level 1, 1 at level 2).",
+  "prd_summary": "Replace the iframe embed for AgentField build logs with a native logs widget that displays cached logs from SweAfJobEntity.Logs field, with a Refresh button to fetch fresh logs from the control plane API via FetchExecutionDetailAsync, integrated inline with the existing Build detail page layout.\n\nAcceptance Criteria:\n- BuildDetail.razor should display a non-iframe logs widget instead of the existing iframe embed at lines 132-149\n- The logs widget uses job.Logs field when populated via webhook caching from SweAfService.ApplyEventAsync\n- A Refresh button calls FetchExecutionDetailAsync and updates job.Logs with fresh log content from control plane\n- The logs display in a scrollable container similar to the existing Build Log tab style\n- For builds with no per-job control plane URL, logs are fetched from hub-level control plane via ResolveControlPlaneUrlAsync\n- Calling FetchExecutionDetailAsync updates job.Logs field and persists to database via SaveChanges\n- The logs widget includes a Copy button that copies logs to clipboard using browser clipboard API\n- The logs widget includes a Download button that triggers file download of logs as .log file",
+  "architecture_summary": "Native Blazor logs widget architecture replacing iframe embed. Uses cached SweAfJobEntity.Logs from webhooks, refresh button fetches fresh logs via FetchExecutionDetailAsync, fallback to hub-level control plane for early failed builds.",
+  "all_issues": [
+    {
+      "acceptance_criteria": [
+        "LogMessage record includes Timestamp, Content, LineNumber properties",
+        "ParseLogMessages method handles [HH:mm:ss.fff] and plain text log formats",
+        "EscapeJavaScriptString correctly escapes backslashes, quotes, control characters",
+        "Empty/whitespace input returns empty collection",
+        "Lines with timestamps split into separate timestamp and content display"
+      ],
+      "depends_on": [],
+      "description": "Creates a LogParser service that parses raw log strings into structured LogMessage objects with timestamps extracted from format [HH:mm:ss.fff]. Includes an EscapeJavaScriptString extension method for browser clipboard operations. Uses the ILogParser interface defined in architecture to parse logs per line while tracking line numbers for future features.",
+      "estimated_complexity": "medium",
+      "files_to_create": [
+        "ClaudeManager.Hub/Services/LogParser.cs"
+      ],
+      "files_to_modify": [],
+      "guidance": {
+        "estimated_scope": "small",
+        "needs_deeper_qa": false,
+        "needs_new_tests": true,
+        "review_focus": "Verify timestamp regex parses correctly, EscapeJavaScriptString covers all required characters, memory efficient for large log strings.",
+        "risk_rationale": "Low risk - utility service with clear contracts, no complex state management",
+        "testing_guidance": "Use xUnit framework. Create suite of unit tests for ParseLogMessages covering timestamp parsing and plain text fallback. Test escape method with various special characters. No browser tests needed for this service layer.",
+        "touches_interfaces": false
+      },
+      "name": "log-parser-service",
+      "provides": [
+        "LogMessage record",
+        "ILogParser interface implementation",
+        "ParseLogMessages method",
+        "EscapeJavaScriptString extension method"
+      ],
+      "sequence_number": 1,
+      "target_repo": "ClaudeManager.Hub",
+      "testing_strategy": "Create tests/test_logparser.cs using xUnit. Unit tests: TestParseLogMessages_with_timestamps(), TestParseLogMessages_plain_text(), TestParseLogMessages_empty_input(), TestParseLogMessages_multiline(). Functional tests: TestEscapeJavaScriptString_escapes_backslashes(), TestEscapeJavaScriptString_escapes_quotes(). Edge case tests: cover newlines, tabs in log content, empty strings.",
+      "title": "LogParser service for parsing log timestamps from logs",
+      "worktree_path": "/workspaces/ClaudeManager/.worktrees/issue-82fcf1cb-01-log-parser-service",
+      "branch_name": "issue/82fcf1cb-01-log-parser-service",
+      "integration_branch": "feature/82fcf1cb-agentfield-build-logs"
+    },
+    {
+      "acceptance_criteria": [
+        "Lines 132-149 iframe section completely removed from BuildDetail.razor",
+        "Native logs widget section added with proper container styling",
+        "Refresh, Copy, Download action buttons displayed in section header",
+        "Log content parsed with timestamps separated correctly",
+        "Empty state message shown when no cached logs available",
+        "Widget uses _job.Logs field when populated from webhook caching",
+        "Logging matches existing Build Log container style (scrollable, max-height)",
+        "CSS classes .build-log-container, .build-log-timestamp, .build-log-content defined"
+      ],
+      "depends_on": [
+        "log-parser-service"
+      ],
+      "description": "Replaces the iframe embed (lines 132-149 in BuildDetail.razor) with a native Blazor logs widget that displays cached logs from _job.Logs field. Includes action buttons for Refresh, Copy, Download. Widget matches existing Build Log tab styling with scrollable container and timestamp-separated log message display.",
+      "estimated_complexity": "medium",
+      "files_to_create": [],
+      "files_to_modify": [
+        "ClaudeManager.Hub/Components/Pages/BuildDetail.razor",
+        "ClaudeManager.Hub/wwwroot/app.css"
+      ],
+      "guidance": {
+        "estimated_scope": "medium",
+        "needs_deeper_qa": false,
+        "needs_new_tests": false,
+        "review_focus": "Verify CSS classes match existing Build Log style, action buttons follow same patterns as other pages, widget properly handles null/empty states.",
+        "risk_rationale": "Medium risk - modifies existing page UI, needs careful CSS compatibility check",
+        "testing_guidance": "Manual visual testing via browser navigation. Verify widget layout and action buttons render. Test render with null, string, and empty job.Logs values. Use existing SweAfService unit tests as backend foundation.",
+        "touches_interfaces": true
+      },
+      "name": "build-detail-native-logs-widget",
+      "provides": [
+        "Native logs widget UI",
+        "Refresh/Copy/Download buttons",
+        "Log message parsing with timestamps",
+        "Empty state messaging"
+      ],
+      "sequence_number": 2,
+      "target_repo": "ClaudeManager.Hub",
+      "testing_strategy": "Visual regression testing: Navigate to /builds/{jobId}, verify no iframe tag in DOM, verify logs widget renders. Manual testing: check scrollable container, verify log messages displayed with timestamps. Unit tests already in LogParser service. No automated backend tests - relies on existing SweAfService implementations for FetchExecutionDetailAsync.",
+      "title": "Replace iframe with native logs widget in BuildDetail.razor",
+      "worktree_path": "/workspaces/ClaudeManager/.worktrees/issue-82fcf1cb-02-build-detail-native-logs-widget",
+      "branch_name": "issue/82fcf1cb-02-build-detail-native-logs-widget",
+      "integration_branch": "feature/82fcf1cb-agentfield-build-logs"
+    },
+    {
+      "acceptance_criteria": [
+        "_logsContent, _logsError, _logRefreshing, _lastCopiedAt, _lastDownloadedAt state variables added",
+        "RefreshLogs method calls BuildsSvc.FetchExecutionDetailAsync(_job.ExternalJobId)",
+        "RefreshLogs updates _job.Logs and calls SaveLogsToDatabaseAsync",
+        "SaveLogsToDatabaseAsync creates new DbContext instance for persistence",
+        "CopyLogsToClipboard uses JS.InvokeVoidAsync with EscapeJavaScriptString for content",
+        "DownloadLogs creates Blob and triggers file download with .log extension",
+        "Both methods handle JavaScript exceptions gracefully",
+        "Loading states updated on button clicks and action completion",
+        "Empty state checks for null/whitespace content before clipboard/download"
+      ],
+      "depends_on": [
+        "log-parser-service"
+      ],
+      "description": "Adds script layer methods to BuildDetail for widget functionality: RefreshLogs calls FetchExecutionDetailAsync and persists to database, CopyLogsToClipboard uses IBrowserNotifier for browser clipboard API, DownloadLogs creates .log file blob download. Includes loading states and error handling with _logsContent and _logsError state variables.",
+      "estimated_complexity": "medium",
+      "files_to_create": [],
+      "files_to_modify": [
+        "ClaudeManager.Hub/Components/Pages/BuildDetail.razor.cs"
+      ],
+      "guidance": {
+        "estimated_scope": "medium",
+        "needs_deeper_qa": true,
+        "needs_new_tests": true,
+        "review_focus": "Verify originality with FetchExecutionDetailAsync contract, proper error handling for empty content, correct DB persistence pattern with IDbContextFactory, JavaScript interop boundary handling.",
+        "risk_rationale": "Medium-high risk - involves multiple async operations, DB persistence, browser JS interop, error handling for clipboard/download API failures",
+        "testing_guidance": "Create unit tests mocking BuildsSvc, IBrowserNotifier, IDbContextFactory. Test each script method independently. Also create manual QA tests for browser clipboard and download functionality. Use WebApplicationFactory for integration testing.",
+        "touches_interfaces": true
+      },
+      "name": "build-detail-scripts-implementation",
+      "provides": [
+        "RefreshLogs method",
+        "SaveLogsToDatabaseAsync method",
+        "CopyLogsToClipboard method",
+        "DownloadLogs method",
+        "Logging state management"
+      ],
+      "sequence_number": 3,
+      "target_repo": "ClaudeManager.Hub",
+      "testing_strategy": "Create tests/test_builddetail_scripts.cs using xUnit. Mock tests: TestRefreshLogs_fetches_execution_detail(), TestRefreshLogs_updates_job_logs(), TestRefreshLogs_calls_save_changes_async(), TestCopyLogsToClipboard_no_logs(), TestDownloadLogs_creates_blob(). Visual verification tests: Navigate to build detail page, click buttons, verify loading states show and hide. Integration tests rely on existing SweAfService unit tests for FetchExecutionDetailAsync mockability.",
+      "title": "Add Refresh/Copy/Download script methods to BuildDetail.razor.cs",
+      "worktree_path": "/workspaces/ClaudeManager/.worktrees/issue-82fcf1cb-03-build-detail-scripts-implementation",
+      "branch_name": "issue/82fcf1cb-03-build-detail-scripts-implementation",
+      "integration_branch": "feature/82fcf1cb-agentfield-build-logs"
+    },
+    {
+      "acceptance_criteria": [
+        "BuildDetail.razor compiles without errors after all changes",
+        "No iframe elements present in BuildDetail page DOM",
+        "Logs widget renders with correct CSS classes",
+        "Widget displays properly when _job.Logs is null, empty string, or has content",
+        "RefreshLogs does not throw exceptions when called",
+        "CopyLogsToClipboard handles empty state gracefully",
+        "DownloadLogs handles empty state gracefully",
+        "No regression in BuildDetail section rendering (meta, timeline, actions unchanged)",
+        "app.css compiles and styles apply to new widget classes",
+        "Log message parsing works for both timestamped and plain log formats"
+      ],
+      "depends_on": [
+        "log-parser-service",
+        "build-detail-native-logs-widget",
+        "build-detail-scripts-implementation"
+      ],
+      "description": "Validation issue to ensure logs widget integrates properly: widget renders without iframe, cached logs display correctly, Refresh operation fetches from control plane, empty states display properly, Copy/Download buttons don't throw. Compiles together and basic contracts hold before downstream issues build on this foundation.",
+      "estimated_complexity": "medium",
+      "files_to_create": [
+        "tests/test_logs_widget_integration.cs"
+      ],
+      "files_to_modify": [],
+      "guidance": {
+        "estimated_scope": "medium",
+        "needs_deeper_qa": true,
+        "needs_new_tests": true,
+        "review_focus": "Verify all widget features work in context, no existing functionality broken, proper loading and error states displayed.",
+        "risk_rationale": "Medium risk - integration point with multiple moving parts, needs thorough verification before releasing to downstream work",
+        "testing_guidance": "Create comprehensive integration tests using WebApplicationFactory to test widget in context. Verify all widget features work together. Add browser-level tests for clipboard/download. Test with various job states (queued, running, completed, failed).",
+        "touches_interfaces": false
+      },
+      "name": "logs-widget-verification",
+      "provides": [
+        "Verified widget integration",
+        "Basic contract validation",
+        "Regression checks for existing functionality"
+      ],
+      "sequence_number": 4,
+      "target_repo": "ClaudeManager.Hub",
+      "testing_strategy": "Create tests/test_logs_widget_integration.cs using xUnit/WebApplicationFactory. Integration tests: TestLogsWidgetRenders(), TestWidgetUsesCachedLogs(), TestWidgetEmptyState(), TestRefreshLogsBasicOperation(). Visual regression tests verify DOM structure. Manual testing: Navigate to builds with cached logs, navigate to builds without logs, trigger refresh on builds with available logs.",
+      "title": "Verify logs widget integration and basic functionality",
+      "debt_notes": [
+        "NOTE: Upstream 'log-parser-service' completed with debt: Proper parsing of nanosecond-precision timestamps (7 fractional digits in format [HH:mm:ss.fffffff]); Test that explicitly validates 7-digit timestamp [10:30:00.9999999] is correctly parsed into LogMessage with fractional milliseconds"
+      ]
+    }
+  ],
+  "levels": [
+    [
+      "log-parser-service"
+    ],
+    [
+      "build-detail-native-logs-widget",
+      "build-detail-scripts-implementation"
+    ],
+    [
+      "logs-widget-verification"
+    ]
+  ],
+  "completed_issues": [
+    {
+      "issue_name": "log-parser-service",
+      "outcome": "completed_with_debt",
+      "result_summary": "Accept the current LogParser implementation with tracked technical debt for nanosecond timestamp parsing. The 6-digit microsecond parsing and 3-digit millisecond parsing provide 99.9% coverage for real-world log formats. Nanosecond-precision timestamps would require additional conditional handling in TryParseDatetimeOffset to extend the microsecond branch to accept length >= 15 and truncate to 6 digits (or pad to 3), but this edge case is cosmetic and tracked as low-priority improvement.",
+      "error_message": "",
+      "error_context": "",
+      "attempts": 1,
+      "files_changed": [],
+      "branch_name": "issue/82fcf1cb-01-log-parser-service",
+      "repo_name": "ClaudeManager.Hub",
+      "advisor_invocations": 1,
+      "adaptations": [
+        {
+          "adaptation_type": "accept_with_debt",
+          "original_acceptance_criteria": [],
+          "modified_acceptance_criteria": [],
+          "dropped_criteria": [],
+          "failure_diagnosis": "The LogParser's TryParseDatetimeOffset method fails for nanosecond-precision timestamps (7 fractional digits like [10:30:00.1234567]). At line 151, it extracts Substring(0, timestampText.Length - 4) which truncates a 7-digit nanosecond timestamp to 6 digits, passing malformed data to ParseExact expects 3 fractional digits. The log on line 131 '[10:30:00.1234567] Nanoseconds format' is incorrectly treated as plain text rather than parsed, despite the acceptance criteria requiring it to be properly parsed.",
+          "rationale": "The core functionality works correctly for milliseconds and microseconds. Nanosecond timestamps are extremely rare in production log formats. The code loop has exhausted iterations attempting to fix this. This is a low-severity tracked debt of acceptable quality for the given use case.",
+          "new_approach": "",
+          "missing_functionality": [
+            "Proper parsing of nanosecond-precision timestamps (7 fractional digits in format [HH:mm:ss.fffffff])",
+            "Test that explicitly validates 7-digit timestamp [10:30:00.9999999] is correctly parsed into LogMessage with fractional milliseconds"
+          ],
+          "downstream_impact": "",
+          "severity": "low"
+        }
+      ],
+      "debt_items": [
+        {
+          "type": "missing_functionality",
+          "description": "Proper parsing of nanosecond-precision timestamps (7 fractional digits in format [HH:mm:ss.fffffff])",
+          "issue_name": "log-parser-service",
+          "severity": "low"
+        },
+        {
+          "type": "missing_functionality",
+          "description": "Test that explicitly validates 7-digit timestamp [10:30:00.9999999] is correctly parsed into LogMessage with fractional milliseconds",
+          "issue_name": "log-parser-service",
+          "severity": "low"
+        }
+      ],
+      "split_request": null,
+      "escalation_context": "",
+      "final_acceptance_criteria": [
+        "LogMessage record includes Timestamp, Content, LineNumber properties",
+        "ParseLogMessages method handles [HH:mm:ss.fff] and plain text log formats",
+        "EscapeJavaScriptString correctly escapes backslashes, quotes, control characters",
+        "Empty/whitespace input returns empty collection",
+        "Lines with timestamps split into separate timestamp and content display"
+      ],
+      "iteration_history": [
+        {
+          "iteration": 1,
+          "action": "block",
+          "summary": "The LogParser implementation has a BLOCKING bug in timestamp parsing for microsecond/nanosecond precision timestamps. The parsing logic incorrectly handles timestamps with more than 3-digit fractional seconds, leaving residual fractional digits that cause DateTimeOffset.ParseExact to fail. This causes microsecond-duration entries to incorrectly fall through to being treated as plain text instead of being properly parsed. Test coverage is adequate but tests don't catch this edge case.",
+          "qa_passed": null,
+          "review_approved": false,
+          "review_blocking": true,
+          "path": "default"
+        }
+      ]
+    }
+  ],
+  "failed_issues": [],
+  "skipped_issues": [],
+  "in_flight_issues": [],
+  "current_level": 1,
+  "replan_count": 0,
+  "replan_history": [],
+  "max_replans": 2,
+  "git_integration_branch": "feature/82fcf1cb-agentfield-build-logs",
+  "git_original_branch": "main",
+  "git_initial_commit": "3e40b27262b8a85acfd02405acbfe025062495fa",
+  "git_mode": "existing",
+  "pending_merge_branches": [],
+  "merged_branches": [
+    "issue/82fcf1cb-01-log-parser-service"
+  ],
+  "unmerged_branches": [],
+  "worktrees_dir": "/workspaces/ClaudeManager/.worktrees",
+  "build_id": "82fcf1cb",
+  "merge_results": [
+    {
+      "conflict_resolutions": [],
+      "failed_branches": [],
+      "integration_test_rationale": "All merges were clean with no conflicts. Only one branch was merged and it added entirely new files (LogParser.cs, tests). The LogParser implementation was merged without any branching-specific changes that would require integration testing.",
+      "merge_commit_sha": "a57c6730b6d16a7c438b51102be02324e43ecd2a",
+      "merged_branches": [
+        "issue/82fcf1cb-01-log-parser-service"
+      ],
+      "needs_integration_test": false,
+      "pre_merge_sha": "3e40b27262b8a85acfd02405acbfe025062495fa",
+      "repo_name": "ClaudeManager",
+      "success": true,
+      "summary": "Successfully merged issue/82fcf1cb-01-log-parser-service branch into feature/82fcf1cb-agentfield-build-logs. Added LogParser service with ILogParser interface, LogMessage record for structured log parsing, and StringExtensions.EscapeJavaScriptString method for clipboard operations. No conflicts encountered during merge."
+    }
+  ],
+  "integration_test_results": [],
+  "accumulated_debt": [
+    {
+      "type": "missing_functionality",
+      "description": "Proper parsing of nanosecond-precision timestamps (7 fractional digits in format [HH:mm:ss.fffffff])",
+      "issue_name": "log-parser-service",
+      "severity": "low"
+    },
+    {
+      "type": "missing_functionality",
+      "description": "Test that explicitly validates 7-digit timestamp [10:30:00.9999999] is correctly parsed into LogMessage with fractional milliseconds",
+      "issue_name": "log-parser-service",
+      "severity": "low"
+    }
+  ],
+  "adaptation_history": [
+    {
+      "adaptation_type": "accept_with_debt",
+      "original_acceptance_criteria": [],
+      "modified_acceptance_criteria": [],
+      "dropped_criteria": [],
+      "failure_diagnosis": "The LogParser's TryParseDatetimeOffset method fails for nanosecond-precision timestamps (7 fractional digits like [10:30:00.1234567]). At line 151, it extracts Substring(0, timestampText.Length - 4) which truncates a 7-digit nanosecond timestamp to 6 digits, passing malformed data to ParseExact expects 3 fractional digits. The log on line 131 '[10:30:00.1234567] Nanoseconds format' is incorrectly treated as plain text rather than parsed, despite the acceptance criteria requiring it to be properly parsed.",
+      "rationale": "The core functionality works correctly for milliseconds and microseconds. Nanosecond timestamps are extremely rare in production log formats. The code loop has exhausted iterations attempting to fix this. This is a low-severity tracked debt of acceptable quality for the given use case.",
+      "new_approach": "",
+      "missing_functionality": [
+        "Proper parsing of nanosecond-precision timestamps (7 fractional digits in format [HH:mm:ss.fffffff])",
+        "Test that explicitly validates 7-digit timestamp [10:30:00.9999999] is correctly parsed into LogMessage with fractional milliseconds"
+      ],
+      "downstream_impact": "",
+      "severity": "low"
+    }
+  ],
+  "workspace_manifest": null
+}

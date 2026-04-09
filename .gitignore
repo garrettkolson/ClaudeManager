@@ -52,6 +52,7 @@ appsettings.*.local.json
 *.db-wal
 
 # Logs
+.worktrees/
 *.log
 logs/
 

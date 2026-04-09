@@ -1,0 +1,84 @@
+{
+  "coverage_gaps": [
+    "RefreshLogs early return for null/whitespace logs",
+    "CopyLogsToClipboard with JavaScriptException handling",
+    "DownloadLogs with JavaScriptException handling",
+    "RefreshLogs when _job is null",
+    "CopyLogsToClipboard sets loading state to true",
+    "DownloadLogs sets loading state to true",
+    "Database persistence verification (CreateContextAsync called)",
+    "Database SaveChangesAsync called verification",
+    "RefreshLogs without direct object modification on mocks",
+    "CopyLogsToClipboard error message verification",
+    "DownloadLogs error message verification",
+    "copy with special JavaScript characters test"
+  ],
+  "iteration_id": "3aba48e5",
+  "passed": false,
+  "summary": "Test coverage assessment: The existing test file (tests/ClaudeManager.Hub.Tests/test_Builldetail_Scripts.cs) has 9 clear test failures. Many tests lack actual assertions, the test file is in wrong location (tests/ instead of Tests/), and the test class naming is inconsistent (Uses NUnit but should use xUnit per PRD). Critical coverage gaps identified: - Empty tests with no assertions - Invalid Moq API calls - Missing JavaScriptException test cases - Missing database persistence verification. Test execution failed due to .NET SDK version mismatch (.NET 9.0 vs .NET 10.0 target). Multiple acceptance criteria lack adequate test coverage despite test file existence.",
+  "test_failures": [
+    {
+      "actual": "Test body is empty except for comments",
+      "error": "No assertions in test body - only contains comment about expected behavior",
+      "expected": "Test should contain Assert.That or verify method completes without throwing",
+      "file": "tests/ClaudeManager.Hub.Tests/test_Builldetail_Scripts.cs",
+      "test_name": "TestRefreshLogs_Empty_Logs_Handled_Gracefully"
+    },
+    {
+      "actual": "Only comment about what should happen",
+      "error": "No assertions verify JS invoke was called or _lastCopiedAt was set",
+      "expected": "Should verify _mockJs.InvokeVoidAsync was called with correct parameters",
+      "file": "tests/ClaudeManager.Hub.Tests/test_Builldetail_Scripts.cs",
+      "test_name": "TestCopyLogsToClipboard_With_Logs_Sets_Content"
+    },
+    {
+      "actual": "Calls invalid API with wrong exception type",
+      "error": "Uses non-existent Moq API 'VerifyAllOutcomes' and throws generic Exception instead of JavaScriptException",
+      "expected": "Valid Moq assertion testing JavaScriptException handling",
+      "file": "tests/ClaudeManager.Hub.Tests/test_Builldetail_Scripts.cs",
+      "test_name": "TestCopyLogsToClipboard_Set_Last_Copied_At"
+    },
+    {
+      "actual": "Only comment describing expected behavior",
+      "error": "Test invokes DownloadLogs but makes zero assertions about output",
+      "expected": "Should verify InvokeAsync was called with .log extension",
+      "file": "tests/ClaudeManager.Hub.Tests/test_Builldetail_Scripts.cs",
+      "test_name": "TestDownloadLogs_Creates_Blob_And_Triggers_Download"
+    },
+    {
+      "actual": "No actual test code",
+      "error": "Empty test body with only comment",
+      "expected": "Should verify _lastDownloadedAt is set after successful download",
+      "file": "tests/ClaudeManager.Hub.Tests/test_Builldetail_Scripts.cs",
+      "test_name": "TestDownloadLogs_Set_Last_Downloaded_At"
+    },
+    {
+      "actual": "Direct property modification on mock",
+      "error": "Directly modifies mocked object which bypasses proper mock verification",
+      "expected": "Should use Func<string>? setup or verify through property access",
+      "file": "tests/ClaudeManager.Hub.Tests/test_Builldetail_Scripts.cs",
+      "test_name": "TestRefreshLogs_Updates_Job_Logs"
+    },
+    {
+      "actual": "Uses generic System.Exception",
+      "error": "Throws Exception instead of JavaScriptException - won't be caught by handler",
+      "expected": "Throws JavaScriptException type to verify error handling path",
+      "file": "tests/ClaudeManager.Hub.Tests/test_Builldetail_Scripts.cs",
+      "test_name": "TestCopyLogsToClipboard_JS_Exception_Handled"
+    },
+    {
+      "actual": "No specific test for this condition",
+      "error": "Test for early return case missing",
+      "expected": "Verify _logRefreshing is false and method returns when logs are null/whitespace",
+      "file": "tests/ClaudeManager.Hub.Tests/test_Builldetail_Scripts.cs",
+      "test_name": "TestRefreshLogs_No_Refresh_If_Logs_Value_Null_or_Whitespace"
+    },
+    {
+      "actual": "Only checks _testJob.Logs is not null",
+      "error": "TestRefreshLogs_Calls_Save_Changes_Async does not verify DbContext usage",
+      "expected": "Should verify CreateDbContext and SaveChangesAsync were invoked",
+      "file": "tests/ClaudeManager.Hub.Tests/test_Builldetail_Scripts.cs",
+      "test_name": "TestRefreshLogs_Database_Persistence"
+    }
+  ]
+}
