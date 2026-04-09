@@ -62,3 +62,4 @@ desktop.ini
 
 # dotnet tools
 .config/dotnet-tools.json
+/src/ClaudeManager.Hub/.claude/settings.local.json
