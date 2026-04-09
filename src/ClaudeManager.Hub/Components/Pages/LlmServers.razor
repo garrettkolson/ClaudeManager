@@ -16,6 +16,16 @@
 <div class="llm-page">
     <h1>LLM Servers</h1>
 
+    @* ── Tab Navigation ───────────────────────────────────────────────────── *@
+    <div class="llm-tabs">
+        <button class="llm-tab @(activeTab == 0 ? "llm-tab-active" : "")" @onclick="() => { _activeTab = 0; StateHasChanged(); }">
+            General
+        </button>
+        <button class="llm-tab @(activeTab == 1 ? "llm-tab-active" : "")" @onclick="() => { _activeTab = 1; StateHasChanged(); }">
+            Deployments
+        </button>
+    </div>
+
     @* ── Global Settings ─────────────────────────────────────────────────── *@
 
     <section class="llm-section">
@@ -36,11 +46,11 @@
         </div>
     </section>
 
-    @* ── GPU Hosts ───────────────────────────────────────────────────────── *@
-
-    <section class="llm-section">
-        <div class="llm-section-header">
-            <h2>GPU Hosts</h2>
+    @if (_activeTab == 0)
+    {
+        <section class="llm-section">
+            <div class="llm-section-header">
+                <h2>GPU Hosts</h2>
             <button class="btn-primary" @onclick="() => _showAddForm = !_showAddForm">
                 @(_showAddForm ? "Cancel" : "Add Host")
             </button>
@@ -284,241 +294,244 @@
                 </tbody>
             </table>
         }
-    </section>
+        </section>
+    }
 
-    @* ── Deployments ─────────────────────────────────────────────────────── *@
-
-    <section class="llm-section">
-        <div class="llm-section-header">
-            <h2>Deployments</h2>
-            @if (_hosts?.Count > 0)
-            {
-                <button class="btn-primary" @onclick="() => _showDeployForm = !_showDeployForm">
-                    @(_showDeployForm ? "Cancel" : "New Deployment")
-                </button>
-            }
-        </div>
-
-        @if (_showDeployForm)
-        {
-            <div class="llm-add-form">
-                <h3>New Deployment</h3>
-                <div class="llm-form-grid">
-                    <label class="llm-label">Host *</label>
-                    <select class="llm-input" @bind="_deployForm.HostId"
-                            @bind:after="OnDeployFormHostChanged">
-                        <option value="">— select host —</option>
-                        @foreach (var h in _hosts ?? [])
-                        {
-                            <option value="@h.HostId">@h.DisplayName (@h.Host)</option>
-                        }
-                    </select>
-
-                    <label class="llm-label">Model ID *</label>
-                    <input class="llm-input" @bind="_deployForm.ModelId"
-                           placeholder="meta-llama/Llama-3.1-8B-Instruct" />
-
-                    <label class="llm-label">GPUs *</label>
-                    <div class="llm-gpu-picker">
-                        @if (_inspectingFormGpus)
-                        {
-                            <span class="llm-hint">Inspecting GPUs…</span>
-                        }
-                        else if (_formGpuError is not null)
-                        {
-                            <div class="error-msg llm-gpu-error">@_formGpuError</div>
-                            <input class="llm-input" @bind="_deployForm.GpuIndicesText"
-                                   placeholder="e.g. 0  or  0,1" />
-                        }
-                        else if (_formGpus is not null && _formGpus.Count > 0)
-                        {
-                            <div class="llm-gpu-checkboxes">
-                                @foreach (var gpu in _formGpus)
-                                {
-                                    var gpuRef = gpu;
-                                    var isChecked = _deployForm.SelectedGpuIndices.Contains(gpuRef.Index);
-                                    <label class="llm-gpu-checkbox-label">
-                                        <input type="checkbox"
-                                               checked="@isChecked"
-                                               @onchange="e => ToggleGpuIndex(gpuRef.Index, (bool)e.Value!)" />
-                                        GPU @gpuRef.Index — @gpuRef.Name (@FormatVram(gpuRef.MemoryTotalMb) total, @FormatVram(gpuRef.MemoryFreeMb) free)
-                                    </label>
-                                }
-                            </div>
-                        }
-                        else
-                        {
-                            <input class="llm-input" @bind="_deployForm.GpuIndicesText"
-                                   placeholder="e.g. 0  or  0,1  (select a host to auto-detect)" />
-                        }
-                    </div>
-
-                    <label class="llm-label">Port *</label>
-                    <input class="llm-input" @bind="_deployForm.HostPort" type="number"
-                           placeholder="8000" />
-
-                    <label class="llm-label">vLLM Image</label>
-                    <select class="llm-input" @bind="_deployForm.ImageTag">
-                        <option value="latest">latest (stable)</option>
-                        <option value="nightly">nightly (cutting edge)</option>
-                    </select>
-
-                    <label class="llm-label">Quantization</label>
-                    <select class="llm-input" @bind="_deployForm.Quantization">
-                        <option value="none">none (fp16)</option>
-                        <option value="awq">AWQ (~4-bit)</option>
-                        <option value="gptq">GPTQ (~4-bit)</option>
-                    </select>
-
-                    <label class="llm-label">Parameters (B)</label>
-                    <div class="llm-input-row">
-                        <input class="llm-input" @bind="_deployForm.ParamsBillions" type="number"
-                               step="0.1" placeholder="e.g. 7 for a 7B model" />
-                        @if (VramEstimator.FormatEstimate(_deployForm.ParamsBillions, _deployForm.Quantization) is { } est)
-                        {
-                            <span class="llm-vram-hint">@est</span>
-                        }
-                    </div>
-
-                    <label class="llm-label">Max Context</label>
-                    <div class="llm-context-estimate-row">
-                        <button class="btn-sm" type="button"
-                                @onclick="EstimateContextAsync"
-                                disabled="@(_estimatingContext || string.IsNullOrWhiteSpace(_deployForm.ModelId))">
-                            @(_estimatingContext ? "Fetching…" : "Estimate")
-                        </button>
-                        @if (_contextEstimateError is not null)
-                        {
-                            <span class="llm-hint error-text">@_contextEstimateError</span>
-                        }
-                        else if (_estimatedMaxContext.HasValue)
-                        {
-                            <span class="llm-hint">
-                                Native: @MaxContextEstimator.FormatTokens(_nativeMaxContext!.Value) |
-                                Recommended: @MaxContextEstimator.FormatTokens(_estimatedMaxContext.Value)
-                            </span>
-                        }
-                        <input class="llm-input llm-maxlen-input" @bind="_deployForm.MaxModelLen" type="number"
-                               placeholder="leave blank for vLLM default" />
-                    </div>
-
-                    <label class="llm-label">Extra Args</label>
-                    <input class="llm-input" @bind="_deployForm.ExtraArgs"
-                           placeholder="--dtype float16" />
-
-                    <label class="llm-label">HF Token Override</label>
-                    <input class="llm-input" type="password" @bind="_deployForm.HfTokenOverride"
-                           placeholder="Leave blank to use the global token" />
-                </div>
-                @if (_deployAddError is not null) { <div class="error-msg">@_deployAddError</div> }
-                <div class="llm-form-actions">
-                    <button class="btn-primary" @onclick="AddDeployment" disabled="@_addingDeployment">
-                        @(_addingDeployment ? "Creating…" : "Create Deployment")
+    @if (_activeTab == 1)
+    {
+        @* ── Deployments Tab ────────────────────────────────────────────────── *@
+        <section class="llm-section">
+            <div class="llm-section-header">
+                <h2>Deployments</h2>
+                @if (_hosts?.Count > 0)
+                {
+                    <button class="btn-primary" @onclick="() => _showDeployForm = !_showDeployForm">
+                        @(_showDeployForm ? "Cancel" : "New Deployment")
                     </button>
-                </div>
+                }
             </div>
-        }
 
-        @if (_deployments is null)
-        {
-            <div class="loading">Loading…</div>
-        }
-        else if (_deployments.Count == 0)
-        {
-            <div class="empty-state">No deployments yet. Create one to start a vLLM instance.</div>
-        }
-        else
-        {
-            <table class="llm-deploy-table">
-                <thead>
-                    <tr>
-                        <th>Host</th>
-                        <th>Model</th>
-                        <th>GPUs</th>
-                        <th>Port</th>
-                        <th>Image</th>
-                        <th>Status</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var d in _deployments)
-                    {
-                        var dep = d;
-                        <tr class="llm-deploy-row">
-                            <td>@HostDisplayName(dep.HostId)</td>
-                            <td class="llm-deploy-model" title="@dep.ModelId">@TruncateModel(dep.ModelId)</td>
-                            <td>@dep.GpuIndices</td>
-                            <td>@dep.HostPort</td>
-                            <td>
-                                <span class="llm-image-tag @dep.ImageTag">@dep.ImageTag</span>
-                                @if (dep.MaxModelLen.HasValue)
-                                {
-                                    <span class="llm-hint" title="--max-model-len">@MaxContextEstimator.FormatTokens(dep.MaxModelLen.Value)</span>
-                                }
-                            </td>
-                            <td><span class="llm-status-badge @dep.Status.ToString().ToLower()">@dep.Status</span></td>
-                            <td class="llm-deploy-actions">
-                                @if (dep.Status is LlmDeploymentStatus.Stopped or LlmDeploymentStatus.Error)
-                                {
-                                    <button class="btn-sm btn-start-sm"
-                                            @onclick="() => StartDeployment(dep)"
-                                            disabled="@_busyIds.Contains(dep.Id)">
-                                        @(_busyIds.Contains(dep.Id) ? "Starting…" : "Start")
-                                    </button>
-                                }
-                                @if (dep.Status is LlmDeploymentStatus.Running or LlmDeploymentStatus.Starting)
-                                {
-                                    <button class="btn-sm btn-danger-sm"
-                                            @onclick="() => StopDeployment(dep)"
-                                            disabled="@_busyIds.Contains(dep.Id)">
-                                        @(_busyIds.Contains(dep.Id) ? "Stopping…" : "Stop")
-                                    </button>
-                                }
-                                <button class="btn-sm" @onclick="() => ToggleLogs(dep)">
-                                    @(_viewingLogsId == dep.Id ? "Hide Logs" : "Logs")
-                                </button>
-                                <button class="btn-sm"
-                                        @onclick="() => OpenDeployEdit(dep)">Edit</button>
-                                <button class="btn-sm btn-danger-sm"
-                                        @onclick="() => DeleteDeployment(dep)"
-                                        disabled="@_busyIds.Contains(dep.Id)">Remove</button>
-                            </td>
+            @if (_showDeployForm)
+            {
+                <div class="llm-add-form">
+                    <h3>New Deployment</h3>
+                    <div class="llm-form-grid">
+                        <label class="llm-label">Host *</label>
+                        <select class="llm-input" @bind="_deployForm.HostId"
+                                @bind:after="OnDeployFormHostChanged">
+                            <option value="">— select host —</option>
+                            @foreach (var h in _hosts ?? [])
+                            {
+                                <option value="@h.HostId">@h.DisplayName (@h.Host)</option>
+                            }
+                        </select>
+
+                        <label class="llm-label">Model ID *</label>
+                        <input class="llm-input" @bind="_deployForm.ModelId"
+                               placeholder="meta-llama/Llama-3.1-8B-Instruct" />
+
+                        <label class="llm-label">GPUs *</label>
+                        <div class="llm-gpu-picker">
+                            @if (_inspectingFormGpus)
+                            {
+                                <span class="llm-hint">Inspecting GPUs…</span>
+                            }
+                            else if (_formGpuError is not null)
+                            {
+                                <div class="error-msg llm-gpu-error">@_formGpuError</div>
+                                <input class="llm-input" @bind="_deployForm.GpuIndicesText"
+                                       placeholder="e.g. 0  or  0,1" />
+                            }
+                            else if (_formGpus is not null && _formGpus.Count > 0)
+                            {
+                                <div class="llm-gpu-checkboxes">
+                                    @foreach (var gpu in _formGpus)
+                                    {
+                                        var gpuRef = gpu;
+                                        var isChecked = _deployForm.SelectedGpuIndices.Contains(gpuRef.Index);
+                                        <label class="llm-gpu-checkbox-label">
+                                            <input type="checkbox"
+                                                   checked="@isChecked"
+                                                   @onchange="e => ToggleGpuIndex(gpuRef.Index, (bool)e.Value!)" />
+                                            GPU @gpuRef.Index — @gpuRef.Name (@FormatVram(gpuRef.MemoryTotalMb) total, @FormatVram(gpuRef.MemoryFreeMb) free)
+                                        </label>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <input class="llm-input" @bind="_deployForm.GpuIndicesText"
+                                       placeholder="e.g. 0  or  0,1  (select a host to auto-detect)" />
+                            }
+                        </div>
+
+                        <label class="llm-label">Port *</label>
+                        <input class="llm-input" @bind="_deployForm.HostPort" type="number"
+                               placeholder="8000" />
+
+                        <label class="llm-label">vLLM Image</label>
+                        <select class="llm-input" @bind="_deployForm.ImageTag">
+                            <option value="latest">latest (stable)</option>
+                            <option value="nightly">nightly (cutting edge)</option>
+                        </select>
+
+                        <label class="llm-label">Quantization</label>
+                        <select class="llm-input" @bind="_deployForm.Quantization">
+                            <option value="none">none (fp16)</option>
+                            <option value="awq">AWQ (~4-bit)</option>
+                            <option value="gptq">GPTQ (~4-bit)</option>
+                        </select>
+
+                        <label class="llm-label">Parameters (B)</label>
+                        <div class="llm-input-row">
+                            <input class="llm-input" @bind="_deployForm.ParamsBillions" type="number"
+                                   step="0.1" placeholder="e.g. 7 for a 7B model" />
+                            @if (VramEstimator.FormatEstimate(_deployForm.ParamsBillions, _deployForm.Quantization) is { } est)
+                            {
+                                <span class="llm-vram-hint">@est</span>
+                            }
+                        </div>
+
+                        <label class="llm-label">Max Context</label>
+                        <div class="llm-context-estimate-row">
+                            <button class="btn-sm" type="button"
+                                    @onclick="EstimateContextAsync"
+                                    disabled="@(_estimatingContext || string.IsNullOrWhiteSpace(_deployForm.ModelId))">
+                                @(_estimatingContext ? "Fetching…" : "Estimate")
+                            </button>
+                            @if (_contextEstimateError is not null)
+                            {
+                                <span class="llm-hint error-text">@_contextEstimateError</span>
+                            }
+                            else if (_estimatedMaxContext.HasValue)
+                            {
+                                <span class="llm-hint">
+                                    Native: @MaxContextEstimator.FormatTokens(_nativeMaxContext!.Value) |
+                                    Recommended: @MaxContextEstimator.FormatTokens(_estimatedMaxContext.Value)
+                                </span>
+                            }
+                            <input class="llm-input llm-maxlen-input" @bind="_deployForm.MaxModelLen" type="number"
+                                   placeholder="leave blank for vLLM default" />
+                        </div>
+
+                        <label class="llm-label">Extra Args</label>
+                        <input class="llm-input" @bind="_deployForm.ExtraArgs"
+                               placeholder="--dtype float16" />
+
+                        <label class="llm-label">HF Token Override</label>
+                        <input class="llm-input" type="password" @bind="_deployForm.HfTokenOverride"
+                               placeholder="Leave blank to use the global token" />
+                    </div>
+                    @if (_deployAddError is not null) { <div class="error-msg">@_deployAddError</div> }
+                    <div class="llm-form-actions">
+                        <button class="btn-primary" @onclick="AddDeployment" disabled="@_addingDeployment">
+                            @(_addingDeployment ? "Creating…" : "Create Deployment")
+                        </button>
+                    </div>
+                </div>
+            }
+
+            @if (_deployments is null)
+            {
+                <div class="loading">Loading…</div>
+            }
+            else if (_deployments.Count == 0)
+            {
+                <div class="empty-state">No deployments yet. Create one to start a vLLM instance.</div>
+            }
+            else
+            {
+                <table class="llm-deploy-table">
+                    <thead>
+                        <tr>
+                            <th>Host</th>
+                            <th>Model</th>
+                            <th>GPUs</th>
+                            <th>Port</th>
+                            <th>Image</th>
+                            <th>Status</th>
+                            <th></th>
                         </tr>
-                        @if (dep.ErrorMessage is not null && dep.Status == LlmDeploymentStatus.Error)
+                    </thead>
+                    <tbody>
+                        @foreach (var depSorted in _deployments.OrderBy(d => d.CreatedAt))
                         {
-                            <tr class="llm-deploy-error-row">
-                                <td colspan="7"><div class="error-msg llm-deploy-error">@dep.ErrorMessage</div></td>
-                            </tr>
-                        }
-                        @if (_viewingLogsId == dep.Id)
-                        {
-                            <tr class="llm-logs-row">
-                                <td colspan="7">
-                                    @if (_loadingLogs)
+                            var dep = depSorted;
+                            <tr class="llm-deploy-row">
+                                <td>@HostDisplayName(dep.HostId)</td>
+                                <td class="llm-deploy-model" title="@dep.ModelId">@TruncateModel(dep.ModelId)</td>
+                                <td>@dep.GpuIndices</td>
+                                <td>@dep.HostPort</td>
+                                <td>
+                                    <span class="llm-image-tag @dep.ImageTag">@dep.ImageTag</span>
+                                    @if (dep.MaxModelLen.HasValue)
                                     {
-                                        <div class="loading">Loading logs…</div>
-                                    }
-                                    else if (_logsError is not null)
-                                    {
-                                        <div class="error-msg">@_logsError</div>
-                                    }
-                                    else
-                                    {
-                                        <div class="llm-logs-header">
-                                            <span class="llm-hint">Last 200 lines — auto-refreshing every 5s</span>
-                                            <button class="btn-sm" @onclick="() => RefreshLogs(dep)">Refresh Now</button>
-                                        </div>
-                                        <pre class="llm-logs-pre">@_deploymentLogs</pre>
+                                        <span class="llm-hint" title="--max-model-len">@MaxContextEstimator.FormatTokens(dep.MaxModelLen.Value)</span>
                                     }
                                 </td>
+                                <td><span class="llm-status-badge @dep.Status.ToString().ToLower()">@dep.Status</span></td>
+                                <td class="llm-deploy-actions">
+                                    @if (dep.Status is LlmDeploymentStatus.Stopped or LlmDeploymentStatus.Error)
+                                    {
+                                        <button class="btn-sm btn-start-sm"
+                                                @onclick="() => StartDeployment(dep)"
+                                                disabled="@_busyIds.Contains(dep.Id)">
+                                            @(_busyIds.Contains(dep.Id) ? "Starting…" : "Start")
+                                        </button>
+                                    }
+                                    @if (dep.Status is LlmDeploymentStatus.Running or LlmDeploymentStatus.Starting)
+                                    {
+                                        <button class="btn-sm btn-danger-sm"
+                                                @onclick="() => StopDeployment(dep)"
+         disabled="@_busyIds.Contains(dep.Id)">
+                                            @(_busyIds.Contains(dep.Id) ? "Stopping…" : "Stop")
+                                        </button>
+                                    }
+                                    <button class="btn-sm" @onclick="() => ToggleLogs(dep)">
+                                        @(_viewingLogsId == dep.Id ? "Hide Logs" : "Logs")
+                                    </button>
+                                    <button class="btn-sm"
+                                            @onclick="() => OpenDeployEdit(dep)">Edit</button>
+                                    <button class="btn-sm btn-danger-sm"
+                                            @onclick="() => DeleteDeployment(dep)"
+                                            disabled="@_busyIds.Contains(dep.Id)">Remove</button>
+                                </td>
                             </tr>
+                            @if (dep.ErrorMessage is not null && dep.Status == LlmDeploymentStatus.Error)
+                            {
+                                <tr class="llm-deploy-error-row">
+                                    <td colspan="7"><div class="error-msg llm-deploy-error">@dep.ErrorMessage</div></td>
+                                </tr>
+                            }
+                            @if (_viewingLogsId == dep.Id)
+                            {
+                                <tr class="llm-logs-row">
+                                    <td colspan="7">
+                                        @if (_loadingLogs)
+                                        {
+                                            <div class="loading">Loading logs…</div>
+                                        }
+                                        else if (_logsError is not null)
+                                        {
+                                            <div class="error-msg">@_logsError</div>
+                                        }
+                                        else
+                                        {
+                                            <div class="llm-logs-header">
+                                                <span class="llm-hint">Last 200 lines — auto-refreshing every 5s</span>
+                                                <button class="btn-sm" @onclick="() => RefreshLogs(dep)">Refresh Now</button>
+                                            </div>
+                                            <pre class="llm-logs-pre">@_deploymentLogs</pre>
+                                        }
+                                    </td>
+                                </tr>
+                            }
                         }
-                    }
-                </tbody>
-            </table>
-        }
-    </section>
+                    </tbody>
+                </table>
+            }
+        </section>
+    }
 </div>
 
 @* ── Edit Host Modal ──────────────────────────────────────────────────────── *@
@@ -658,6 +671,7 @@
 
     // ── State — deployments ───────────────────────────────────────────────────
     private List<LlmDeploymentEntity>? _deployments;
+    private int _activeTab; // 0 = General, 1 = Deployments, 2 = Logs
     private bool    _showDeployForm;
     private bool    _addingDeployment;
     private string? _deployAddError;
