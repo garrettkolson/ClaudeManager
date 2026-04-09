@@ -37,7 +37,7 @@ coverage*/
 publish/
 **/publish/
 
-# Entity Framework migrations (keep migrations, ignore snapshots? No — keep all)
+# Entity Framework migrations (keep migrations, ignore snapshots? No - keep all)
 # Uncomment if you want to ignore the compiled snapshot:
 # **/Migrations/*ModelSnapshot.cs
 
@@ -62,3 +62,19 @@ desktop.ini
 
 # dotnet tools
 .config/dotnet-tools.json
+
+# Pipeline artifacts and caches
+.artifacts/
+.worktrees/
+
+# Environment files (sensitive data)
+.env
+.env.local
+.env.*
+*.env
+
+# Dependency directories
+node_modules/
+
+# Jupyter Notebook output
+.ipynb_checkpoints/
