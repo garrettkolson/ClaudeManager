@@ -1072,9 +1072,11 @@
         _nginxConfigError.Remove(host.Id);
         try
         {
-            var running = (_deployments ?? [])
-                .Where(d => d.HostId == host.HostId && d.Status == LlmDeploymentStatus.Running)
-                .ToList();
+            // Re-query from DB so we get the current status, not the stale page-load snapshot.
+            // Deployments can take minutes to reach Running (large model loads), so the in-memory
+            // list may still show Starting when the user clicks Apply Proxy.
+            var allForHost = await DeploymentSvc.GetAllForHostAsync(host.HostId);
+            var running    = allForHost.Where(d => d.Status == LlmDeploymentStatus.Running).ToList();
 
             var error = await NginxSvc.ApplyConfigAsync(host, running);
             if (error is not null)

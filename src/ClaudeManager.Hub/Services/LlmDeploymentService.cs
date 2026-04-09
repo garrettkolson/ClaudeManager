@@ -51,6 +51,14 @@ public class LlmDeploymentService
             .ToListAsync();
     }
 
+    public async Task<List<LlmDeploymentEntity>> GetAllForHostAsync(string hostId)
+    {
+        await using var db = _dbFactory.CreateDbContext();
+        return await db.LlmDeployments
+            .Where(d => d.HostId == hostId)
+            .ToListAsync();
+    }
+
     public async Task<LlmDeploymentEntity> CreateAsync(
         string hostId, string modelId, string gpuIndices, int hostPort,
         string quantization = "none", string imageTag = "latest",

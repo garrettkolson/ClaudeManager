@@ -106,7 +106,8 @@ public class SweAfProvisioningService(
     /// Returns the control plane URL on success, or an error message on failure.
     /// </summary>
     public async Task<(bool Success, string? Error, string? ControlPlaneUrl)>
-        ProvisionControlPlaneForJobAsync(long jobId, int port, CancellationToken ct = default)
+        ProvisionControlPlaneForJobAsync(
+            long jobId, int cpPort, int agentPort, int fastPort, CancellationToken ct = default)
     {
         var config = await GetConfigAsync(ct);
 
@@ -114,18 +115,18 @@ public class SweAfProvisioningService(
             return (false, "Provisioning host is not configured.", null);
 
         var projectName = $"agentfield-{jobId}";
-        var hostUrl     = $"http://{config.ProvisionHost}:{port}";
+        var hostUrl     = $"http://{config.ProvisionHost}:{cpPort}";
         var repoPath    = string.IsNullOrWhiteSpace(config.SweAfRepoPath)
             ? DefaultSweAfRepoPath
             : config.SweAfRepoPath;
 
         logger.LogInformation(
-            "Provisioning per-job SWE-AF stack (project={Project}, port={Port}) on {Host}",
-            projectName, port, config.ProvisionHost);
+            "Provisioning per-job SWE-AF stack (project={Project}, ports={Cp}/{Agent}/{Fast}) on {Host}",
+            projectName, cpPort, agentPort, fastPort, config.ProvisionHost);
 
         // Step 1: Write .env (includes AGENTFIELD_PORT for port mapping)
         var anthropicBaseUrl = await ResolveAnthropicBaseUrlAsync(config, ct);
-        var writeEnvCmd = BuildWriteEnvCommand(config, repoPath, anthropicBaseUrl, port);
+        var writeEnvCmd = BuildWriteEnvCommand(config, repoPath, anthropicBaseUrl, cpPort);
         var (envOut, envErr, envCode) = IsLocalHost(config.ProvisionHost!)
             ? await ExecLocalShellAsync(writeEnvCmd, ct)
             : await ExecSshShellAsync(config, writeEnvCmd, ct);
@@ -137,10 +138,28 @@ public class SweAfProvisioningService(
             return (false, $"Failed to write .env: {err}", null);
         }
 
-        // Step 2: Write docker-compose.override.yml if configured
-        if (!string.IsNullOrWhiteSpace(config.ComposeOverride))
+        // Step 2: Write docker-compose.hub.yml — overrides ports and inter-service env vars for all
+        // three services so each build runs on its own block of 3 consecutive ports and the agents
+        // can reach each other via the host IP.  Uses !override (Docker Compose 2.24.0+) so the
+        // allocated ports replace (not append) the hardcoded values in the base compose file.
+        var writeHubOverrideCmd = BuildWriteHubPortOverrideCommand(
+            repoPath, cpPort, agentPort, fastPort);
+        var (hubOvOut, hubOvErr, hubOvCode) = IsLocalHost(config.ProvisionHost!)
+            ? await ExecLocalShellAsync(writeHubOverrideCmd, ct)
+            : await ExecSshShellAsync(config, writeHubOverrideCmd, ct);
+
+        if (hubOvCode != 0)
         {
-            var writeOverrideCmd = BuildWriteOverrideCommand(config.ComposeOverride, repoPath);
+            var err = (hubOvErr ?? hubOvOut ?? "Failed to write docker-compose.hub.yml").Trim();
+            logger.LogWarning("Per-job hub override write failed: {Error}", err);
+            return (false, $"Failed to write docker-compose.hub.yml: {err}", null);
+        }
+
+        // Step 3: Write docker-compose.override.yml if configured
+        var hasUserOverride = !string.IsNullOrWhiteSpace(config.ComposeOverride);
+        if (hasUserOverride)
+        {
+            var writeOverrideCmd = BuildWriteOverrideCommand(config.ComposeOverride!, repoPath);
             var (ovOut, ovErr, ovCode) = IsLocalHost(config.ProvisionHost!)
                 ? await ExecLocalShellAsync(writeOverrideCmd, ct)
                 : await ExecSshShellAsync(config, writeOverrideCmd, ct);
@@ -153,8 +172,13 @@ public class SweAfProvisioningService(
             }
         }
 
-        // Step 3: Bring up the stack under the unique project name (no down-first — brand new project)
-        var upCmd = $"cd {repoPath} && docker compose --project-name {projectName} up -d --build";
+        // Step 4: Bring up the stack under the unique project name (no down-first — brand new project).
+        // Explicit -f chain so docker-compose.hub.yml is always included and the auto-loaded
+        // docker-compose.override.yml is only added when the user has configured one.
+        var composeFiles = hasUserOverride
+            ? "-f docker-compose.yml -f docker-compose.hub.yml -f docker-compose.override.yml"
+            : "-f docker-compose.yml -f docker-compose.hub.yml";
+        var upCmd = $"cd {repoPath} && docker compose --project-name {projectName} {composeFiles} up -d --build";
         var (compOut, compErr, compCode) = IsLocalHost(config.ProvisionHost!)
             ? await ExecLocalShellAsync(upCmd, ct)
             : await ExecSshShellAsync(config, upCmd, ct);
@@ -165,6 +189,14 @@ public class SweAfProvisioningService(
             logger.LogWarning("Per-job docker compose up failed (project={Project}): {Error}", projectName, err);
             return (false, $"docker compose up failed: {err}", null);
         }
+
+        // Log actual container port state for diagnostics
+        var psCmd = $"cd {repoPath} && docker compose --project-name {projectName} {composeFiles} ps --format 'table {{{{.Name}}}}\\t{{{{.Ports}}}}'";
+        var (psOut, _, _) = IsLocalHost(config.ProvisionHost!)
+            ? await ExecLocalShellAsync(psCmd, ct)
+            : await ExecSshShellAsync(config, psCmd, ct);
+        if (!string.IsNullOrWhiteSpace(psOut))
+            logger.LogInformation("Per-job stack ports (project={Project}):\n{Ps}", projectName, psOut.Trim());
 
         logger.LogInformation(
             "Per-job SWE-AF stack started (project={Project}) -> {Url}", projectName, hostUrl);
@@ -357,6 +389,41 @@ public class SweAfProvisioningService(
     {
         var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(overrideYaml));
         return $"echo {b64} | base64 -d > {repoPath}/docker-compose.override.yml";
+    }
+
+    /// <summary>
+    /// Builds a shell command that writes docker-compose.hub.yml — a hub-managed override that
+    /// assigns each service its own host port from the allocated 3-port block and sets the
+    /// environment variables so agents discover each other via Docker service DNS (within the
+    /// compose project network) rather than host IP.  This avoids host-port conflicts between
+    /// parallel builds and is immune to changes in the allocated port numbers.
+    /// Uses !override (Docker Compose 2.24.0+) so the allocated ports replace (not append)
+    /// the hardcoded values in the base compose file.
+    /// </summary>
+    private static string BuildWriteHubPortOverrideCommand(
+        string repoPath, int cpPort, int agentPort, int fastPort)
+    {
+        var yaml = $"""
+            services:
+              control-plane:
+                ports: !override
+                  - "{cpPort}:8080"
+              swe-agent:
+                ports: !override
+                  - "{agentPort}:8003"
+                environment:
+                  AGENTFIELD_SERVER: "http://control-plane:8080"
+                  AGENT_CALLBACK_URL: "http://swe-agent:8003"
+                  
+              swe-fast:
+                ports: !override
+                  - "{fastPort}:8004"
+                environment:
+                  AGENTFIELD_SERVER: "http://control-plane:8080"
+                  AGENT_CALLBACK_URL: "http://swe-fast:8004"
+            """;
+        var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(yaml));
+        return $"echo {b64} | base64 -d > {repoPath}/docker-compose.hub.yml";
     }
 
     /// <summary>

@@ -15,9 +15,9 @@ public class NginxProxyService(ILogger<NginxProxyService> logger, IDockerExecuto
     private readonly ConcurrentDictionary<string, (NginxProxyStatus Status, string? Error, DateTimeOffset UpdatedAt)>
         _statusCache = new();
 
-    private const string ContainerName = "vllm-nginx-proxy";
-    private const string RemoteConfigDir = "~/.vllm-proxy";
-    private const string RemoteConfigPath = "~/.vllm-proxy/nginx.conf";
+    private const string ContainerName  = "vllm-nginx-proxy";
+    private const string ConfigSubDir   = ".vllm-proxy";
+    private const string ConfigFile     = "nginx.conf";
 
     // ── Config generation ─────────────────────────────────────────────────────
 
@@ -97,7 +97,7 @@ public class NginxProxyService(ILogger<NginxProxyService> logger, IDockerExecuto
         var configB64   = Convert.ToBase64String(Encoding.UTF8.GetBytes(config));
 
         // One compound shell command: write config then start/reload container
-        var cmd = BuildApplyCommand(configB64);
+        var cmd = BuildApplyCommand(configB64, host.SshUser);
 
         logger.LogInformation("Applying nginx proxy config on {Host} (port {Port}, {Count} deployments)",
             host.Host, host.ProxyPort, runningDeployments.Count);
@@ -135,7 +135,8 @@ public class NginxProxyService(ILogger<NginxProxyService> logger, IDockerExecuto
     public async Task<(string? Config, string? Error)> GetCurrentConfigAsync(
         GpuHostEntity host, CancellationToken ct = default)
     {
-        var cmd = $"cat {RemoteConfigPath} 2>/dev/null";
+        var homeExpr = HomeExpr(host.SshUser);
+        var cmd = $"cat \"{homeExpr}/{ConfigSubDir}/{ConfigFile}\" 2>/dev/null";
         var (stdout, stderr, exitCode) = await ExecAsync(host, cmd, ct);
 
         if (exitCode != 0 && !string.IsNullOrWhiteSpace(stderr))
@@ -154,13 +155,18 @@ public class NginxProxyService(ILogger<NginxProxyService> logger, IDockerExecuto
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static string BuildApplyCommand(string configBase64)
+    private static string BuildApplyCommand(string configBase64, string? sshUser)
     {
-        // Write config file, then start or reload the container — all in one SSH round-trip.
-        // We mount the file as /etc/nginx/nginx.conf to replace the default entirely.
+        // Resolve the SSH user's home directory explicitly via getent rather than relying on
+        // $HOME or ~, both of which expand to /root when the command runs under sudo.
+        // getent passwd always returns the correct entry regardless of execution context.
+        var home = HomeExpr(sshUser);
+        var dir  = $"{home}/{ConfigSubDir}";
+        var path = $"{dir}/{ConfigFile}";
+
         var sb = new StringBuilder();
-        sb.Append($"mkdir -p {RemoteConfigDir}");
-        sb.Append($" && echo {configBase64} | base64 -d > {RemoteConfigPath}");
+        sb.Append($"mkdir -p \"{dir}\"");
+        sb.Append($" && echo {configBase64} | base64 -d > \"{path}\"");
         sb.Append($" && if docker inspect {ContainerName} > /dev/null 2>&1; then");
         sb.Append($"     if [ \"$(docker inspect -f '{{{{.State.Status}}}}' {ContainerName})\" = \"running\" ]; then");
         sb.Append($"         docker exec {ContainerName} nginx -s reload;");
@@ -169,11 +175,22 @@ public class NginxProxyService(ILogger<NginxProxyService> logger, IDockerExecuto
         sb.Append($"     fi;");
         sb.Append($" else");
         sb.Append($"     docker run -d --name {ContainerName} --network host --restart unless-stopped");
-        sb.Append($"         -v \"$HOME/.vllm-proxy/nginx.conf:/etc/nginx/nginx.conf:ro\"");
+        sb.Append($"         -v \"{path}:/etc/nginx/nginx.conf:ro\"");
         sb.Append($"         nginx:alpine;");
         sb.Append($" fi");
         return sb.ToString();
     }
+
+    /// <summary>
+    /// Returns a shell expression that resolves to the SSH user's home directory.
+    /// Uses getent passwd so it is correct even when the command runs under sudo
+    /// (where $HOME and ~ expand to /root instead of the SSH user's home).
+    /// Falls back to $HOME when no user is specified.
+    /// </summary>
+    private static string HomeExpr(string? sshUser) =>
+        string.IsNullOrWhiteSpace(sshUser)
+            ? "$HOME"
+            : $"$(getent passwd {sshUser} | cut -d: -f6)";
 
     private static NginxProxyStatus ParseContainerStatus(string? raw) => raw switch
     {

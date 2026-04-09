@@ -165,12 +165,16 @@ public class SweAfService
         string goal, string repoUrl, SweAfConfigEntity cfg, IProgress<string>? progress = null)
     {
         progress?.Report("Allocating port…");
-        // Allocate a port from the configured range
+        // Allocate a block of 3 consecutive ports: control-plane, swe-agent, swe-fast
         var port = await _portAllocator.AllocatePortAsync(cfg, _dbFactory);
         if (port is null)
             throw new InvalidOperationException(
-                $"No ports available in the configured range ({cfg.PortRangeStart}–{cfg.PortRangeEnd}). " +
+                $"No port blocks available in the configured range ({cfg.PortRangeStart}–{cfg.PortRangeEnd}). " +
                 "All slots are occupied by active builds.");
+
+        var cpPort    = port.Value;
+        var agentPort = port.Value + 1;
+        var fastPort  = port.Value + 2;
 
         var now = DateTimeOffset.UtcNow;
         var projectName = $"agentfield-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
@@ -206,14 +210,14 @@ public class SweAfService
             _notifier.NotifyBuildChanged(job);
         }
 
-        await LogStep($"Port {port} allocated.");
+        await LogStep($"Ports {cpPort}/{agentPort}/{fastPort} allocated (control-plane/swe-agent/swe-fast).");
 
         progress?.Report("Provisioning agent server…");
         await LogStep("Provisioning agent server…");
 
-        // Provision the isolated container
+        // Provision the isolated container (3-port block: cp / swe-agent / swe-fast)
         var (provSuccess, provError, controlPlaneUrl) =
-            await _provisioningSvc.ProvisionControlPlaneForJobAsync(job.Id, port.Value);
+            await _provisioningSvc.ProvisionControlPlaneForJobAsync(job.Id, cpPort, agentPort, fastPort);
 
         if (!provSuccess || controlPlaneUrl is null)
         {
@@ -266,24 +270,52 @@ public class SweAfService
         progress?.Report("Starting build…");
         await LogStep("Triggering build…");
 
-        // Trigger the build on the per-job control plane
-        ExecuteResponse result;
-        try
+        // Trigger the build, retrying if the swe-planner agent hasn't registered yet.
+        // The control plane health check passes before internal agents finish connecting,
+        // so a 400 "agent not found" response is expected for a few seconds after startup.
+        const int maxTriggerRetries = 10;
+        ExecuteResponse? result = null;
+        Exception? triggerEx   = null;
+
+        for (var attempt = 0; attempt <= maxTriggerRetries; attempt++)
         {
-            (result, _) = await PostBuildTriggerAsync(goal, repoUrl, cfg, controlPlaneUrl);
+            try
+            {
+                (result, _) = await PostBuildTriggerAsync(goal, repoUrl, cfg, controlPlaneUrl);
+                triggerEx = null;
+                break;
+            }
+            catch (InvalidOperationException ex)
+                when (attempt < maxTriggerRetries
+                   && ex.Message.Contains("400")
+                   && ex.Message.Contains("not found"))
+            {
+                triggerEx = ex;
+                var waited = (attempt + 1) * 5;
+                var msg = $"Waiting for agents to register… ({waited}s)";
+                progress?.Report(msg);
+                if (attempt == 0) await LogStep("Waiting for agents to register…");
+                await Task.Delay(5000);
+            }
+            catch (Exception ex)
+            {
+                triggerEx = ex;
+                break;
+            }
         }
-        catch (Exception ex)
+
+        if (triggerEx is not null)
         {
             job.Status       = BuildStatus.Failed;
-            job.ErrorMessage = ex.Message;
+            job.ErrorMessage = triggerEx.Message;
             job.CompletedAt  = DateTimeOffset.UtcNow;
             await setupDb.SaveChangesAsync();
             _notifier.NotifyBuildChanged(job);
             _ = Task.Run(() => TearDownJobContainerAsync(projectName));
-            throw;
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(triggerEx).Throw();
         }
 
-        job.ExternalJobId = result.ExecutionId;
+        job.ExternalJobId = result!.ExecutionId;
         await LogStep($"Build triggered (ID: {result.ExecutionId}).");
 
         _logger.LogInformation(
