@@ -30,9 +30,7 @@
   "completed_issues": [],
   "failed_issues": [],
   "skipped_issues": [],
-  "in_flight_issues": [
-    "build-detail-native-logs-widget"
-  ],
+  "in_flight_issues": [],
   "current_level": 0,
   "replan_count": 0,
   "replan_history": [],

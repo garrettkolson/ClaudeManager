@@ -28,6 +28,7 @@ public class SweAfService
     public bool    IsConfigured  => _configSvc.IsConfigured;
     public string? WebhookSecret => _configSvc.WebhookSecret;
     public string? HubPublicUrl  => _configSvc.HubPublicUrl;
+    public IDbContextFactory<ClaudeManagerDbContext> DbContextFactory => _dbFactory;
 
     public SweAfService(
         IHttpClientFactory httpFactory,

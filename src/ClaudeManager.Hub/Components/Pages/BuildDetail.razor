@@ -290,10 +290,32 @@
     private async Task RefreshLogs()
     {
         if (_job is null) return;
+        if (string.IsNullOrEmpty(_job.ExternalJobId)) return;
+
         _detailLoading = true;
         StateHasChanged();
-        await Task.Delay(300); // Simulate refresh
-        _detailLoading = false;
+
+        try
+        {
+            var detail = await BuildsSvc.FetchExecutionDetailAsync(_job.ExternalJobId);
+            if (detail is not null)
+            {
+                // Update job logs directly and save to database
+                _job.Logs = detail.Logs;
+                await using var db = await BuildsSvc.DbContextFactory.CreateDbContextAsync();
+                db.SweAfJobs.Update(_job);
+                await db.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _detailError = $"Failed to refresh logs: {ex.Message}";
+        }
+        finally
+        {
+            _detailLoading = false;
+            StateHasChanged();
+        }
     }
 
     private async Task CopyLogs()
