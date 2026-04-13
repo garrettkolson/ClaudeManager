@@ -129,8 +129,15 @@ public class WebhookEndpointTests
         var resp = await _client.PostAsync("/api/webhooks/agentfield", JsonBatch(json));
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        await using var db  = DbFactory.CreateDbContext();
-        var job = await db.SweAfJobs.FirstOrDefaultAsync(j => j.ExternalJobId == extId);
+        // Webhook processing is fire-and-forget — poll until the job appears.
+        SweAfJobEntity? job = null;
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline && job is null)
+        {
+            await using var db = DbFactory.CreateDbContext();
+            job = await db.SweAfJobs.FirstOrDefaultAsync(j => j.ExternalJobId == extId);
+            if (job is null) await Task.Delay(50);
+        }
         job.Should().NotBeNull();
         job!.Goal.Should().Be("E2E goal");
         job.Status.Should().Be(BuildStatus.Queued);
@@ -159,8 +166,16 @@ public class WebhookEndpointTests
         var resp = await _client.PostAsync("/api/webhooks/agentfield", JsonBatch(json));
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        await using var verify = DbFactory.CreateDbContext();
-        var job = await verify.SweAfJobs.FirstOrDefaultAsync(j => j.ExternalJobId == extId);
+        // Webhook processing is fire-and-forget — poll until the status update lands.
+        SweAfJobEntity? job = null;
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            await using var verify = DbFactory.CreateDbContext();
+            job = await verify.SweAfJobs.FirstOrDefaultAsync(j => j.ExternalJobId == extId);
+            if (job?.Status == BuildStatus.Running) break;
+            await Task.Delay(50);
+        }
         job!.Status.Should().Be(BuildStatus.Running);
         job.StartedAt.Should().NotBeNull();
     }

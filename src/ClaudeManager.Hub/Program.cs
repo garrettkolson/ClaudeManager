@@ -65,7 +65,7 @@ builder.Services.AddSingleton<IDockerExecutor, DockerExecutor>(services =>
     var logger = services.GetRequiredService<ILogger<DockerExecutor>>();
     return new DockerExecutor(logger);
 });
-builder.Services.AddSingleton<LlmInstanceService>();
+builder.Services.AddSingleton<ILlmInstanceService, LlmInstanceService>();
 builder.Services.AddSingleton<NginxProxyService>();
 builder.Services.AddSingleton<LlmProxyConfigService>();
 builder.Services.AddSingleton<LlmDeploymentService>();

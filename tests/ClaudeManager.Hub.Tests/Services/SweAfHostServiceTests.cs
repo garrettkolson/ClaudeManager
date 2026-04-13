@@ -102,7 +102,7 @@ public class SweAfHostServiceTests
         var stored = await db.SweAfHosts.FindAsync(entity.Id);
         stored.Should().NotBeNull();
         stored!.DisplayName.Should().Be("My Host");
-        stored.Host.Should().Be("server.local");
+        stored.AnthropicBaseUrl.Should().Be("server.local");
         stored.CommandsJson.Should().Contain("Start");
     }
 

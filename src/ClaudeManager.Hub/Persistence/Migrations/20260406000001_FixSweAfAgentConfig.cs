@@ -17,22 +17,11 @@ namespace ClaudeManager.Hub.Persistence.Migrations
             migrationBuilder.DropColumn(
                 name: "SweAfAgentImage",
                 table: "SweAfConfigs");
-
-            migrationBuilder.AddColumn<string>(
-                name: "SweAfRepoPath",
-                table: "SweAfConfigs",
-                type: "TEXT",
-                maxLength: 500,
-                nullable: true);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropColumn(
-                name: "SweAfRepoPath",
-                table: "SweAfConfigs");
-
             migrationBuilder.AddColumn<string>(
                 name: "GhToken",
                 table: "SweAfConfigs",

@@ -12,7 +12,7 @@ namespace ClaudeManager.Hub.Tests.Services;
 public class LlmInstanceServiceTests
 {
     private LlmInstanceService _svc = default!;
-    private readonly IDockerExecutor _dockerExecutor = new Mock<IDockerExecutor>().Object;
+    private readonly IDockerExecutor _dockerExecutor = new DockerExecutor();
 
     [SetUp]
     public void SetUp() =>
@@ -32,12 +32,12 @@ public class LlmInstanceServiceTests
 
         var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
 
-        cmd.Args.Should().Contain("docker run -d");
+        cmd.Args.Should().Contain("run -d");
         cmd.Args.Should().Contain("--runtime nvidia");
         cmd.Args.Should().Contain("--gpus '\"device=0\"'");
         cmd.Args.Should().Contain("--ipc=host");
         cmd.Args.Should().Contain("-p 8001:8000");
-        cmd.Args.Should().Contain("-v ~/.cache/huggingface:/root/.cache/huggingface");
+        cmd.Args.Should().Contain("-v /home/dummy/.cache/huggingface:/root/.cache/huggingface");
         cmd.Args.Should().Contain("vllm/vllm-openai:latest");
         cmd.Args.Should().Contain("--host 0.0.0.0 --port 8000");
         cmd.Args.Should().Contain("--model meta-llama/Llama-3.1-8B-Instruct");

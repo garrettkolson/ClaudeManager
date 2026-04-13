@@ -12,7 +12,7 @@ namespace ClaudeManager.Hub.Services;
 public class LlmDeploymentService
 {
     private readonly IDbContextFactory<ClaudeManagerDbContext> _dbFactory;
-    private readonly LlmInstanceService     _instance;
+    private readonly ILlmInstanceService    _instance;
     private readonly GpuHostService         _gpuHosts;
     private readonly HubSecretService       _secrets;
     private readonly LlmDeploymentNotifier  _notifier;
@@ -22,7 +22,7 @@ public class LlmDeploymentService
 
     public LlmDeploymentService(
         IDbContextFactory<ClaudeManagerDbContext> dbFactory,
-        LlmInstanceService    instance,
+        ILlmInstanceService   instance,
         GpuHostService        gpuHosts,
         HubSecretService      secrets,
         LlmDeploymentNotifier notifier,

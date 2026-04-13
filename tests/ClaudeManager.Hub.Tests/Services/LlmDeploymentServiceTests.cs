@@ -18,7 +18,7 @@ public class LlmDeploymentServiceTests
     private GpuHostService          _gpuHosts   = default!;
     private HubSecretService        _secrets    = default!;
     private LlmDeploymentNotifier   _notifier   = default!;
-    private Mock<LlmInstanceService> _instanceMock = default!;
+    private Mock<ILlmInstanceService> _instanceMock = default!;
     private Mock<IDockerExecutor>    _executorMock = default!;
     private LlmDeploymentService    _svc        = default!;
 
@@ -30,8 +30,8 @@ public class LlmDeploymentServiceTests
         _gpuHosts     = new GpuHostService(factory);
         _secrets      = new HubSecretService(factory);
         _notifier     = new LlmDeploymentNotifier();
-        _instanceMock = new Mock<LlmInstanceService>(NullLogger<LlmInstanceService>.Instance, new HttpClient());
         _executorMock = new Mock<IDockerExecutor>();
+        _instanceMock = new Mock<ILlmInstanceService>();
 
         var nginxProxy = new NginxProxyService(NullLogger<NginxProxyService>.Instance, _executorMock.Object);
         var proxyConfigSvc = new LlmProxyConfigService(

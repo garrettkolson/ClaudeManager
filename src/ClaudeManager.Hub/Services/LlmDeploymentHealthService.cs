@@ -21,7 +21,7 @@ public class LlmDeploymentHealthService : BackgroundService
     private static readonly TimeSpan InitialDelay = TimeSpan.FromSeconds(10); // Wait for startup recovery
 
     private readonly IDbContextFactory<ClaudeManagerDbContext> _dbFactory;
-    private readonly LlmInstanceService _instance;
+    private readonly ILlmInstanceService _instance;
     private readonly GpuHostService _gpuHosts;
     private readonly HubSecretService _secrets;
     private readonly NginxProxyService _nginxProxy;
@@ -31,7 +31,7 @@ public class LlmDeploymentHealthService : BackgroundService
 
     public LlmDeploymentHealthService(
         IDbContextFactory<ClaudeManagerDbContext> dbFactory,
-        LlmInstanceService instance,
+        ILlmInstanceService instance,
         GpuHostService gpuHosts,
         HubSecretService secrets,
         NginxProxyService nginxProxy,

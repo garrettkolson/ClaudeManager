@@ -49,7 +49,7 @@ public class NginxProxyServiceTests
 
         var config = NginxProxyService.GenerateConfig(deployments, proxyPort: 8080);
 
-        config.Should().Contain("upstream vllm_meta_llama_llama_3_1_8b_instruct");
+        config.Should().Contain("upstream vllm_pool");
         config.Should().Contain("server 127.0.0.1:8001");
     }
 
@@ -60,8 +60,8 @@ public class NginxProxyServiceTests
 
         var config = NginxProxyService.GenerateConfig(deployments, proxyPort: 8080);
 
-        config.Should().Contain("location /meta-llama-llama-3.1-8b-instruct/");
-        config.Should().Contain("proxy_pass http://vllm_meta_llama_llama_3_1_8b_instruct/");
+        config.Should().Contain("location /");
+        config.Should().Contain("proxy_pass http://vllm_pool");
     }
 
     [Test]
@@ -154,8 +154,10 @@ public class NginxProxyServiceTests
 
         var config = NginxProxyService.GenerateConfig(deployments, proxyPort: 8080);
 
-        config.Should().Contain("upstream vllm_meta_llama_llama_3_1_8b_instruct");
-        config.Should().Contain("upstream vllm_mistral_mistral_7b_v0_1");
+        // Both servers are load-balanced into a single shared upstream pool
+        config.Should().Contain("upstream vllm_pool");
+        config.Should().Contain("server 127.0.0.1:8001");
+        config.Should().Contain("server 127.0.0.1:8002");
     }
 
     [Test]
@@ -169,8 +171,9 @@ public class NginxProxyServiceTests
 
         var config = NginxProxyService.GenerateConfig(deployments, proxyPort: 8080);
 
+        // All deployments share a single location block
         var locationCount = System.Text.RegularExpressions.Regex.Matches(config, @"^\s+location ", System.Text.RegularExpressions.RegexOptions.Multiline).Count;
-        locationCount.Should().Be(2);
+        locationCount.Should().Be(1);
     }
 
     [Test]
@@ -184,10 +187,10 @@ public class NginxProxyServiceTests
 
         var config = NginxProxyService.GenerateConfig(deployments, proxyPort: 8080);
 
-        // Each upstream contains only its own server port
-        var llamaUpstreamSection = ExtractUpstreamBlock(config, "vllm_meta_llama_llama_3_1_8b_instruct");
-        llamaUpstreamSection.Should().Contain("127.0.0.1:8001");
-        llamaUpstreamSection.Should().NotContain("127.0.0.1:8002");
+        // Both servers are round-robin load-balanced in the shared vllm_pool
+        var poolSection = ExtractUpstreamBlock(config, "vllm_pool");
+        poolSection.Should().Contain("127.0.0.1:8001");
+        poolSection.Should().Contain("127.0.0.1:8002");
     }
 
     [Test]

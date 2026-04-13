@@ -32,6 +32,22 @@ public class SweAfServiceTests
         _conn      = conn;
         _dbFactory = factory;
         _notifier  = new BuildNotifier();
+
+        _portAllocator
+            .Setup(x => x.AllocatePortAsync(
+                It.IsAny<SweAfConfigEntity>(),
+                It.IsAny<IDbContextFactory<ClaudeManagerDbContext>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(8100);
+
+        _swarmProvisioner
+            .Setup(x => x.ProvisionControlPlaneForJobAsync(
+                It.IsAny<long>(),
+                It.IsAny<int>(),
+                It.IsAny<int>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((true, (string?)null, "http://localhost:8100"));
     }
 
     [TearDown]
@@ -261,11 +277,27 @@ public class SweAfServiceTests
     [Test]
     public async Task TriggerBuildAsync_HttpError_Throws()
     {
-        var handler = MockHttp(HttpStatusCode.InternalServerError);
-        var svc = CreateService(handler.Object);
+        var handlerMock = new Mock<HttpMessageHandler>();
+        // Health check must succeed so we reach the build trigger
+        handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(r => r.Method == HttpMethod.Get),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK));
+        // Build trigger returns 500
+        handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(r => r.Method == HttpMethod.Post),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            {
+                Content = new StringContent("Internal Server Error"),
+            });
+
+        var svc = CreateService(handlerMock.Object);
 
         await svc.Invoking(s => s.TriggerBuildAsync("Goal", "https://github.com/org/repo"))
-            .Should().ThrowAsync<HttpRequestException>();
+            .Should().ThrowAsync<InvalidOperationException>();
     }
 
     // ── ProcessWebhookBatchAsync ──────────────────────────────────────────────

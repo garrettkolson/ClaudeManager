@@ -5,6 +5,28 @@ using ClaudeManager.Hub.Services.Docker;
 
 namespace ClaudeManager.Hub.Services;
 
+public interface ILlmInstanceService
+{
+    Task<(string? ContainerId, string? Error)> StartContainerAsync(
+        GpuHostEntity host, LlmDeploymentEntity deployment, string? hfToken,
+        CancellationToken ct = default);
+
+    Task<string?> StopContainerAsync(
+        GpuHostEntity host, string containerId, CancellationToken ct = default);
+
+    Task<(string? Logs, string? Error)> GetLogsAsync(
+        GpuHostEntity host, string containerId, int lines = 200, CancellationToken ct = default);
+
+    Task<bool> CheckHealthAsync(
+        GpuHostEntity host, int hostPort, CancellationToken ct = default);
+
+    Task<ContainerStatus?> InspectContainerAsync(
+        GpuHostEntity host, string containerId, CancellationToken ct = default);
+
+    Task<(List<RawVllmContainerInfo> Containers, string? Error)>
+        ListRunningVllmContainersAsync(GpuHostEntity host, CancellationToken ct = default);
+}
+
 /// <summary>
 /// Executes Docker commands (run / stop / logs) on a GPU host.
 /// Uses Process.Start for localhost machines and SSH.NET for remote hosts.
@@ -12,7 +34,7 @@ namespace ClaudeManager.Hub.Services;
 public class LlmInstanceService(
     ILogger<LlmInstanceService> logger,
     HttpClient httpClient,
-    IDockerExecutor dockerExecutor)
+    IDockerExecutor dockerExecutor) : ILlmInstanceService
 {
     //private readonly IDockerExecutor _dockerExecutor = dockerExecutor ?? new DockerExecutor(null);
 
@@ -277,7 +299,7 @@ public class LlmInstanceService(
     {
         var builder = new LlmDeploymentCommandBuilder()
             .WithContainerName($"vllm-{deployment.ModelId.Replace("/", "-").Replace(".", "-")}-{Guid.CreateVersion7()}")
-            .WithImageTag(deployment.ImageTag ?? "latest")
+            .WithImageTag(string.IsNullOrWhiteSpace(deployment.ImageTag) ? "latest" : deployment.ImageTag)
             .WithGpus(deployment.GpuIndices ?? "0")
             .WithNvidiaRuntime()
             .WithHostIPC()
