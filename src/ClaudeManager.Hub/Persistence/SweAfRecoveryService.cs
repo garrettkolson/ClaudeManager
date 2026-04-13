@@ -8,34 +8,22 @@ namespace ClaudeManager.Hub.Persistence;
 /// 1. Reconcile any SWE-AF jobs that were in-flight when the hub last shut down.
 /// 2. Tear down any per-build control plane containers left over from jobs that are now terminal.
 /// </summary>
-public class SweAfRecoveryService : IHostedService
+public class SweAfRecoveryService(
+    SweAfService svc,
+    ISwarmProvisioningService provisioningSvc,
+    IDbContextFactory<ClaudeManagerDbContext> dbFactory,
+    ILogger<SweAfRecoveryService> logger)
+    : IHostedService
 {
-    private readonly SweAfService _svc;
-    private readonly SweAfProvisioningService _provisioningSvc;
-    private readonly IDbContextFactory<ClaudeManagerDbContext> _dbFactory;
-    private readonly ILogger<SweAfRecoveryService> _logger;
-
-    public SweAfRecoveryService(
-        SweAfService svc,
-        SweAfProvisioningService provisioningSvc,
-        IDbContextFactory<ClaudeManagerDbContext> dbFactory,
-        ILogger<SweAfRecoveryService> logger)
-    {
-        _svc             = svc;
-        _provisioningSvc = provisioningSvc;
-        _dbFactory       = dbFactory;
-        _logger          = logger;
-    }
-
     public async Task StartAsync(CancellationToken ct)
     {
-        if (!_svc.IsConfigured)
+        if (!svc.IsConfigured)
         {
-            _logger.LogDebug("SWE-AF not configured; skipping build recovery");
+            logger.LogDebug("SWE-AF not configured; skipping build recovery");
             return;
         }
 
-        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
         var all = await db.SweAfJobs.ToListAsync(ct);
 
         // Pass 1: reconcile in-flight builds against AgentField
@@ -46,13 +34,13 @@ public class SweAfRecoveryService : IHostedService
 
         if (inFlightIds.Count > 0)
         {
-            _logger.LogInformation("SWE-AF recovery: reconciling {Count} in-flight build(s)", inFlightIds.Count);
-            await _svc.ReconcileAsync(inFlightIds, ct);
-            _logger.LogInformation("SWE-AF recovery: reconciliation complete");
+            logger.LogInformation("SWE-AF recovery: reconciling {Count} in-flight build(s)", inFlightIds.Count);
+            await svc.ReconcileAsync(inFlightIds, ct);
+            logger.LogInformation("SWE-AF recovery: reconciliation complete");
         }
         else
         {
-            _logger.LogDebug("SWE-AF recovery: no in-flight builds to reconcile");
+            logger.LogDebug("SWE-AF recovery: no in-flight builds to reconcile");
         }
 
         // Pass 2: clean up orphaned per-build containers
@@ -68,11 +56,11 @@ public class SweAfRecoveryService : IHostedService
         List<string> runningProjects;
         try
         {
-            runningProjects = await _provisioningSvc.ListActiveComposeProjectsAsync(ct);
+            runningProjects = await provisioningSvc.ListActiveComposeProjectsAsync(ct);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Could not list compose projects during recovery; skipping orphan cleanup");
+            logger.LogWarning(ex, "Could not list compose projects during recovery; skipping orphan cleanup");
             return;
         }
 
@@ -89,12 +77,12 @@ public class SweAfRecoveryService : IHostedService
 
         foreach (var (id, _, projectName) in terminalWithContainers)
         {
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Recovery: tearing down orphaned container for terminal job {JobId} (project={Project})",
                 id, projectName);
-            var error = await _provisioningSvc.StopControlPlaneForJobAsync(projectName!, ct);
+            var error = await provisioningSvc.StopControlPlaneForJobAsync(projectName!, ct);
             if (error is not null)
-                _logger.LogWarning("Recovery teardown of {Project} failed: {Error}", projectName, error);
+                logger.LogWarning("Recovery teardown of {Project} failed: {Error}", projectName, error);
         }
 
         // Tear down containers with no matching job in the DB at all
@@ -106,12 +94,12 @@ public class SweAfRecoveryService : IHostedService
         {
             if (!knownProjects.Contains(project))
             {
-                _logger.LogWarning(
+                logger.LogWarning(
                     "Recovery: found orphaned compose project {Project} with no matching job — tearing down",
                     project);
-                var error = await _provisioningSvc.StopControlPlaneForJobAsync(project, ct);
+                var error = await provisioningSvc.StopControlPlaneForJobAsync(project, ct);
                 if (error is not null)
-                    _logger.LogWarning("Recovery teardown of orphan {Project} failed: {Error}", project, error);
+                    logger.LogWarning("Recovery teardown of orphan {Project} failed: {Error}", project, error);
             }
         }
     }
