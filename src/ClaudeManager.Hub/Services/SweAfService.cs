@@ -18,6 +18,7 @@ public class SweAfService
     private readonly ISwarmProvisioningService _provisioningSvc;
     private readonly ISwarmRunnerPortAllocator _portAllocator;
     private readonly ILogger<SweAfService> _logger;
+    private readonly TimeSpan _healthCheckTimeout;
 
     private static readonly JsonSerializerOptions _ignoreNulls = new()
     {
@@ -35,15 +36,17 @@ public class SweAfService
         BuildNotifier notifier,
         ISwarmProvisioningService provisioningSvc,
         ISwarmRunnerPortAllocator portAllocator,
-        ILogger<SweAfService> logger)
+        ILogger<SweAfService> logger,
+        TimeSpan? healthCheckTimeout = null)
     {
-        _httpFactory     = httpFactory;
-        _configSvc       = configSvc;
-        _dbFactory       = dbFactory;
-        _notifier        = notifier;
-        _provisioningSvc = provisioningSvc;
-        _portAllocator   = portAllocator;
-        _logger          = logger;
+        _httpFactory        = httpFactory;
+        _configSvc          = configSvc;
+        _dbFactory          = dbFactory;
+        _notifier           = notifier;
+        _provisioningSvc    = provisioningSvc;
+        _portAllocator      = portAllocator;
+        _logger             = logger;
+        _healthCheckTimeout = healthCheckTimeout ?? TimeSpan.FromSeconds(300);
     }
 
     // ── HTTP helpers ──────────────────────────────────────────────────────────
@@ -235,7 +238,7 @@ public class SweAfService
         var waitStart = DateTimeOffset.UtcNow;
         var healthy = await WaitForHealthAsync(
             $"{controlPlaneUrl}/health",
-            TimeSpan.FromSeconds(300),
+            _healthCheckTimeout,
             progress);
 
         if (!healthy)

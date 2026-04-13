@@ -60,13 +60,14 @@ public class SweAfServiceTests
     {
         var factory    = new TestHttpClientFactory(new HttpClient(handler));
         var configSvc  = CreateConfigService(baseUrl, apiKey, modelDefault, modelCoder, modelQa);
-        return new SweAfService(factory, 
-            configSvc, 
-            _dbFactory, 
-            _notifier, 
+        return new SweAfService(factory,
+            configSvc,
+            _dbFactory,
+            _notifier,
             _swarmProvisioner.Object,
             _portAllocator.Object,
-            NullLogger<SweAfService>.Instance);
+            NullLogger<SweAfService>.Instance,
+            healthCheckTimeout: TimeSpan.FromSeconds(2));
     }
 
     private SweAfConfigService CreateConfigService(string baseUrl, string apiKey,
