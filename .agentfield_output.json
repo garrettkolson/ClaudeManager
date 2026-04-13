@@ -1,0 +1,36 @@
+{
+  "description": "Output from the coder agent.",
+  "files_changed": [
+    "/workspaces/ClaudeManager/src/ClaudeManager.Hub/Services/SweAfService.cs"
+  ],
+  "summary": "Implemented immediate container teardown in CancelJobAsync: calls StopControlPlaneForJobAsync via TearDownJobContainerAsync after sending AgentField cancel request, sets job to Cancelled status before teardown, persists status to DB before teardown, invokes BuildNotifier.NotifyBuildChanged, uses Task.Run pattern for fire-and-forget async teardown, and checks for ComposeProjectName null/whitespace before attempting teardown.",
+  "complete": true,
+  "iteration_id": "f2b96697-01",
+  "tests_passed": null,
+  "test_summary": "xUnit tests written in SweAfServiceCancelTests.cs with 6 unit tests covering: 1) CancelJobInvokesContainerTeardown, 2) CancelSetsTerminalStatusBeforeTeardown, 3) BuildNotifierInvokedOnCancel, 4) TeardownRunsAsync, 5) TeardownHandlesMissingProvisioning, 6) CompositionProjectNameNullCheck. Tests verified via code inspection.",
+  "codebase_learnings": [
+    "Uses xUnit framework with [TestFixture] attribute and [Test] for unit tests",
+    "FluentAssertions library for assertions (.Should().BeTrue(), .Should().BeNull(), etc.)",
+    "Moq library for mocking dependencies (ISwarmProvisioningService, HttpMessageHandler)",
+    "InMemoryDbHelper.CreateAsync() pattern for test database setup",
+    "Task.Run pattern used for fire-and-forget async operations throughout codebase",
+    "BuildNotifier is interface with BuildChanged event that fires on status changes",
+    "ISwarmProvisioningService interfaces contract with ProvisionControlPlaneForJobAsync and StopControlPlaneForJobAsync methods",
+    "Dependency injection pattern for IHttpClientFactory, IDbContextFactory, and other services"
+  ],
+  "agent_retro": {
+    "what_worked_well": [
+      "Code inspection read existing test patterns and correctly replicated them",
+      "Modified existing CancelJobAsync without breakage preserving AgentField cancel API call",
+      "Added Context-aware inline comments explaining each step",
+      "Created all 6 required tests as per Testing Strategy documentation"
+    ],
+    "tips_for_similar_issues": [
+      "Task.Run pattern is the standard for fire-and-forget async calls in this codebase",
+      "Always check ComposeProjectName is not whitespace before calling TearDownJobContainerAsync",
+      "Status change -> Database persist -> BuildNotifier -> TearDown is the established order",
+      "Existing tests in file use xUnit's [SetUp]/[TearDown] pattern with InMemoryDbHelper"
+    ]
+  },
+  "repo_name": "ClaudeManager"
+}
