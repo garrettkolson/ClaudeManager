@@ -532,10 +532,28 @@ public class SweAfService
         {
             _logger.LogWarning("Cancel request for {JobId} returned {Status}",
                 jobId, (int)resp.StatusCode);
-            return (false, $"AgentField returned {(int)resp.StatusCode}.");
+            // Continue regardless of API response - tear down containers anyway
         }
 
         _logger.LogInformation("Cancel request sent for {ExternalJobId}", job.ExternalJobId);
+
+        // _ _ Step 2: Set terminal status and persist (CRITICAL BEFORE teardown) _ _
+        // Set Status to Cancelled, CompletedAt, and persist within DB transaction
+        job.Status = BuildStatus.Cancelled;
+        job.CompletedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        // _ _ Step 3: Notify UI immediately via BuildNotifier _ _
+        _notifier.NotifyBuildChanged(job);
+
+        // _ _ Step 4: Fire-and-forget container teardown (TERMINAL-STATE PATTERN) _ _
+        // Only attempt teardown if ComposeProjectName exists
+        if (!string.IsNullOrWhiteSpace(job.ComposeProjectName))
+        {
+            // Note: Use 'ct' for cancellation support
+            _ = Task.Run(() => TearDownJobContainerAsync(job.ComposeProjectName), ct);
+        }
+
         return (true, null);
     }
 

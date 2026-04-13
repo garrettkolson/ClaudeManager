@@ -30,14 +30,14 @@ artifacts/
 TestResults/
 *.trx
 *.coverage
-*.coveragexml
+.coveragexml
 coverage*/
 
 # Publish output
 publish/
 **/publish/
 
-# Entity Framework migrations (keep migrations, ignore snapshots? No — keep all)
+# Entity Framework migrations (keep migrations, ignore snapshots? No - keep all)
 # Uncomment if you want to ignore the compiled snapshot:
 # **/Migrations/*ModelSnapshot.cs
 
@@ -55,7 +55,7 @@ appsettings.*.local.json
 *.log
 logs/
 
-# OS
+# OS files
 .DS_Store
 Thumbs.db
 desktop.ini
@@ -63,3 +63,17 @@ desktop.ini
 # dotnet tools
 .config/dotnet-tools.json
 /src/ClaudeManager.Hub/.claude/settings.local.json
+
+# Pipeline artifacts and caches
+.artifacts/
+.worktrees/
+
+# Python (Jupyter notebooks)
+*.pyc
+__pycache__/
+
+# Assembly info (if present)
+*.dll.bak
+*.pdb
+*.tmp
+*.temp
