@@ -54,4 +54,7 @@ public class SweAfJobEntity
     /// <summary>Docker Compose project name for this job's control plane, e.g. "agentfield-42".</summary>
     [MaxLength(200)]
     public string? ComposeProjectName { get; set; }
+
+    /// <summary>When true the job is hidden from the default builds list.</summary>
+    public bool IsArchived { get; set; }
 }

@@ -477,8 +477,19 @@ public class SweAfService
     public async Task<List<SweAfJobEntity>> GetAllJobsAsync()
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
-        var all = await db.SweAfJobs.ToListAsync();
+        var all = await db.SweAfJobs.Where(j => !j.IsArchived).ToListAsync();
         return all.OrderByDescending(j => j.CreatedAt).ToList();
+    }
+
+    public async Task<(bool Success, string? Error)> ArchiveJobAsync(
+        long jobId, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var job = await db.SweAfJobs.FindAsync([jobId], ct);
+        if (job is null) return (false, "Job not found.");
+        job.IsArchived = true;
+        await db.SaveChangesAsync(ct);
+        return (true, null);
     }
 
     public async Task<(string? Logs, string? Error)> GetLogsAsync(

@@ -146,7 +146,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var job in _jobs)
+                        @foreach (var job in PagedJobs)
                         {
                             <tr class="builds-row @StatusCss(job.Status)" title="@job.Goal">
                                 <td class="builds-goal">
@@ -197,6 +197,14 @@
                                             Retry
                                         </button>
                                     }
+                                    @if (job.Status is BuildStatus.Succeeded or BuildStatus.Failed or BuildStatus.Cancelled)
+                                    {
+                                        <button class="btn-archive-sm"
+                                                @onclick="() => ArchiveJob(job.Id)"
+                                                disabled="@_actionInProgress.GetValueOrDefault(job.Id)">
+                                            Archive
+                                        </button>
+                                    }
                                     @if (_actionError.TryGetValue(job.Id, out var actionErr) && actionErr is not null)
                                     {
                                         <span class="build-action-error">@actionErr</span>
@@ -216,6 +224,15 @@
                         }
                     </tbody>
                 </table>
+
+                @if (TotalPages > 1)
+                {
+                    <div class="builds-pagination">
+                        <button class="btn-secondary-sm" @onclick="PrevPage" disabled="@(_currentPage <= 1)">← Prev</button>
+                        <span class="builds-pagination-info">Page @_currentPage of @TotalPages</span>
+                        <button class="btn-secondary-sm" @onclick="NextPage" disabled="@(_currentPage >= TotalPages)">Next →</button>
+                    </div>
+                }
 
                 @if (_viewingLogsId.HasValue && _jobs is not null)
                 {
@@ -536,6 +553,11 @@
     private List<SweAfJobEntity>? _jobs;
     private List<(SweAfHostEntity Host, SweAfHostCommand Cmd)> _hostCommands = [];
 
+    private int _currentPage = 1;
+    private const int PageSize = 25;
+    private int TotalPages => _jobs is null || _jobs.Count == 0 ? 1 : (int)Math.Ceiling(_jobs.Count / (double)PageSize);
+    private IEnumerable<SweAfJobEntity> PagedJobs => _jobs!.Skip((_currentPage - 1) * PageSize).Take(PageSize);
+
     private bool    _showModal;
     private string  _formGoal      = string.Empty;
     private string  _formRepoUrl   = string.Empty;
@@ -613,7 +635,10 @@
         if (idx >= 0)
             _jobs[idx] = updated;
         else
+        {
             _jobs.Insert(0, updated);
+            _currentPage = 1; // new job always lands on page 1
+        }
 
         if (_viewingLogsId == updated.Id && !string.IsNullOrWhiteSpace(updated.Logs))
             _buildLogs = updated.Logs;
@@ -708,6 +733,28 @@
         _actionInProgress[jobId] = false;
         if (!ok) _actionError[jobId] = err ?? "Retry failed.";
     }
+
+    private async Task ArchiveJob(long jobId)
+    {
+        _actionInProgress[jobId] = true;
+        _actionError.Remove(jobId);
+        StateHasChanged();
+        var (ok, err) = await BuildsSvc.ArchiveJobAsync(jobId);
+        _actionInProgress[jobId] = false;
+        if (!ok)
+        {
+            _actionError[jobId] = err ?? "Archive failed.";
+        }
+        else
+        {
+            _jobs?.RemoveAll(j => j.Id == jobId);
+            // If the current page is now beyond the last page, step back
+            if (_currentPage > TotalPages) _currentPage = TotalPages;
+        }
+    }
+
+    private void PrevPage() { if (_currentPage > 1) _currentPage--; }
+    private void NextPage() { if (_currentPage < TotalPages) _currentPage++; }
 
     // ── New build modal ───────────────────────────────────────────────────────
 

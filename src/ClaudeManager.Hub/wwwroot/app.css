@@ -200,9 +200,14 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 .btn-reject-sm  { background: #3a1a1a; color: #cf6679; border: 1px solid #5a2a2a; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
 .btn-reject-sm:hover { background: #5a2020; }
 .btn-reject-sm:disabled { opacity: 0.45; cursor: not-allowed; }
-.btn-retry-sm  { background: #1a2a3a; color: #7cb8ff; border: 1px solid #2a4a6a; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
+.btn-retry-sm   { background: #1a2a3a; color: #7cb8ff; border: 1px solid #2a4a6a; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
 .btn-retry-sm:hover { background: #1e3a5a; }
 .btn-retry-sm:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-archive-sm { background: #1e1e1e; color: #666; border: 1px solid #383838; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
+.btn-archive-sm:hover { background: #2a2a2a; color: #888; }
+.btn-archive-sm:disabled { opacity: 0.45; cursor: not-allowed; }
+.builds-pagination { display: flex; align-items: center; gap: 12px; justify-content: center; margin-top: 16px; }
+.builds-pagination-info { color: #666; font-size: 12px; }
 .btn-host-cmd { background: #1a3a4a; color: #7cb8ff; border: 1px solid #2a4a6a; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; }
 .btn-host-cmd:hover { background: #1e4a6a; }
 .btn-host-cmd:disabled { opacity: 0.5; cursor: not-allowed; }
