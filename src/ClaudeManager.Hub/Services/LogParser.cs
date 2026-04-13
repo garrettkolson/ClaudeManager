@@ -220,8 +220,8 @@ public static class StringExtensions
                 '\t' => "\\t",
                 '\b' => "\\b",
                 '\f' => "\\f",
-                char v when v < 32 => $"\\u{v:X4}",
-                _ => new string(c)
+                var v when v < 32 => $"\\u{v:X4}",
+                _ => new string([c])
             });
         }
 

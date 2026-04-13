@@ -3,10 +3,10 @@
 @inject SweAfService BuildsSvc
 @inject BuildNotifier Notifier
 @inject ILogParser LogParser
+@inject Microsoft.JSInterop.IJSRuntime JSRuntime
+
 @using System.Text.Json
-@using ClaudeManager.Hub.Persistence.Entities
-@using ClaudeManager.Hub.Services
-@using ClaudeManager.Hub.Services.StringExtensions
+@using static ClaudeManager.Hub.Services.StringExtensions
 
 <PageTitle>Build — Claude Manager</PageTitle>
 
@@ -121,6 +121,17 @@
                 <pre class="build-detail-pre error">@_job.ErrorMessage</pre>
             </div>
         }
+        
+        @if (_job.Status == BuildStatus.Running)
+        {
+            <div id="agentfield-execution" title="AgentField Workflow Execution" data-workflow-execution="true"
+                 class="build-detail-section agentfield-execution">
+                <iframe src="@_job.ControlPlaneUrl/index.html?execution_id=@_job.ExternalJobId"
+                        class="agentfield-iframe"
+                        style="width: 100%; height: 500px; min-height: 500px; border: 1px solid #ccc; display: block;"
+                        scrolling="no"></iframe>
+            </div>
+        }
 
         @* ── Build logs widget ── *@
         @if (_job.Logs is null)
@@ -144,9 +155,9 @@
                         <button class="btn-secondary-sm" @onclick="RefreshLogs" disabled="@_detailLoading">
                             Refresh
                         </button>
-                        <button class="btn-secondary-sm" @onclick="CopyLogs" disabled="@_detailLoading">
-                            Copy
-                        </button>
+                        @* <button class="btn-secondary-sm" @onclick="CopyLogs" disabled="@_detailLoading"> *@
+                        @*     Copy *@
+                        @* </button> *@
                         <button class="btn-secondary-sm" @onclick="DownloadLogs" disabled="@_detailLoading">
                             Download
                         </button>
@@ -317,14 +328,14 @@
             StateHasChanged();
         }
     }
-
-    private async Task CopyLogs()
-    {
-        if (_job.Logs is null || string.IsNullOrEmpty(_job.Logs))
-            return;
-
-        await Clipboard.SetDataAsync(_job.Logs);
-    }
+    //
+    // private async Task CopyLogs()
+    // {
+    //     if (_job.Logs is null || string.IsNullOrEmpty(_job.Logs))
+    //         return;
+    //
+    //     await Clipboard.SetDataAsync(_job.Logs);
+    // }
 
     private async Task DownloadLogs()
     {
