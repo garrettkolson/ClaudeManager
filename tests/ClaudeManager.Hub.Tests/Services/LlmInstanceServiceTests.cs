@@ -1,8 +1,10 @@
 using System.Net.Http;
 using ClaudeManager.Hub.Persistence.Entities;
 using ClaudeManager.Hub.Services;
+using ClaudeManager.Hub.Services.Docker;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 
 namespace ClaudeManager.Hub.Tests.Services;
 
@@ -10,10 +12,16 @@ namespace ClaudeManager.Hub.Tests.Services;
 public class LlmInstanceServiceTests
 {
     private LlmInstanceService _svc = default!;
+    private readonly IDockerExecutor _dockerExecutor = new Mock<IDockerExecutor>().Object;
 
     [SetUp]
     public void SetUp() =>
-        _svc = new LlmInstanceService(NullLogger<LlmInstanceService>.Instance, new HttpClient());
+        _svc = new LlmInstanceService(NullLogger<LlmInstanceService>.Instance, new HttpClient(), _dockerExecutor);
+
+    public static ExecutionHost DummyHost => new ExecutionHost("localhost",
+        8000,
+        "dummy",
+        HostAuthType.None);
 
     // ── BuildDockerRunCommand ──────────────────────────────────────────────────
 
@@ -22,17 +30,17 @@ public class LlmInstanceServiceTests
     {
         var deployment = MakeDeployment("meta-llama/Llama-3.1-8B-Instruct", gpuIndices: "0", port: 8001);
 
-        var cmd = LlmInstanceService.BuildDockerRunCommand(deployment, hfToken: null);
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
 
-        cmd.Should().Contain("docker run -d");
-        cmd.Should().Contain("--runtime nvidia");
-        cmd.Should().Contain("--gpus '\"device=0\"'");
-        cmd.Should().Contain("--ipc=host");
-        cmd.Should().Contain("-p 8001:8000");
-        cmd.Should().Contain("-v ~/.cache/huggingface:/root/.cache/huggingface");
-        cmd.Should().Contain("vllm/vllm-openai:latest");
-        cmd.Should().Contain("--host 0.0.0.0 --port 8000");
-        cmd.Should().Contain("--model meta-llama/Llama-3.1-8B-Instruct");
+        cmd.Args.Should().Contain("docker run -d");
+        cmd.Args.Should().Contain("--runtime nvidia");
+        cmd.Args.Should().Contain("--gpus '\"device=0\"'");
+        cmd.Args.Should().Contain("--ipc=host");
+        cmd.Args.Should().Contain("-p 8001:8000");
+        cmd.Args.Should().Contain("-v ~/.cache/huggingface:/root/.cache/huggingface");
+        cmd.Args.Should().Contain("vllm/vllm-openai:latest");
+        cmd.Args.Should().Contain("--host 0.0.0.0 --port 8000");
+        cmd.Args.Should().Contain("--model meta-llama/Llama-3.1-8B-Instruct");
     }
 
     [Test]
@@ -41,9 +49,9 @@ public class LlmInstanceServiceTests
         var deployment = MakeDeployment("model/m", gpuIndices: "0", port: 8001);
         deployment.ImageTag = "latest";
 
-        var cmd = LlmInstanceService.BuildDockerRunCommand(deployment, hfToken: null);
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
 
-        cmd.Should().Contain("vllm/vllm-openai:latest");
+        cmd.Args.Should().Contain("vllm/vllm-openai:latest");
     }
 
     [Test]
@@ -52,10 +60,10 @@ public class LlmInstanceServiceTests
         var deployment = MakeDeployment("model/m", gpuIndices: "0", port: 8001);
         deployment.ImageTag = "nightly";
 
-        var cmd = LlmInstanceService.BuildDockerRunCommand(deployment, hfToken: null);
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
 
-        cmd.Should().Contain("vllm/vllm-openai:nightly");
-        cmd.Should().NotContain("vllm/vllm-openai:latest");
+        cmd.Args.Should().Contain("vllm/vllm-openai:nightly");
+        cmd.Args.Should().NotContain("vllm/vllm-openai:latest");
     }
 
     [Test]
@@ -64,9 +72,9 @@ public class LlmInstanceServiceTests
         var deployment = MakeDeployment("model/m", gpuIndices: "0", port: 8001);
         deployment.ImageTag = "";
 
-        var cmd = LlmInstanceService.BuildDockerRunCommand(deployment, hfToken: null);
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
 
-        cmd.Should().Contain("vllm/vllm-openai:latest");
+        cmd.Args.Should().Contain("vllm/vllm-openai:latest");
     }
 
     [Test]
@@ -74,9 +82,9 @@ public class LlmInstanceServiceTests
     {
         var deployment = MakeDeployment("meta-llama/Llama-3.1-8B-Instruct", gpuIndices: "0", port: 8001);
 
-        var cmd = LlmInstanceService.BuildDockerRunCommand(deployment, hfToken: "hf_abc123");
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: "hf_abc123");
 
-        cmd.Should().Contain("-e HUGGING_FACE_HUB_TOKEN=hf_abc123");
+        cmd.Args.Should().Contain("-e HUGGING_FACE_HUB_TOKEN=hf_abc123");
     }
 
     [Test]
@@ -84,9 +92,9 @@ public class LlmInstanceServiceTests
     {
         var deployment = MakeDeployment("mistral/Mistral-7B-v0.1", gpuIndices: "0", port: 8002);
 
-        var cmd = LlmInstanceService.BuildDockerRunCommand(deployment, hfToken: null);
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
 
-        cmd.Should().NotContain("HUGGING_FACE_HUB_TOKEN");
+        cmd.Args.Should().NotContain("HUGGING_FACE_HUB_TOKEN");
     }
 
     [Test]
@@ -94,9 +102,9 @@ public class LlmInstanceServiceTests
     {
         var deployment = MakeDeployment("mistral/Mistral-7B-v0.1", gpuIndices: "0", port: 8002);
 
-        var cmd = LlmInstanceService.BuildDockerRunCommand(deployment, hfToken: "  ");
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: "  ");
 
-        cmd.Should().NotContain("HUGGING_FACE_HUB_TOKEN");
+        cmd.Args.Should().NotContain("HUGGING_FACE_HUB_TOKEN");
     }
 
     [Test]
@@ -104,10 +112,10 @@ public class LlmInstanceServiceTests
     {
         var deployment = MakeDeployment("meta-llama/Llama-3.1-70B-Instruct", gpuIndices: "0,1,2,3", port: 8001);
 
-        var cmd = LlmInstanceService.BuildDockerRunCommand(deployment, hfToken: null);
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
 
-        cmd.Should().Contain("--gpus '\"device=0,1,2,3\"'");
-        cmd.Should().Contain("--tensor-parallel-size 4");
+        cmd.Args.Should().Contain("--gpus '\"device=0,1,2,3\"'");
+        cmd.Args.Should().Contain("--tensor-parallel-size 4");
     }
 
     [Test]
@@ -115,9 +123,9 @@ public class LlmInstanceServiceTests
     {
         var deployment = MakeDeployment("meta-llama/Llama-3.1-8B-Instruct", gpuIndices: "0", port: 8001);
 
-        var cmd = LlmInstanceService.BuildDockerRunCommand(deployment, hfToken: null);
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
 
-        cmd.Should().NotContain("--tensor-parallel-size");
+        cmd.Args.Should().NotContain("--tensor-parallel-size");
     }
 
     [Test]
@@ -125,9 +133,9 @@ public class LlmInstanceServiceTests
     {
         var deployment = MakeDeployment("model/model", gpuIndices: "0", port: 8001, quantization: "awq");
 
-        var cmd = LlmInstanceService.BuildDockerRunCommand(deployment, hfToken: null);
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
 
-        cmd.Should().Contain("--quantization awq");
+        cmd.Args.Should().Contain("--quantization awq");
     }
 
     [Test]
@@ -135,9 +143,9 @@ public class LlmInstanceServiceTests
     {
         var deployment = MakeDeployment("model/model", gpuIndices: "0", port: 8001, quantization: "none");
 
-        var cmd = LlmInstanceService.BuildDockerRunCommand(deployment, hfToken: null);
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
 
-        cmd.Should().NotContain("--quantization");
+        cmd.Args.Should().NotContain("--quantization");
     }
 
     [Test]
@@ -146,9 +154,9 @@ public class LlmInstanceServiceTests
         var deployment = MakeDeployment("model/model", gpuIndices: "0", port: 8001);
         deployment.ExtraArgs = "--max-model-len 4096 --dtype float16";
 
-        var cmd = LlmInstanceService.BuildDockerRunCommand(deployment, hfToken: null);
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
 
-        cmd.Should().EndWith("--max-model-len 4096 --dtype float16");
+        cmd.Args.Should().EndWith("--max-model-len 4096 --dtype float16");
     }
 
     [Test]
@@ -157,9 +165,9 @@ public class LlmInstanceServiceTests
         var deployment = MakeDeployment("model/model", gpuIndices: "0", port: 8001);
         deployment.ExtraArgs = null;
 
-        var cmd = LlmInstanceService.BuildDockerRunCommand(deployment, hfToken: null);
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
 
-        cmd.Should().NotEndWith(" ");
+        cmd.Args.Should().NotEndWith(" ");
     }
 
     // ── ParseDockerInspect ────────────────────────────────────────────────────

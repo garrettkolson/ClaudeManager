@@ -94,7 +94,7 @@ public class SweAfHostServiceTests
         {
             new() { Label = "Start", Command = "docker compose up -d" },
         };
-        var entity = await svc.CreateAsync("My Host", "server.local", commands: cmds);
+        var entity = await svc.CreateAsync("My Host", "server.local", "", commands: cmds);
 
         entity.Id.Should().BeGreaterThan(0);
 
@@ -110,8 +110,8 @@ public class SweAfHostServiceTests
     public async Task GetAllAsync_ReturnsOrderedByDisplayName()
     {
         var svc = BuildSvc();
-        await svc.CreateAsync("Zebra Host", "z.local");
-        await svc.CreateAsync("Alpha Host", "a.local");
+        await svc.CreateAsync("Zebra Host", "z.local", "");
+        await svc.CreateAsync("Alpha Host", "a.local", "");
 
         var all = await svc.GetAllAsync();
         all.Should().HaveCount(2);
@@ -123,7 +123,7 @@ public class SweAfHostServiceTests
     public async Task DeleteAsync_RemovesFromDb()
     {
         var svc    = BuildSvc();
-        var entity = await svc.CreateAsync("Temp", "temp.local");
+        var entity = await svc.CreateAsync("Temp", "temp.local", "");
 
         await svc.DeleteAsync(entity.Id);
 

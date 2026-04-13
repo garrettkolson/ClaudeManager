@@ -22,6 +22,8 @@ public class SweAfServiceTests
     private SqliteConnection _conn = default!;
     private IDbContextFactory<ClaudeManagerDbContext> _dbFactory = default!;
     private BuildNotifier _notifier = default!;
+    private Mock<ISwarmProvisioningService> _swarmProvisioner = new();
+    private Mock<ISwarmRunnerPortAllocator> _portAllocator = new();
 
     [SetUp]
     public async Task SetUp()
@@ -42,7 +44,12 @@ public class SweAfServiceTests
     {
         var factory    = new TestHttpClientFactory(new HttpClient(handler));
         var configSvc  = CreateConfigService(baseUrl, apiKey, modelDefault, modelCoder, modelQa);
-        return new SweAfService(factory, configSvc, _dbFactory, _notifier,
+        return new SweAfService(factory, 
+            configSvc, 
+            _dbFactory, 
+            _notifier, 
+            _swarmProvisioner.Object,
+            _portAllocator.Object,
             NullLogger<SweAfService>.Instance);
     }
 

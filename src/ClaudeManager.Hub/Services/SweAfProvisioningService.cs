@@ -6,13 +6,29 @@ using Renci.SshNet;
 
 namespace ClaudeManager.Hub.Services;
 
+public interface ISwarmProvisioningService
+{
+    Task<(bool Success, string? Error, string? ControlPlaneUrl)>
+        ProvisionControlPlaneAsync(CancellationToken ct = default);
+
+    Task<(bool Success, string? Error, string? ControlPlaneUrl)>
+        ProvisionControlPlaneForJobAsync(
+            long jobId, int cpPort, int agentPort, int fastPort, CancellationToken ct = default);
+
+    Task<string?> StopControlPlaneForJobAsync(
+        string projectName, CancellationToken ct = default);
+
+    Task<List<string>> ListActiveComposeProjectsAsync(CancellationToken ct = default);
+}
+
 /// <summary>
 /// Provisions (runs via Docker) an AgentField control plane on a host.
 /// Uses Docker on localhost machines and SSH + Docker for remote machines.
 /// </summary>
 public class SweAfProvisioningService(
     IDbContextFactory<ClaudeManagerDbContext> dbFactory,
-    ILogger<SweAfProvisioningService> logger)
+    ILogger<SweAfProvisioningService> logger) 
+    : ISwarmProvisioningService
 {
     private const string DefaultSweAfRepoPath = "~/swe-af";
 
@@ -321,38 +337,38 @@ public class SweAfProvisioningService(
 
     // ── Shared control plane (legacy) ─────────────────────────────────────────
 
-    /// <summary>
-    /// Tears down the AgentField control plane on the configured host.
-    /// Returns an error message on failure, or null on success.
-    /// </summary>
-    public async Task<string?> StopControlPlaneAsync(CancellationToken ct = default)
-    {
-        var config = await GetConfigAsync(ct);
-
-        if (!IsProvisioningConfigured(config))
-            return "Provisioning host is not configured.";
-
-        var repoPath = string.IsNullOrWhiteSpace(config.SweAfRepoPath)
-            ? DefaultSweAfRepoPath
-            : config.SweAfRepoPath;
-
-        logger.LogInformation("Stopping SWE-AF stack via docker compose down on {Host}", config.ProvisionHost);
-
-        var downCmd = $"cd {repoPath} && docker compose down";
-        var (stdout, stderr, exitCode) = IsLocalHost(config.ProvisionHost!)
-            ? await ExecLocalShellAsync(downCmd, ct)
-            : await ExecSshShellAsync(config, downCmd, ct);
-
-        if (exitCode != 0)
-        {
-            var errorMsg = (stderr ?? stdout ?? "docker compose down failed").Trim();
-            logger.LogWarning("docker compose down failed on {Host}: {Error}", config.ProvisionHost, errorMsg);
-            return errorMsg;
-        }
-
-        logger.LogInformation("SWE-AF stack stopped on {Host}", config.ProvisionHost);
-        return null;
-    }
+    // /// <summary>
+    // /// Tears down the AgentField control plane on the configured host.
+    // /// Returns an error message on failure, or null on success.
+    // /// </summary>
+    // public async Task<string?> StopControlPlaneAsync(CancellationToken ct = default)
+    // {
+    //     var config = await GetConfigAsync(ct);
+    //
+    //     if (!IsProvisioningConfigured(config))
+    //         return "Provisioning host is not configured.";
+    //
+    //     var repoPath = string.IsNullOrWhiteSpace(config.SweAfRepoPath)
+    //         ? DefaultSweAfRepoPath
+    //         : config.SweAfRepoPath;
+    //
+    //     logger.LogInformation("Stopping SWE-AF stack via docker compose down on {Host}", config.ProvisionHost);
+    //
+    //     var downCmd = $"cd {repoPath} && docker compose down";
+    //     var (stdout, stderr, exitCode) = IsLocalHost(config.ProvisionHost!)
+    //         ? await ExecLocalShellAsync(downCmd, ct)
+    //         : await ExecSshShellAsync(config, downCmd, ct);
+    //
+    //     if (exitCode != 0)
+    //     {
+    //         var errorMsg = (stderr ?? stdout ?? "docker compose down failed").Trim();
+    //         logger.LogWarning("docker compose down failed on {Host}: {Error}", config.ProvisionHost, errorMsg);
+    //         return errorMsg;
+    //     }
+    //
+    //     logger.LogInformation("SWE-AF stack stopped on {Host}", config.ProvisionHost);
+    //     return null;
+    // }
 
     private bool IsProvisioningConfigured(SweAfConfigEntity config) =>
         !string.IsNullOrWhiteSpace(config.ProvisionHost);

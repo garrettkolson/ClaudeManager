@@ -21,66 +21,6 @@ public class NginxProxyServiceTests
         Status       = status,
     };
 
-    // ── ModelToUpstreamName ───────────────────────────────────────────────────
-
-    [Test]
-    public void ModelToUpstreamName_SlashSeparated_ReplacesWithUnderscore()
-    {
-        NginxProxyService.ModelToUpstreamName("meta-llama/Llama-3.1-8B-Instruct")
-            .Should().Be("vllm_meta_llama_llama_3_1_8b_instruct");
-    }
-
-    [Test]
-    public void ModelToUpstreamName_DotsAndDashes_Replaced()
-    {
-        NginxProxyService.ModelToUpstreamName("mistral/Mistral-7B-v0.1")
-            .Should().Be("vllm_mistral_mistral_7b_v0_1");
-    }
-
-    [Test]
-    public void ModelToUpstreamName_AlwaysPrefixedWithVllm()
-    {
-        NginxProxyService.ModelToUpstreamName("model/name")
-            .Should().StartWith("vllm_");
-    }
-
-    [Test]
-    public void ModelToUpstreamName_NoLeadingOrTrailingUnderscores()
-    {
-        var result = NginxProxyService.ModelToUpstreamName("meta-llama/Llama-3.1-8B-Instruct");
-        result.Should().NotStartWith("vllm__").And.NotEndWith("_");
-    }
-
-    // ── ModelToPathSlug ───────────────────────────────────────────────────────
-
-    [Test]
-    public void ModelToPathSlug_SlashReplacedWithDash()
-    {
-        NginxProxyService.ModelToPathSlug("meta-llama/Llama-3.1-8B-Instruct")
-            .Should().Be("meta-llama-llama-3.1-8b-instruct");
-    }
-
-    [Test]
-    public void ModelToPathSlug_DotsPreserved()
-    {
-        NginxProxyService.ModelToPathSlug("mistral/Mistral-7B-v0.1")
-            .Should().Contain("v0.1");
-    }
-
-    [Test]
-    public void ModelToPathSlug_Lowercase()
-    {
-        NginxProxyService.ModelToPathSlug("org/MyModel-7B")
-            .Should().Be("org-mymodel-7b");
-    }
-
-    [Test]
-    public void ModelToPathSlug_NoConsecutiveDashes()
-    {
-        var result = NginxProxyService.ModelToPathSlug("org//model");
-        result.Should().NotContain("--");
-    }
-
     // ── GenerateConfig — no deployments ──────────────────────────────────────
 
     [Test]

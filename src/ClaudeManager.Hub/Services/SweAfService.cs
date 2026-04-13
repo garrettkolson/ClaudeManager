@@ -1,5 +1,4 @@
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -16,8 +15,8 @@ public class SweAfService
     private readonly SweAfConfigService _configSvc;
     private readonly IDbContextFactory<ClaudeManagerDbContext> _dbFactory;
     private readonly BuildNotifier _notifier;
-    private readonly SweAfProvisioningService _provisioningSvc;
-    private readonly SweAfPortAllocator _portAllocator;
+    private readonly ISwarmProvisioningService _provisioningSvc;
+    private readonly ISwarmRunnerPortAllocator _portAllocator;
     private readonly ILogger<SweAfService> _logger;
 
     private static readonly JsonSerializerOptions _ignoreNulls = new()
@@ -34,8 +33,8 @@ public class SweAfService
         SweAfConfigService configSvc,
         IDbContextFactory<ClaudeManagerDbContext> dbFactory,
         BuildNotifier notifier,
-        SweAfProvisioningService provisioningSvc,
-        SweAfPortAllocator portAllocator,
+        ISwarmProvisioningService provisioningSvc,
+        ISwarmRunnerPortAllocator portAllocator,
         ILogger<SweAfService> logger)
     {
         _httpFactory     = httpFactory;

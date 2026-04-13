@@ -4,12 +4,20 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ClaudeManager.Hub.Services;
 
+public interface ISwarmRunnerPortAllocator
+{
+    Task<int?> AllocatePortAsync(
+        SweAfConfigEntity config,
+        IDbContextFactory<ClaudeManagerDbContext> dbFactory,
+        CancellationToken ct = default);
+}
+
 /// <summary>
 /// Allocates ports from the configured range for per-build AgentField control plane containers.
 /// Port availability is derived entirely from the DB — a port is "in use" while its job is non-terminal.
 /// Each build uses a block of 3 consecutive ports: control-plane, swe-agent, swe-fast.
 /// </summary>
-public class SweAfPortAllocator
+public class SweAfPortAllocator : ISwarmRunnerPortAllocator
 {
     /// <summary>Number of consecutive ports required per build.</summary>
     public const int BlockSize = 3;

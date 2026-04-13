@@ -1,6 +1,7 @@
 using ClaudeManager.Hub.Hubs;
 using ClaudeManager.Hub.Persistence.Entities;
 using ClaudeManager.Hub.Services;
+using ClaudeManager.Hub.Services.Docker;
 using ClaudeManager.Hub.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
@@ -18,6 +19,7 @@ public class LlmDeploymentServiceTests
     private HubSecretService        _secrets    = default!;
     private LlmDeploymentNotifier   _notifier   = default!;
     private Mock<LlmInstanceService> _instanceMock = default!;
+    private Mock<IDockerExecutor>    _executorMock = default!;
     private LlmDeploymentService    _svc        = default!;
 
     [SetUp]
@@ -29,8 +31,9 @@ public class LlmDeploymentServiceTests
         _secrets      = new HubSecretService(factory);
         _notifier     = new LlmDeploymentNotifier();
         _instanceMock = new Mock<LlmInstanceService>(NullLogger<LlmInstanceService>.Instance, new HttpClient());
+        _executorMock = new Mock<IDockerExecutor>();
 
-        var nginxProxy = new NginxProxyService(NullLogger<NginxProxyService>.Instance);
+        var nginxProxy = new NginxProxyService(NullLogger<NginxProxyService>.Instance, _executorMock.Object);
         var proxyConfigSvc = new LlmProxyConfigService(
             _gpuHosts, factory, new Mock<IHubContext<AgentHub>>().Object,
             NullLogger<LlmProxyConfigService>.Instance);
