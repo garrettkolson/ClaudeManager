@@ -122,4 +122,144 @@ public class WikiApiTests
         entry.TryGetProperty("tags",     out _).Should().BeTrue();
         entry.TryGetProperty("content",  out _).Should().BeFalse();
     }
+
+    // ── /api/wiki/search tests ────────────────────────────────────────────────
+
+    [Test]
+    public async Task Search_NoSecret_ReturnsUnauthorized()
+    {
+        var query = "test query";
+        var resp  = await _client.GetAsync($"/api/wiki/search?q={Uri.EscapeDataString(query)}");
+        resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    public async Task Search_MissingQuery_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/wiki/search");
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Test]
+    public async Task Search_WithValidQuery_ReturnsOk()
+    {
+        // First create some wiki entries to search
+        await _client.SendAsync(SaveWiki("Bug fix: authentication timeout issue", "bugfix", "The user was experiencing a timeout when trying to authenticate to the system."));
+        await _client.SendAsync(SaveWiki("Memory leak in data processing module", "bugfix", "The application was consuming increasing amounts of memory during long-running operations."));
+
+        var resp = await _client.GetAsync($"/api/wiki/search?q=authentication&k=2");
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var json = await resp.Content.ReadAsStringAsync();
+        var result = JsonSerializer.Deserialize<JsonDocument>(json);
+
+        result.RootElement.GetProperty("Results").GetArrayLength().Should().BeGreaterThanOrEqualTo(0);
+        result.RootElement.TryGetProperty("QueryScore", out var scoreProp);
+        scoreProp.GetDouble()!.Should().BeGreaterOrEqualTo(0f);
+    }
+
+    [Test]
+    public async Task Search_KDefaultTo5()
+    {
+        // Create more than 5 entries
+        for (int i = 0; i < 10; i++)
+        {
+            await _client.SendAsync(SaveWiki($"Test entry {i}", "test", $"Content for entry {i}"));
+        }
+
+        var resp = await _client.GetAsync("/api/wiki/search?q=test");
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var json = await resp.Content.ReadAsStringAsync();
+        var result = JsonSerializer.Deserialize<JsonDocument>(json);
+        var results = result.RootElement.GetProperty("Results");
+
+        // Should return all entries since we have exactly 10 entries
+        results.GetArrayLength().Should().BeLessThanOrEqualTo(10);
+    }
+
+    [Test]
+    public async Task Search_WithKParam_ReturnsKResults()
+    {
+        // Create exactly 3 entries
+        await _client.SendAsync(SaveWiki("Article one", "exam", "First article content"));
+        await _client.SendAsync(SaveWiki("Article two", "exam", "Second article content"));
+        await _client.SendAsync(SaveWiki("Article three", "exam", "Third article content"));
+
+        // Request k=1 result
+        var resp = await _client.GetAsync("/api/wiki/search?q=article&k=1");
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var json = await resp.Content.ReadAsStringAsync();
+        var result = JsonSerializer.Deserialize<JsonDocument>(json);
+        var results = result.RootElement.GetProperty("Results");
+
+        results.GetArrayLength().Should().Be(1);
+    }
+
+    [Test]
+    public async Task Search_ReturnsWikiSearchResultStructure()
+    {
+        await _client.SendAsync(SaveWiki("Important bug: API rate limit hit", "bugfix", "When the application exceeded rate limits, it should fallback to exponential backoff."));
+
+        var response = await _client.GetAsync("/api/wiki/search?q=rate&k=1");
+        var json = await response.Content.ReadAsStringAsync();
+        var document = JsonDocument.Parse(json);
+
+        // Verify response structure
+        document.TryGetProperty("Results", out var resultsProp);
+        document.TryGetProperty("QueryScore", out var scoreProp);
+
+        resultsProp.ValueType.Should().Be(JsonTokenType.Array);
+        scoreProp.ValueType.Should().Be(JsonTokenType.Number);
+
+        // Verify result fields if Results array is not empty
+        var resultEntries = resultsProp.GetArrayLength();
+        if (resultEntries > 0)
+        {
+            var firstResult = resultsProp[0];
+            firstResult.TryGetProperty("Title", out _).Should().BeTrue();
+            firstResult.TryGetProperty("Content", out _).Should().BeTrue();
+            firstResult.TryGetProperty("Category", out _).Should().BeTrue();
+            firstResult.TryGetProperty("Tags", out _).Should().BeFalse(); // Tags is not exposed in search results
+            firstResult.TryGetProperty("Similarity", out _).Should().BeTrue();
+            firstResult.TryGetProperty("QueryScore", out _).Should().BeFalse(); // QueryScore is at root level
+        }
+    }
+
+    [Test]
+    public async Task Search_MalformedKParam_GetsDefaultValueOf5()
+    {
+        // Create 3 entries
+        for (int i = 0; i < 3; i++)
+        {
+            await _client.SendAsync(SaveWiki($"Entry {i}", "test", $"Content {i}"));
+        }
+
+        // Invalid k parameter should be treated as not provided, defaulting to 5
+        var resp = await _client.GetAsync("/api/wiki/search?q=test&k=invalid");
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var json = await resp.Content.ReadAsStringAsync();
+        var document = JsonDocument.Parse(json);
+        var results = document.RootElement.GetProperty("Results");
+
+        results.GetArrayLength().Should().BeLessThanOrEqualTo(3);
+    }
+
+    [Test]
+    public async Task Search_ReturnsSimilarityScoreInRange()
+    {
+        await _client.SendAsync(SaveWiki("Memory leak in data processing", "bugfix", "Fix for memory leak in data processing module."));
+
+        var resp = await _client.GetAsync("/api/wiki/search?q=memory leak&k=1");
+        var json = await resp.Content.ReadAsStringAsync();
+        var document = JsonDocument.Parse(json);
+
+        document.TryGetProperty("QueryScore", out var rootScore);
+        var score = rootScore.GetDouble();
+
+        score.Should().BeGreaterOrEqualTo(0f);
+        score.Should().BeLessThanOrEqualTo(1f);
+    }
 }
