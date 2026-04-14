@@ -1,13 +1,8 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using ClaudeManager.Hub.Persistence;
-using ClaudeManager.Hub.Persistence.Entity;
+using ClaudeManager.Hub.Persistence.Entities;
 using ClaudeManager.Hub.Services;
 using FluentAssertions;
-using Microsoft.Extensions.DependencyInjection;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -44,8 +39,8 @@ public class NginxConcurrentRestartTests : IDisposable
         _mockNotifier = new Mock<LlmDeploymentNotifier>();
         _mockProxyConfig = new Mock<LlmProxyConfigService>();
 
-        _mockDbFactory.Setup(f => f.CreateDbContext().GetAwaiter().GetResult())
-            .Returns(() => new ClaudeManagerDbContext());
+        _mockDbFactory.Setup(f => f.CreateDbContext())
+            .Returns(() => new ClaudeManagerDbContext(new()));
 
         var dbFactory = _mockDbFactory.Object;
         _healthService = new LlmDeploymentHealthService(
@@ -62,21 +57,21 @@ public class NginxConcurrentRestartTests : IDisposable
 
     public void Dispose()
     {
-        _mockDbFactory?.Dispose();
-        _mockInstance?.Dispose();
-        _mockGpuHosts?.Dispose();
-        _mockSecrets?.Dispose();
-        _mockNginxProxy?.Dispose();
-        _mockNotifier?.Dispose();
-        _mockProxyConfig?.Dispose();
+        // _mockDbFactory?.Dispose();
+        // _mockInstance?.Dispose();
+        // _mockGpuHosts?.Dispose();
+        // _mockSecrets?.Dispose();
+        // _mockNginxProxy?.Dispose();
+        // _mockNotifier?.Dispose();
+        // _mockProxyConfig?.Dispose();
     }
 
     private LlmDeploymentEntity MakeDeployment(string? hostId = null, int hostPort = 8000,
-        LlmDeploymentStatus status = LlmDeploymentStatus.Running, long? deploymentId = null)
+        LlmDeploymentStatus status = LlmDeploymentStatus.Running, string? deploymentId = null)
     {
         var deployment = new LlmDeploymentEntity
         {
-            DeploymentId = deploymentId ?? Guid.NewGuid(),
+            DeploymentId = deploymentId ?? Guid.NewGuid().ToString(),
             HostId = hostId ?? "test-host-id",
             HostPort = hostPort,
             ModelId = "test/model",
@@ -116,9 +111,9 @@ public class NginxConcurrentRestartTests : IDisposable
         using var db = _mockDbFactory.Object.CreateDbContext();
         db.LlmDeployments.AddRange(
             deploymentIds.Select(depId => MakeDeployment(hostId, 8000, LlmDeploymentStatus.Error, depId)));
-        await db.LlmDeployments.SaveChangesAsync();
+        await db.SaveChangesAsync();
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync(hostId, It.IsAny<CancellationToken>()))
+        _mockGpuHosts.Setup(h => h.GetByHostIdAsync(hostId))
             .ReturnsAsync(host);
 
         _mockSecrets.Setup(s => s.GetAsync(It.IsAny<string>()))
@@ -141,7 +136,7 @@ public class NginxConcurrentRestartTests : IDisposable
         var tasks = new List<Task>();
         foreach (var depId in deploymentIds)
         {
-            var deployment = db.LlmDeployments.First(d => d.Id == depId);
+            var deployment = db.LlmDeployments.First(d => d.DeploymentId == depId);
             tasks.Add(Task.Run(async () =>
             {
                 await _healthService.HandleUnhealthyAsync(deployment, host, "Health check failed", CancellationToken.None);
@@ -183,15 +178,15 @@ public class NginxConcurrentRestartTests : IDisposable
                 var dep = MakeDeployment(hostId, 7000 + i * 100 + j, LlmDeploymentStatus.Error, depId);
                 deploymentInfos.Add((hostId, dep));
             }
+            
+            _mockGpuHosts.Setup(h => h.GetByHostIdAsync(host.HostId))
+                .ReturnsAsync(host);
         }
-
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync(host.HostId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(host);
 
         // Setup database with deployments
         using var db = _mockDbFactory.Object.CreateDbContext();
         db.LlmDeployments.AddRange(deploymentInfos.Select(t => t.dep));
-        await db.LlmDeployments.SaveChangesAsync();
+        await db.SaveChangesAsync();
 
         _mockSecrets.Setup(s => s.GetAsync(It.IsAny<string>()))
             .ReturnsAsync("test-token");
@@ -199,6 +194,7 @@ public class NginxConcurrentRestartTests : IDisposable
         // Mock container inspection for all deployments
         foreach (var (hostId, dep) in deploymentInfos)
         {
+            if (await _mockGpuHosts.Object.GetByHostIdAsync(hostId) is not { } host) continue;
             _mockInstance.Setup(i => i.InspectContainerAsync(host, dep.ContainerId, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(ContainerStatus.Exited);
         }
@@ -253,7 +249,7 @@ public class NginxConcurrentRestartTests : IDisposable
             deploymentIds.Add($"stress-dep-" + i);
         }
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync(host.HostId, It.IsAny<CancellationToken>()))
+        _mockGpuHosts.Setup(h => h.GetByHostIdAsync(host.HostId))
             .ReturnsAsync(host);
 
         _mockSecrets.Setup(s => s.GetAsync(It.IsAny<string>()))
@@ -263,7 +259,7 @@ public class NginxConcurrentRestartTests : IDisposable
         using var db = _mockDbFactory.Object.CreateDbContext();
         db.LlmDeployments.AddRange(
             deploymentIds.Select(depId => MakeDeployment(hostId, 9500 + depId.Length, LlmDeploymentStatus.Error, depId)));
-        await db.LlmDeployments.SaveChangesAsync();
+        await db.SaveChangesAsync();
 
         // Mock unhealthy container inspection
         _mockInstance.Setup(i => i.InspectContainerAsync(host, It.IsAny<string>(), It.IsAny<CancellationToken>()))

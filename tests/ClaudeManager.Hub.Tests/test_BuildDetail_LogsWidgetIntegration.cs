@@ -1,9 +1,13 @@
+using ClaudeManager.Hub.Persistence;
 using ClaudeManager.Hub.Persistence.Entities;
 using ClaudeManager.Hub.Services;
+using ClaudeManager.Hub.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using Moq.Protected;
 
 namespace ClaudeManager.Hub.Tests.Integration;
 
@@ -18,25 +22,23 @@ namespace ClaudeManager.Hub.Tests.Integration;
 [TestFixture]
 public class BuildDetailLogsWidgetIntegrationTests
 {
-    private readonly Microsoft.Data.Sqlite.InMemoryDatabase _db = new();
-    private IDbContextFactory<ClaudeManagerDbContext> _dbFactory;
-    private BuildNotifier _notifier;
+    private SqliteConnection? _conn;
+    private IDbContextFactory<ClaudeManagerDbContext> _dbFactory = default!;
+    private BuildNotifier _notifier = default!;
 
     [SetUp]
     public async Task SetUp()
     {
-        var (fact, conn) = await InMemoryDbHelper.CreateAsync(TestData.ConcreteDbOptions);
+        var (fact, conn) = await InMemoryDbHelper.CreateAsync();
+        _conn      = conn;
         _dbFactory = fact;
-        _notifier = new BuildNotifier();
-        await using var db = _dbFactory.CreateDbContext();
-        await db.Database.InitializeAsync(false);
+        _notifier  = new BuildNotifier();
     }
 
     [TearDown]
     public void TearDown()
     {
-        _db?.Dispose();
-        _db?.Close();
+        _conn?.Dispose();
     }
 
     #region Logs Reading from Cached Logs Field Integration
@@ -59,10 +61,12 @@ public class BuildDetailLogsWidgetIntegrationTests
         await db.SaveChangesAsync();
 
         var service = new SweAfService(
-            new TestHttpClientFactory(HttpClient.Create()),
+            new TestHttpClientFactory(new HttpClient()),
             new SweAfConfigService(_dbFactory, NullLogger<SweAfConfigService>.Instance),
             _dbFactory,
             _notifier,
+            new Mock<ISwarmProvisioningService>().Object,
+            new Mock<ISwarmRunnerPortAllocator>().Object,
             NullLogger<SweAfService>.Instance);
 
         // Act: Fetch logs using webhook-cached logs
@@ -114,6 +118,8 @@ public class BuildDetailLogsWidgetIntegrationTests
             configService,
             _dbFactory,
             _notifier,
+            new Mock<ISwarmProvisioningService>().Object,
+            new Mock<ISwarmRunnerPortAllocator>().Object,
             NullLogger<SweAfService>.Instance);
 
         // Act: Fetch logs when no cache available
@@ -155,7 +161,7 @@ public class BuildDetailLogsWidgetIntegrationTests
         logsList.Should().HaveCount(2);
         logsList[0].Content.Should().Be("Build started");
         logsList[1].Content.Should().Be("Checking out repository");
-        logsList[0].Timestamp.Should().BeGreaterThan DateTimeOffset.MinValue;
+        logsList[0].Timestamp.Should().BeAfter(DateTimeOffset.MinValue);
         logsList[1].LineNumber.Should().Be(2);
     }
 
@@ -249,6 +255,8 @@ public class BuildDetailLogsWidgetIntegrationTests
             configService,
             _dbFactory,
             _notifier,
+            new Mock<ISwarmProvisioningService>().Object,
+            new Mock<ISwarmRunnerPortAllocator>().Object,
             NullLogger<SweAfService>.Instance);
 
         // Act: Fetch execution detail
@@ -297,6 +305,8 @@ public class BuildDetailLogsWidgetIntegrationTests
             configService,
             _dbFactory,
             _notifier,
+            new Mock<ISwarmProvisioningService>().Object,
+            new Mock<ISwarmRunnerPortAllocator>().Object,
             NullLogger<SweAfService>.Instance);
 
         // Act: Fetch execution detail - should fall back to hub control plane
@@ -338,7 +348,7 @@ public class BuildDetailLogsWidgetIntegrationTests
         var escaped = parsedLogs[0].Content.EscapeJavaScriptString();
 
         // Assert: Double quotes should be escaped
-        escaped.Should().Contain(@"\"");
+        escaped.Should().Contain("\\\"");
     }
 
     [Test]

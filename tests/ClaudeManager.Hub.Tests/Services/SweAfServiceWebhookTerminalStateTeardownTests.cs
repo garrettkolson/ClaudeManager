@@ -1,13 +1,17 @@
+using System.Diagnostics;
 using ClaudeManager.Hub.Persistence;
+using ClaudeManager.Hub.Tests.Helpers;
 using ClaudeManager.Hub.Persistence.Entities;
 using ClaudeManager.Hub.Services;
 using FluentAssertions;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using System.Text;
+using Moq.Protected;
+using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
-using System.Net.Http;
 
 namespace ClaudeManager.Hub.Tests.Services;
 
@@ -33,9 +37,8 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
     [SetUp]
     public async Task SetUp()
     {
-        var dataHelper = new DataTestHelper();
-        var (factory, conn) = await InMemoryDbHelper.CreateAsync(dataHelper.GetConcreteDbOptions());
-        _conn = conn as SqliteConnection;
+        var (factory, conn) = await InMemoryDbHelper.CreateAsync();
+        _conn = conn;
         _dbFactory = factory;
         _notifier = new BuildNotifier();
         _portAllocator = new Mock<ISwarmRunnerPortAllocator>();
@@ -69,16 +72,16 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
         var data = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(dict),
             new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase });
         var evt = new ObservabilityEvent(eventType, "test", DateTimeOffset.UtcNow, data);
-        return new ObservabilityBatch("batch-1", 1, new[] { evt }, DateTimeOffset.UtcNow);
+        return new ObservabilityBatch("batch-1", 1, new List<ObservabilityEvent> { evt }, DateTimeOffset.UtcNow);
     }
 
-    private HttpRequestMessage MockHttp(HttpStatusCode status, object? body = null)
+    private HttpMessageHandler MockHttp(HttpStatusCode status, object? body = null)
     {
         var mock = new Mock<HttpMessageHandler>();
         mock.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
-                It.IsAny<HttpRequestMessage>(),
-                It.IsAny<CancellationToken>())
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new HttpResponseMessage(status)
             {
                 Content = body is null
@@ -91,14 +94,14 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
     private SweAfConfigService CreateConfigService(string baseUrl, string apiKey,
         string? modelDefault = null, string? modelCoder = null, string? modelQa = null)
     {
-        await using var db = _dbFactory.CreateDbContext();
-        db.SweAfConfigs.RemoveAll(c => c.BaseUrl == baseUrl);
+        using var db = _dbFactory.CreateDbContext();
+        db.SweAfConfigs.RemoveRange(db.SweAfConfigs.Where(c => c.BaseUrl == baseUrl));
 
         db.SweAfConfigs.Add(new SweAfConfigEntity
         {
-            BaseUrl     = baseUrl,
-            ApiKey      = apiKey,
-            Runtime     = "claude_code",
+            BaseUrl      = baseUrl,
+            ApiKey       = apiKey,
+            Runtime      = "claude_code",
             ModelDefault = modelDefault,
             ModelCoder   = modelCoder,
             ModelQa      = modelQa,
@@ -113,20 +116,31 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
     private SweAfService CreateService(HttpMessageHandler? handler = null,
         ISwarmProvisioningService? provisioner = null, int? port = null)
     {
-        var httpFactory = new TestHttpClientFactory(handler ?? MockHttp(HttpStatusCode.OK).Object);
-        var configSvc = CreateConfigService("https://test.com", "testkey");
+        var httpFactory = new TestHttpClientFactory(new HttpClient(handler ?? MockHttp(HttpStatusCode.OK)));
+        var configSvc   = CreateConfigService("https://test.com", "testkey");
+
+        ISwarmRunnerPortAllocator portAllocatorObj;
+        if (port is not null)
+        {
+            var pa = new Mock<ISwarmRunnerPortAllocator>();
+            pa.Setup(x => x.AllocatePortAsync(
+                    It.IsAny<SweAfConfigEntity>(),
+                    It.IsAny<IDbContextFactory<ClaudeManagerDbContext>>(),
+                    It.IsAny<CancellationToken>()))
+              .ReturnsAsync(port.Value);
+            portAllocatorObj = pa.Object;
+        }
+        else
+        {
+            portAllocatorObj = _portAllocator?.Object ?? new Mock<ISwarmRunnerPortAllocator>().Object;
+        }
+
         return new SweAfService(httpFactory,
             configSvc,
             _dbFactory,
             _notifier,
             provisioner ?? _swarmProvisioner.Object,
-            portAllocator: port is not null ? new Mock<ISwarmRunnerPortAllocator>()
-            {
-                Setup(x => x.AllocatePortAsync(
-                    It.IsAny<SweAfConfigEntity>(),
-                    It.IsAny<IDbContextFactory<ClaudeManagerDbContext>>(),
-                    It.IsAny<CancellationToken>())).ReturnsAsync(port!.Value)
-            }.Object : new Mock<ISwarmRunnerPortAllocator>().Object,
+            portAllocatorObj,
             NullLogger<SweAfService>.Instance,
             healthCheckTimeout: TimeSpan.FromSeconds(1));
     }
@@ -172,31 +186,17 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
         // Mock provisioning service to capture teardown calls
         var teardownCall = new List<string>();
         _swarmProvisioner
-            .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>()))
+            .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string? projectName) =>
             {
                 teardownCall.Add(projectName ?? "");
                 return null;
             });
 
-        // Our service already configured in SetUp
         var batch = MakeBatch("execution_completed", externalJobId,
             extra: new { result = new { pr_urls = new[] { "https://github.com/org/repo/pull/1" } } });
 
-        // Act: Process webhook
-        await _swarmProvisioner.Object
-            .CreateAsync(_dbFactory).GetAwaiter().GetResult(); // Initialize for other processes
-        await _swarmProvisioner.VerifyAllAsync();
-        _swarmProvisioner.Object
-            .Setup(x => x.ProvisionControlPlaneForJobAsync(
-                It.IsAny<long>(),
-                It.IsAny<int>(),
-                It.IsAny<int>(),
-                It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync((true, null, "http://localhost:8100"));
-
-        var svc = CreateService(_swarmProvisioner.Object);
+        var svc = CreateService(provisioner: _swarmProvisioner.Object);
         await svc.ProcessWebhookBatchAsync(batch);
 
         // Assert
@@ -244,14 +244,14 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
 
         var teardownCall = new List<string>();
         _swarmProvisioner
-            .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>()))
+            .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string? projectName) =>
             {
                 teardownCall.Add(projectName ?? "");
                 return null;
             });
 
-        var svc = CreateService(_swarmProvisioner.Object);
+        var svc = CreateService(provisioner: _swarmProvisioner.Object);
 
         // Act
         await svc.ProcessWebhookBatchAsync(MakeBatch("execution_failed", externalJobId,
@@ -292,14 +292,14 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
 
         var teardownCall = new List<string>();
         _swarmProvisioner
-            .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>()))
+            .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string? projectName) =>
             {
                 teardownCall.Add(projectName ?? "");
                 return null;
             });
 
-        var svc = CreateService(_swarmProvisioner.Object);
+        var svc = CreateService(provisioner: _swarmProvisioner.Object);
 
         // Act
         await svc.ProcessWebhookBatchAsync(MakeBatch("execution_cancelled", externalJobId));
@@ -345,14 +345,14 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
         // Track teardown calls per job
         var teardownLog = new Dictionary<string, int>();
         _swarmProvisioner
-            .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>()))
+            .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string? projectName) =>
             {
-                teardownLog[projectName ?? ""] = teardownLog.GetOrDefault(projectName ?? "") + 1;
+                teardownLog[projectName ?? ""] = teardownLog.GetValueOrDefault(projectName ?? "") + 1;
                 return null;
             });
 
-        var svc = CreateService(_swarmProvisioner.Object);
+        var svc = CreateService(provisioner: _swarmProvisioner.Object);
 
         // Test: Process multiple terminal events - each should trigger one teardown
         // (in real code, Task.Run fires and forgets, but we're tracking the setup)
@@ -361,7 +361,7 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
         await svc.ProcessWebhookBatchAsync(MakeBatch("execution_cancelled", externalJobId));
 
         // Assert: For each terminal status, teardown was called exactly once
-        teardownLog[expectedProjectName]?.Should().Be(3); // Called 3 times (once per terminal event type)
+        teardownLog.GetValueOrDefault(expectedProjectName).Should().Be(3); // Called 3 times (once per terminal event type)
     }
 
     // ============================================================================
@@ -391,10 +391,10 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
         db.SweAfJobs.Add(initialJob);
         await db.SaveChangesAsync();
 
-        _swarmProvisioner.Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>()))
+        _swarmProvisioner.Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string? projectName) => { return null; });
 
-        var svc = CreateService(_swarmProvisioner.Object);
+        var svc = CreateService(provisioner: _swarmProvisioner.Object);
 
         // Act
         await svc.ProcessWebhookBatchAsync(MakeBatch("execution_completed", externalJobId));
@@ -407,7 +407,7 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
         job.ComposeProjectName.Should().BeNull(); // Should remain null
         // Teardown should NOT have been called since ComposeProjectName is null
         // (Our mock captures all calls, verify no call was made)
-        _swarmProvisioner.Verify(x => x.StopControlPlaneForJobAsync(It.IsAny<string>()), Times.Never);
+        _swarmProvisioner.Verify(x => x.StopControlPlaneForJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ============================================================================
@@ -426,10 +426,7 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
         string expectedProjectName = $"agentfield-{externalJobId.GetHashCode()}";
 
         var handler = MockHttp(HttpStatusCode.OK);
-
-        // Act
-        await _swarmProvisioner.VerifyAllAsync();
-        _swarmProvisioner.Object
+        _swarmProvisioner
             .Setup(x => x.ProvisionControlPlaneForJobAsync(
                 It.IsAny<long>(),
                 It.IsAny<int>(),
@@ -481,15 +478,11 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
         db.SweAfJobs.Add(initialJob);
         await db.SaveChangesAsync();
 
-        Sequencepoint<ISwarmProvisioningService> sequence = null!;
         _swarmProvisioner
-            .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>()))
-            .ReturnsAsync((string? projectName, CancellationToken ct) =>
-            {
-                return sequence!.Expect(x => x.StopControlPlaneForJobAsync(projectName, ct));
-            });
+            .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
 
-        var svc = CreateService(_swarmProvisioner.Object);
+        var svc = CreateService(provisioner: _swarmProvisioner.Object);
 
         // Act: Process one terminal state event
         await svc.ProcessWebhookBatchAsync(MakeBatch("execution_completed", externalJobId));
@@ -516,7 +509,7 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
         var handler = MockHttp(HttpStatusCode.OK);
         var capturedJobs = new List<SweAfJobEntity>();
 
-        _swarmProvisioner.Object
+        _swarmProvisioner
             .Setup(x => x.ProvisionControlPlaneForJobAsync(
                 It.IsAny<long>(),
                 It.IsAny<int>(),
@@ -546,7 +539,7 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
 
         var teardownCalled = new List<string>();
         _swarmProvisioner
-            .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>()))
+            .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string? projectName) =>
             {
                 teardownCalled.Add(projectName ?? "");
@@ -571,7 +564,8 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
 // Helper extension for dictionary.GetOrDefault
 public static class DictionaryExtensions
 {
-    public static int? GetOrDefault<TKey, TValue>(this Dictionary<TKey, TValue> dict, TKey key)
+    public static TValue? GetOrDefault<TKey, TValue>(this Dictionary<TKey, TValue> dict, TKey key)
+        where TKey : notnull
     {
         return dict.TryGetValue(key, out var value) ? value : default;
     }

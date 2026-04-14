@@ -3,6 +3,7 @@ using ClaudeManager.Hub.Persistence.Entities;
 using ClaudeManager.Hub.Services;
 using ClaudeManager.Hub.Services.Docker;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -18,7 +19,7 @@ public class LlmDeploymentHealthServiceTests
     private readonly Mock<NginxProxyService> _mockNginxProxy = new();
     private readonly Mock<LlmDeploymentNotifier> _mockNotifier = new();
     private readonly Mock<LlmProxyConfigService> _mockProxyConfig = new();
-    private readonly LlmDeploymentHealthService _service;
+    private LlmDeploymentHealthService _service;
 
     [SetUp]
     public void SetUp()
@@ -35,25 +36,27 @@ public class LlmDeploymentHealthServiceTests
         );
 
         _mockDbFactory.Setup(f => f.CreateDbContext())
-            .Returns<Func<ClaudeManagerDbContext>>(() =>
-            {
-                var db = new ClaudeManagerDbContext();
-                return db;
-            });
+            .Returns(() => new ClaudeManagerDbContext(new()));
     }
 
-    private static LlmDeploymentEntity MakeDeployment(LlmDeploymentStatus status = LlmDeploymentStatus.Running, long? deploymentId = null)
+    [TearDown]
+    public void Teardown()
     {
-        var deployment = new LlmDeploymentEntity
+        _service.Dispose();
+    }
+
+    private static LlmDeploymentEntity MakeDeployment(LlmDeploymentStatus status = LlmDeploymentStatus.Running)
+    {
+        return new LlmDeploymentEntity
         {
-            DeploymentId = deploymentId ?? Guid.NewGuid(),
-            HostId = "test-host-id",
-            HostPort = 8000,
-            ModelId = "test/model",
-            GpuIndices = "0",
-            Status = status
+            DeploymentId = Guid.NewGuid().ToString("N")[..12],
+            ContainerId  = "test-container-id",
+            HostId       = "test-host-id",
+            HostPort     = 8000,
+            ModelId      = "test/model",
+            GpuIndices   = "0",
+            Status       = status
         };
-        return deployment;
     }
 
     private static GpuHostEntity MakeHost(int proxyPort = 8080)
@@ -74,7 +77,7 @@ public class LlmDeploymentHealthServiceTests
         var deployment = MakeDeployment(LlmDeploymentStatus.Starting);
         var host = MakeHost(proxyPort: 8080);
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id", It.IsAny<CancellationToken>()))
+        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
             .ReturnsAsync(host);
 
         _mockInstance.Setup(i => i.StartContainerAsync(host, It.IsAny<LlmDeploymentEntity>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -88,7 +91,7 @@ public class LlmDeploymentHealthServiceTests
 
         // Assert: Verify nginx refresh was called on success path
         _mockNginxProxy.Verify(n => n.ApplyConfigAsync(host, It.IsAny<IReadOnlyList<LlmDeploymentEntity>>(), It.IsAny<CancellationToken>()), Times.Once);
-        Mock.Get(_mockProxyConfig).Verify(p => p.InvalidateCache(), Times.Once);
+        _mockProxyConfig.Verify(p => p.InvalidateCache(), Times.Once);
 
         // Also verify deployment state was updated
         deployment.Status.Should().Be(LlmDeploymentStatus.Running);
@@ -103,7 +106,7 @@ public class LlmDeploymentHealthServiceTests
         var deployment = MakeDeployment(LlmDeploymentStatus.Starting);
         var host = MakeHost(proxyPort: 8080);
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id", It.IsAny<CancellationToken>()))
+        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
             .ReturnsAsync(host);
 
         _mockInstance.Setup(i => i.StartContainerAsync(host, deployment, It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -124,7 +127,7 @@ public class LlmDeploymentHealthServiceTests
         var deployment = MakeDeployment(LlmDeploymentStatus.Running);
         var host = MakeHost(proxyPort: 8080);
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id", It.IsAny<CancellationToken>()))
+        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
             .ReturnsAsync(host);
 
         // Act: Call TransitionToErrorAsync directly
@@ -132,7 +135,7 @@ public class LlmDeploymentHealthServiceTests
 
         // Assert: RefreshNginxConfig is called in TransitionToErrorAsync
         _mockNginxProxy.Verify(n => n.ApplyConfigAsync(host, It.IsAny<IReadOnlyList<LlmDeploymentEntity>>(), It.IsAny<CancellationToken>()), Times.Once);
-        Mock.Get(_mockProxyConfig).Verify(p => p.InvalidateCache(), Times.Once);
+        _mockProxyConfig.Verify(p => p.InvalidateCache(), Times.Once);
 
         deployment.Status.Should().Be(LlmDeploymentStatus.Error);
         deployment.ErrorMessage.Should().Be("Test error");
@@ -145,7 +148,7 @@ public class LlmDeploymentHealthServiceTests
         var deployment = MakeDeployment(LlmDeploymentStatus.Starting);
         var host = MakeHost(proxyPort: 8080);
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id", It.IsAny<CancellationToken>()))
+        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
             .ReturnsAsync(host);
 
         _mockInstance.Setup(i => i.StartContainerAsync(host, deployment, It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -169,13 +172,11 @@ public class LlmDeploymentHealthServiceTests
     public async Task HandleUnhealthyAsync_MaxRestriesExceeded_CallsTransitionToErrorWhichCallsRefreshNginxConfig()
     {
         // Arrange: Max retries already exceeded
-        var deployment = MakeDeployment(LlmDeploymentStatus.Starting)
-        {
-            RestartCount = LlmDeploymentHealthService.MaxAutoRestarts - 1
-        };
+        var deployment = MakeDeployment(LlmDeploymentStatus.Starting);
+        deployment.RestartCount = LlmDeploymentHealthService.MaxAutoRestarts - 1;
         var host = MakeHost(proxyPort: 8080);
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id", It.IsAny<CancellationToken>()))
+        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
             .ReturnsAsync(host);
 
         _mockInstance.Setup(i => i.StartContainerAsync(host, deployment, It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -199,15 +200,13 @@ public class LlmDeploymentHealthServiceTests
     public void CheckStartingDeploymentAsync_ContainerExits_DuringStartup_CallsTransitionToErrorWhichCallsRefreshNginxConfig()
     {
         // Arrange: Container not found/exited during startup
-        var deployment = MakeDeployment(LlmDeploymentStatus.Starting)
-        {
-            ContainerId = "bad-container"
-        };
+        var deployment = MakeDeployment(LlmDeploymentStatus.Starting);
+        deployment.ContainerId = "bad-container";
         var host = MakeHost();
 
         ContainerStatus exitedStatus = ContainerStatus.Exited;
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id", It.IsAny<CancellationToken>()))
+        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
             .ReturnsAsync(host);
 
         _mockInstance.Setup(i => i.InspectContainerAsync(host, "bad-container", It.IsAny<CancellationToken>()))
@@ -229,19 +228,15 @@ public class LlmDeploymentHealthServiceTests
     public void CheckSingleDeploymentAsync_ContainerNotFound_CallsTransitionToErrorWhichCallsRefreshNginxConfig()
     {
         // Arrange: Container not found when checking healthy running deployment
-        var deployment = MakeDeployment(LlmDeploymentStatus.Running)
-        {
-            ContainerId = "missing-container"
-        };
+        var deployment = MakeDeployment(LlmDeploymentStatus.Running);
+        deployment.ContainerId = "missing-container";
         var host = MakeHost();
 
-        ContainerStatus notFound = ContainerStatus.NotFound;
-
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id", It.IsAny<CancellationToken>()))
+        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
             .ReturnsAsync(host);
 
         _mockInstance.Setup(i => i.InspectContainerAsync(host, "missing-container", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(notFound);
+            .ReturnsAsync((ContainerStatus?)null);
 
         // Act
         _service.CheckSingleDeploymentAsync(deployment, CancellationToken.None)
@@ -259,13 +254,11 @@ public class LlmDeploymentHealthServiceTests
     public async Task CheckStartingDeploymentAsync_HTTPHealthCheckFails_CallsTransitionToErrorWhichCallsRefreshNginxConfig()
     {
         // Arrange: Container running but HTTP health check fails
-        var deployment = MakeDeployment(LlmDeploymentStatus.Starting)
-        {
-            ContainerId = "started-container"
-        };
+        var deployment = MakeDeployment(LlmDeploymentStatus.Starting);
+        deployment.ContainerId = "started-container";
         var host = MakeHost();
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id", It.IsAny<CancellationToken>()))
+        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
             .ReturnsAsync(host);
 
         _mockInstance.Setup(i => i.InspectContainerAsync(host, "started-container", It.IsAny<CancellationToken>()))
@@ -293,7 +286,7 @@ public class LlmDeploymentHealthServiceTests
         var deployment = MakeDeployment(LlmDeploymentStatus.Running);
         var host = MakeHost();
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id", It.IsAny<CancellationToken>()))
+        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
             .ReturnsAsync(host);
 
         _mockInstance.Setup(i => i.InspectContainerAsync(host, deployment.ContainerId, It.IsAny<CancellationToken>()))
@@ -322,7 +315,7 @@ public class LlmDeploymentHealthServiceTests
         var deployment = MakeDeployment(LlmDeploymentStatus.Starting);
         var host = MakeHost();
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id", It.IsAny<CancellationToken>()))
+        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
             .ReturnsAsync(host);
 
         _mockInstance.Setup(i => i.InspectContainerAsync(host, deployment.ContainerId, It.IsAny<CancellationToken>()))

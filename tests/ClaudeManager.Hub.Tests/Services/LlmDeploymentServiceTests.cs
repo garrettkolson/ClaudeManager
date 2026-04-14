@@ -690,8 +690,8 @@ public class LlmDeploymentServiceTests
     {
         // Verify that stopped deployments are excluded from nginx upstream
         await SeedHostAsync("gpu-h1");
-        await SeedDeploymentAsync("gpu-h1", modelId: "stopped-model", hostPort: 8001);
-        await SeedDeploymentAsync("gpu-h1", modelId: "running-model", hostPort: 8002);
+        await SeedDeploymentAsync("gpu-h1", modelId: "stopped-model");
+        await SeedDeploymentAsync("gpu-h1", modelId: "running-model");
 
         var running = await _svc.GetAllForHostAsync("gpu-h1");
         running.Where(d => d.Status != LlmDeploymentStatus.Running)
@@ -741,7 +741,7 @@ public class LlmDeploymentServiceTests
         var filtered = initialRunning.Where(d => d.Status == LlmDeploymentStatus.Running)
             .ToList();
         filtered.Count.Should().Be(2);
-        filtered.Should().ContainAll(initialRunning);
+        filtered.Should().BeEquivalentTo(initialRunning);
     }
 
     [Test]

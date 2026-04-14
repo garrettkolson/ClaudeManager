@@ -1,14 +1,16 @@
 using ClaudeManager.Hub.Persistence;
 using ClaudeManager.Hub.Persistence.Entities;
 using ClaudeManager.Hub.Services;
+using ClaudeManager.Hub.Tests.Helpers;
 using FluentAssertions;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Logging;
-using System.Text;
-using System.Text.Json;
-using System.Net.Http;
 using Moq;
+using Moq.Protected;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
 
 namespace ClaudeManager.Hub.Tests.Services;
 
@@ -23,10 +25,9 @@ public class SweAfServiceWebhookCreateTests
     [SetUp]
     public async Task SetUp()
     {
-        var (factory, conn) = await InMemoryDbHelper.CreateAsync(DataTestHelper.GetConcreteDbOptions());
-        _conn      = conn as SqliteConnection;
+        var (factory, conn) = await InMemoryDbHelper.CreateAsync();
+        _conn      = conn;
         _dbFactory = factory;
-        _conn?.Dispose();
         _notifier  = new BuildNotifier();
     }
 
@@ -51,16 +52,16 @@ public class SweAfServiceWebhookCreateTests
 
         var data = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(dict), new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase });
         var evt  = new ObservabilityEvent(eventType, "test", DateTimeOffset.UtcNow, data);
-        return new ObservabilityBatch("batch-1", 1, new[] { evt }, DateTimeOffset.UtcNow);
+        return new ObservabilityBatch("batch-1", 1, new List<ObservabilityEvent> { evt }, DateTimeOffset.UtcNow);
     }
 
-    private HttpRequestMessage MockHttp(HttpStatusCode status, object? body = null)
+    private HttpMessageHandler MockHttp(HttpStatusCode status, object? body = null)
     {
         var mock = new Mock<HttpMessageHandler>();
         mock.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
-                It.IsAny<HttpRequestMessage>(),
-                It.IsAny<CancellationToken>())
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new HttpResponseMessage(status)
             {
                 Content = body is null
@@ -73,14 +74,14 @@ public class SweAfServiceWebhookCreateTests
     private SweAfConfigService CreateConfigService(string baseUrl, string apiKey,
         string? modelDefault = null, string? modelCoder = null, string? modelQa = null)
     {
-        await using var db = _dbFactory.CreateDbContext();
-        db.SweAfConfigs.RemoveAll(c => c.BaseUrl == baseUrl);
+        using var db = _dbFactory.CreateDbContext();
+        db.SweAfConfigs.RemoveRange(db.SweAfConfigs.Where(c => c.BaseUrl == baseUrl));
 
         db.SweAfConfigs.Add(new SweAfConfigEntity
         {
-            BaseUrl     = baseUrl,
-            ApiKey      = apiKey,
-            Runtime     = "claude_code",
+            BaseUrl      = baseUrl,
+            ApiKey       = apiKey,
+            Runtime      = "claude_code",
             ModelDefault = modelDefault,
             ModelCoder   = modelCoder,
             ModelQa      = modelQa,
@@ -94,7 +95,7 @@ public class SweAfServiceWebhookCreateTests
 
     private SweAfService CreateService(HttpMessageHandler? handler = null, ISwarmProvisioningService? provisioner = null)
     {
-        var httpFactory = new TestHttpClientFactory(handler ?? MockHttp(HttpStatusCode.OK).Object);
+        var httpFactory = new TestHttpClientFactory(new HttpClient(handler ?? MockHttp(HttpStatusCode.OK)));
         var configSvc = CreateConfigService("https://test.com", "testkey");
         return new SweAfService(httpFactory,
             configSvc,
@@ -123,14 +124,6 @@ public class SweAfServiceWebhookCreateTests
         var expectedProjectName = $"agentfield-{externalJobId.GetHashCode()}";
 
         var handler = MockHttp(HttpStatusCode.OK);
-        var observedEvent = new ObservabilityEvent(
-            "execution_created",
-            "test-source",
-            DateTimeOffset.UtcNow,
-            new JsonElement(JsonDocument.Parse(
-                $"{{\"target\":\"swe-planner.build\",\"execution_id\":\"{externalJobId}\",\"goal\":\"Test goal\",\"repo_url\":\"https://github.com/org/repo\"}}",
-                new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase })));
-
         var svc = CreateService(handler);
         var batch = MakeBatch("execution_created", externalJobId);
 
@@ -208,7 +201,7 @@ public class SweAfServiceWebhookCreateTests
 
         // Mock provisioning service to track teardown calls
         var provisionerMock = new Mock<ISwarmProvisioningService>();
-        provisionerMock.Setup(x => x.StopControlPlaneForJobAsync(expectedProjectName))
+        provisionerMock.Setup(x => x.StopControlPlaneForJobAsync(expectedProjectName, It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
 
         var dict = new Dictionary<string, object?>
@@ -221,7 +214,7 @@ public class SweAfServiceWebhookCreateTests
         var evt   = new ObservabilityEvent("execution_completed", "test", DateTimeOffset.UtcNow, data);
         var batch = MakeBatch("execution_completed", externalJobId);
 
-        var svc = CreateService(provisionerMock.Object);
+        var svc = CreateService(provisioner: provisionerMock.Object);
 
         // Act: Process execution_completed
         await svc.ProcessWebhookBatchAsync(batch);
@@ -233,7 +226,7 @@ public class SweAfServiceWebhookCreateTests
         job.Status.Should().Be(BuildStatus.Succeeded);
         job.PrUrls.Should().Contain("https://github.com/org/repo/pull/1");
         job.ComposeProjectName.Should().Be(expectedProjectName);
-        provisionerMock.Verify(x => x.StopControlPlaneForJobAsync(expectedProjectName), Times.Once);
+        provisionerMock.Verify(x => x.StopControlPlaneForJobAsync(expectedProjectName, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Test]
@@ -258,6 +251,7 @@ public class SweAfServiceWebhookCreateTests
         await db.SaveChangesAsync();
 
         var provisionerMock = new Mock<ISwarmProvisioningService>();
+        var svc = CreateService(provisioner: provisionerMock.Object);
 
         // Act
         await svc.ProcessWebhookBatchAsync(MakeBatch("execution_failed", externalJobId,
@@ -269,7 +263,7 @@ public class SweAfServiceWebhookCreateTests
 
         job.Status.Should().Be(BuildStatus.Failed);
         job.ErrorMessage.Should().Be("Build failed");
-        provisionerMock.Verify(x => x.StopControlPlaneForJobAsync(expectedProjectName), Times.Once);
+        provisionerMock.Verify(x => x.StopControlPlaneForJobAsync(expectedProjectName, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Test]
@@ -296,7 +290,7 @@ public class SweAfServiceWebhookCreateTests
         var provisionerMock = new Mock<ISwarmProvisioningService>();
         var batch = MakeBatch("execution_cancelled", externalJobId);
 
-        var svc = CreateService(provisionerMock.Object);
+        var svc = CreateService(provisioner: provisionerMock.Object);
         await svc.ProcessWebhookBatchAsync(batch);
 
         // Assert
@@ -304,15 +298,14 @@ public class SweAfServiceWebhookCreateTests
         var job = await verify.SweAfJobs.SingleAsync(j => j.ExternalJobId == externalJobId);
 
         job.Status.Should().Be(BuildStatus.Cancelled);
-        provisionerMock.Verify(x => x.StopControlPlaneForJobAsync(expectedProjectName), Times.Once);
+        provisionerMock.Verify(x => x.StopControlPlaneForJobAsync(expectedProjectName, It.IsAny<CancellationToken>()), Times.Once);
     }
 }
 
 public static class DataTestHelper
 {
-    public static IDataOptions GetConcreteDbOptions()
+    public static DbContextOptions<ClaudeManagerDbContext> GetConcreteDbOptions()
         => new DbContextOptionsBuilder<ClaudeManagerDbContext>()
-            .UseSqlite("::memory:")
-            .Build()
+            .UseSqlite(":memory:")
             .Options;
 }

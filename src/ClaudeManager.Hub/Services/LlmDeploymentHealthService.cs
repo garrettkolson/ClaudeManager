@@ -70,7 +70,7 @@ public class LlmDeploymentHealthService : BackgroundService
         }
     }
 
-    private async Task HealthCheckLoopAsync(CancellationToken ct)
+    internal async Task HealthCheckLoopAsync(CancellationToken ct)
     {
         await using var db = _dbFactory.CreateDbContext();
         var deployments = await db.LlmDeployments
@@ -95,7 +95,7 @@ public class LlmDeploymentHealthService : BackgroundService
     /// Monitors a Starting deployment while its model loads.
     /// Transitions to Running when vLLM begins serving, or to Error if the container exits.
     /// </summary>
-    private async Task CheckStartingDeploymentAsync(LlmDeploymentEntity deployment, CancellationToken ct)
+    internal async Task CheckStartingDeploymentAsync(LlmDeploymentEntity deployment, CancellationToken ct)
     {
         var host = await _gpuHosts.GetByHostIdAsync(deployment.HostId);
         if (host is null || deployment.ContainerId is null) return;
@@ -130,7 +130,7 @@ public class LlmDeploymentHealthService : BackgroundService
         _logger.LogInformation("Deployment {Id} transitioned Starting → Running after model load", deployment.Id);
     }
 
-    private async Task CheckSingleDeploymentAsync(LlmDeploymentEntity deployment, CancellationToken ct)
+    internal async Task CheckSingleDeploymentAsync(LlmDeploymentEntity deployment, CancellationToken ct)
     {
         var host = await _gpuHosts.GetByHostIdAsync(deployment.HostId);
         if (host is null || deployment.ContainerId is null)
@@ -247,7 +247,7 @@ public class LlmDeploymentHealthService : BackgroundService
         }
     }
 
-    private async Task TransitionToErrorAsync(LlmDeploymentEntity deployment, string error, CancellationToken ct)
+    internal async Task TransitionToErrorAsync(LlmDeploymentEntity deployment, string error, CancellationToken ct)
     {
         deployment.Status = LlmDeploymentStatus.Error;
         deployment.ErrorMessage = error;

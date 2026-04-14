@@ -279,7 +279,7 @@ public class LogParserTests
                                     @"path\\to\\file\n" +
                                     @"with " +
                                     @"tab and " +
-                                    @"double quotes \"";
+                                    @"double quotes \""";
 
         // Act
         var result = complexLine.EscapeJavaScriptString();
