@@ -8,9 +8,113 @@
 @using ClaudeManager.Hub.Services
 @using ClaudeManager.Hub.Services.StringExtensions
 
-<PageTitle>Build — Claude Manager</PageTitle>
+<PageTitle>@Truncate(_job?.Goal ?? "", 40)</PageTitle>
 
 <div class="build-detail">
+
+    <!-- Tab Navigation -->
+    <div class="build-detail-tabs">
+        <button class="tab-btn@(string.Equals(_activeTab, 1) ? " tab_active" : "")" @onclick="() => ChangeTab(1)">
+            Build Details
+        </button>
+        <button class="tab-btn@(string.Equals(_activeTab, 2) ? " tab_active" : "")" @onclick="() => ChangeTab(2)">
+            AgentField
+        </button>
+        <button class="tab-btn@(string.Equals(_activeTab, 3) ? " tab_active" : "")" @onclick="() => ChangeTab(3)">
+            Logs
+        </button>
+    </div>
+
+    <!-- Tab 1: Build Details -->
+    @if (_activeTab == 1)
+    {
+        <div class="tab-content">
+
+    <!-- Tab 2: AgentField -->
+    @elif (_activeTab == 2)
+    {
+        <div class="tab-content">
+            @if (_detail is null && !_detailLoading)
+            {
+                <div class="build-detail-fetch-error ">AgentField control plane URL not available for this job.</div>
+            }
+            else if (_detail?.ControlPlaneUrl is null)
+            {
+                <div class="build-detail-fetch-error ">AgentField control plane URL not available for this job.</div>
+            }
+            else
+            {
+                <div class="logs-loader">@(_detailLoading ? "Loading…" : "")</div>
+                <div class="build-frame-container">
+                    <iframe id="agentFieldIframe"
+                            src="@(_detail.ControlPlaneUrl ?? "http://localhost:5258")"
+                            style="width: 100%; height: 100vh;"
+                            sandbox="allow-scripts allow-same-origin">
+                    </iframe>
+                </div>
+            }
+        </div>
+    }
+
+    <!-- Tab 3: Logs -->
+    @elif (_activeTab == 3)
+    {
+        <div class="tab-content">
+            <div class="logs-view-header">
+                <h3>Container Logs</h3>
+                <div class="log-actions">
+                    <button class="btn-secondary-sm" @onclick="() => { showBuildLogs = true; showContainerLogs = true; }">Show Both</button>
+                    <label><input type="checkbox" @bind="showBuildLogs" class="toggle-checkbox" /> Build Logs</label>
+                </div>
+            </div>
+
+            @if (showBuildLogs && _job?.Logs is not null)
+            {
+                <div class="build-log-container">
+                    @{
+                        if (string.IsNullOrEmpty(_job.Logs))
+                        {
+                            <div class="build-log-empty">No build logs are currently available.</div>
+                        }
+                        else
+                        {
+                            var parsedLogs = LogParser.ParseLogMessages(_job.Logs);
+                            foreach (var log in parsedLogs)
+                            {
+                                <div class="build-log-cached">
+                                    <span class="build-log-timestamp">@log.Timestamp.ToString("HH:mm:ss.fff")</span>
+                                    <span class="build-log-content">@log.Content</span>
+                                </div>
+                            }
+                        }
+                    }
+                </div>
+            }
+
+            @if (showContainerLogs && _detail?.Logs is not null)
+            {
+                <div class="build-log-container">
+                    @{
+                        if (string.IsNullOrEmpty(_detail.Logs))
+                        {
+                            <div class="build-log-empty">No container logs are currently available.</div>
+                        }
+                        else
+                        {
+                            var parsedLogs = LogParser.ParseLogMessages(_detail.Logs);
+                            foreach (var log in parsedLogs)
+                            {
+                                <div class="build-log-cached">
+                                    <span class="build-log-timestamp">@log.Timestamp.ToString("HH:mm:ss.fff")</span>
+                                    <span class="build-log-content">@log.Content</span>
+                                </div>
+                            }
+                        }
+                    }
+                </div>
+            }
+        </div>
+    }
 
     <div class="build-detail-header">
         <a href="/foundry" class="back-link">← Foundry</a>
@@ -200,6 +304,8 @@
             }
         </div>
     }
+        </div>
+    }
 </div>
 
 @code {
@@ -207,11 +313,14 @@
 
     private SweAfJobEntity?      _job;
     private BuildExecutionDetail? _detail;
+    private int   _activeTab     = 1;
     private bool   _loading       = true;
     private bool   _detailLoading = false;
     private string? _detailError;
     private bool   _actionBusy;
     private string? _actionError;
+    private bool   showBuildLogs  = true;
+    private bool   showContainerLogs = true;
 
     protected override async Task OnInitializedAsync()
     {
@@ -373,10 +482,34 @@
         return $"{(int)span.TotalSeconds}s";
     }
 
+    [Markdown]
+    private string Truncate(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+            return value;
+
+        return value.Substring(0, maxLength) + "...";
+    }
+
     private static IEnumerable<string> GetPrUrls(SweAfJobEntity job)
     {
         if (job.PrUrls is null) return [];
         try { return JsonSerializer.Deserialize<string[]>(job.PrUrls) ?? []; }
         catch { return []; }
+    }
+
+    private void ChangeTab(int tab)
+    {
+        if (tab < 1 || tab > 3) return;
+        _activeTab = tab;
+        StateHasChanged();
+    }
+
+    private string Truncate(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+            return value;
+
+        return value.Substring(0, maxLength) + "...";
     }
 }
