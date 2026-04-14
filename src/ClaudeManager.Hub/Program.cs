@@ -91,6 +91,7 @@ builder.Services.AddSingleton<NotificationService>();
 
 // Vector DB Semantic Search Services (vector embedding support)
 builder.Services.AddSingleton<IVectorIndexWrapper, VectorIndexWrapper>();
+builder.Services.AddHostedService<VectorIndexInitializer>();
 builder.Services.AddSingleton<IWikiService>(sp => sp.GetRequiredService<WikiService>());
 
 // Embedding startup service - initialization on application startup
