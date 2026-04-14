@@ -142,6 +142,43 @@ app.MapGet("/api/wiki", async (WikiService wiki) =>
         .Select(e => new { e.Id, e.Title, e.Category, e.Tags }));
 }).AddEndpointFilter(AgentSecretFilter(agentSecret));
 
+app.MapGet("/api/wiki/search", async (IWikiService wikiService, HttpContext httpContext) =>
+{
+    var query = httpContext.Request.Query["q"].FirstOrDefault();
+    var kParam = httpContext.Request.Query["k"].FirstOrDefault();
+
+    if (string.IsNullOrWhiteSpace(query))
+    {
+        return Results.BadRequest("Query parameter 'q' is required");
+    }
+
+    int? kValue = null;
+    if (!string.IsNullOrEmpty(kParam) && int.TryParse(kParam, out int val))
+    {
+        kValue = val;
+    }
+
+    int kDefault = kValue ?? 5;
+
+    var (results, queryScore) = await wikiService.FindSimilarAsync(query, kDefault, CancellationToken.None);
+
+    return Results.Ok(new
+    {
+        Results = results.Select(r => new
+        {
+            r.Entry.Id,
+            r.Entry.Title,
+            r.Entry.Category,
+            r.Entry.Content,
+            r.Entry.Tags,
+            r.Entry.UpdatedAt,
+            r.Entry.CreatedAt,
+            Similarity = r.Similarity
+        }),
+        QueryScore = queryScore
+    });
+}).AddEndpointFilter(AgentSecretFilter(agentSecret));
+
 app.MapPost("/api/wiki/save", async (WikiService wiki, WikiSaveRequest req) =>
 {
     await wiki.UpsertByTitleAsync(req.Title, req.Category, req.Content, req.Tags);
