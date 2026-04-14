@@ -8,199 +8,319 @@
 @using ClaudeManager.Hub.Services
 @using ClaudeManager.Hub.Services.StringExtensions
 
-<PageTitle>Build — Claude Manager</PageTitle>
+<PageTitle>@Truncate(_job?.Goal ?? "", 40) — Claude Manager</PageTitle>
 
 <div class="build-detail">
-
-    <div class="build-detail-header">
-        <a href="/foundry" class="back-link">← Foundry</a>
-        @if (_job is not null)
-        {
-            <h2 class="build-detail-goal">@_job.Goal</h2>
-        }
-    </div>
-
-    @if (_job is null && _loading)
+    @if (_job is null)
     {
-        <div class="loading">Loading…</div>
+        <div class="loading">@(_loading ? "Loading..." : "Build not found.")</div>
     }
-    else if (_job is null)
+
+    @if (_job is not null)
     {
-        <div class="empty-state">Build not found.</div>
-    }
-    else
-    {
-        <div class="build-detail-meta">
-            <div class="build-detail-meta-item">
-                <span class="build-detail-label">Status</span>
-                <span class="build-badge @_job.Status.ToString().ToLowerInvariant()">@_job.Status</span>
-            </div>
-            <div class="build-detail-meta-item">
-                <span class="build-detail-label">Repository</span>
-                <a href="@_job.RepoUrl" target="_blank" class="build-detail-link">@RepoName(_job.RepoUrl)</a>
-            </div>
-            <div class="build-detail-meta-item">
-                <span class="build-detail-label">Source</span>
-                <span>@(_job.TriggeredBy ?? "external")</span>
-            </div>
-            <div class="build-detail-meta-item">
-                <span class="build-detail-label">Job ID</span>
-                <span class="build-detail-id">@_job.ExternalJobId</span>
-            </div>
+        <!-- Tab Navigation -->
+        <div class="build-detail-tabs">
+            <button class="tab-btn@( _activeTab == 1 ? " tab-active" : "")" @onclick="() => ChangeTab(1)">
+                Build Details
+            </button>
+            <button class="tab-btn@( _activeTab == 2 ? " tab-active" : "")" @onclick="() => ChangeTab(2)">
+                AgentField
+            </button>
+            <button class="tab-btn@( _activeTab == 3 ? " tab-active" : "")" @onclick="() => ChangeTab(3)">
+                Logs
+            </button>
         </div>
 
-        <div class="build-detail-timeline">
-            <div class="build-detail-timeline-row">
-                <span class="build-detail-label">Created</span>
-                <span>@_job.CreatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
-            </div>
-            @if (_job.StartedAt is not null)
-            {
-                <div class="build-detail-timeline-row">
-                    <span class="build-detail-label">Started</span>
-                    <span>@_job.StartedAt.Value.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
-                </div>
-            }
-            @if (_job.CompletedAt is not null)
-            {
-                <div class="build-detail-timeline-row">
-                    <span class="build-detail-label">Completed</span>
-                    <span>@_job.CompletedAt.Value.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
-                </div>
-            }
-            <div class="build-detail-timeline-row">
-                <span class="build-detail-label">Duration</span>
-                <span>@FormatDuration(_job)</span>
-            </div>
-        </div>
-
-        @* ── Actions ── *@
-        @if (_job.Status is BuildStatus.Queued or BuildStatus.Running or BuildStatus.Waiting
-             or BuildStatus.Failed or BuildStatus.Cancelled)
+        @* ── Tab 1: Build Details ── *@
+        @if (_activeTab == 1)
         {
-            <div class="build-detail-actions">
-                @if (_job.Status is BuildStatus.Queued or BuildStatus.Running or BuildStatus.Waiting)
-                {
-                    <button class="btn-cancel-sm" @onclick="CancelJob" disabled="@_actionBusy">Cancel</button>
-                }
-                @if (_job.Status == BuildStatus.Waiting)
-                {
-                    <button class="btn-approve-sm" @onclick="() => ApproveJob(true)"  disabled="@_actionBusy">Approve</button>
-                    <button class="btn-reject-sm"  @onclick="() => ApproveJob(false)" disabled="@_actionBusy">Reject</button>
-                }
-                @if (_job.Status is BuildStatus.Failed or BuildStatus.Cancelled)
-                {
-                    <button class="btn-retry-sm" @onclick="RetryJob" disabled="@_actionBusy">Retry</button>
-                }
-                @if (_actionError is not null)
-                {
-                    <span class="build-action-error">@_actionError</span>
-                }
-            </div>
-        }
-
-        @* ── Pull requests ── *@
-        @if (GetPrUrls(_job).ToList() is { Count: > 0 } prs)
-        {
-            <div class="build-detail-section">
-                <h3>Pull Requests</h3>
-                <div class="build-detail-prs">
-                    @foreach (var url in prs)
-                    {
-                        <a href="@url" target="_blank" class="build-detail-pr-link">@url ↗</a>
-                    }
-                </div>
-            </div>
-        }
-
-        @* ── Error ── *@
-        @if (_job.ErrorMessage is not null)
-        {
-            <div class="build-detail-section">
-                <h3>Error</h3>
-                <pre class="build-detail-pre error">@_job.ErrorMessage</pre>
-            </div>
-        }
-
-        @* ── Build logs widget ── *@
-        @if (_job.Logs is null)
-        {
-            <div class="build-detail-section">
-                <div class="build-detail-section-header">
-                    <h3>Build Logs</h3>
-                    <span class="build-detail-section-header-actions"></span>
-                </div>
-                <div class="build-log-container">
-                    <div class="build-log-empty">No build logs are currently available.</div>
-                </div>
-            </div>
-        }
-        else
-        {
-            <div class="build-detail-section">
-                <div class="build-detail-section-header">
-                    <h3>Build Logs</h3>
-                    <div class="build-log-actions">
-                        <button class="btn-secondary-sm" @onclick="RefreshLogs" disabled="@_detailLoading">
-                            Refresh
-                        </button>
-                        <button class="btn-secondary-sm" @onclick="CopyLogs" disabled="@_detailLoading">
-                            Copy
-                        </button>
-                        <button class="btn-secondary-sm" @onclick="DownloadLogs" disabled="@_detailLoading">
-                            Download
-                        </button>
+            <div class="tab-content build-details-tab">
+                <div class="build-detail-meta">
+                    <div class="build-detail-meta-item">
+                        <span class="build-detail-label">Status</span>
+                        <span class="build-badge @_job.Status.ToString().ToLowerInvariant()">@_job.Status</span>
+                    </div>
+                    <div class="build-detail-meta-item">
+                        <span class="build-detail-label">Repository</span>
+                        <a href="@_job.RepoUrl" target="_blank" class="build-detail-link">@RepoName(_job.RepoUrl)</a>
+                    </div>
+                    <div class="build-detail-meta-item">
+                        <span class="build-detail-label">Source</span>
+                        <span>@(_job.TriggeredBy ?? "external")</span>
+                    </div>
+                    <div class="build-detail-meta-item">
+                        <span class="build-detail-label">Job ID</span>
+                        <span class="build-detail-id">@_job.ExternalJobId</span>
                     </div>
                 </div>
-                <div class="build-log-container">
-                    @{
-                        if (string.IsNullOrEmpty(_job.Logs))
+
+                <div class="build-detail-timeline">
+                    <div class="build-detail-timeline-row">
+                        <span class="build-detail-label">Created</span>
+                        <span>@_job.CreatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                    </div>
+                    @if (_job.StartedAt is not null)
+                    {
+                        <div class="build-detail-timeline-row">
+                            <span class="build-detail-label">Started</span>
+                            <span>@_job.StartedAt.Value.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                        </div>
+                    }
+                    @if (_job.CompletedAt is not null)
+                    {
+                        <div class="build-detail-timeline-row">
+                            <span class="build-detail-label">Completed</span>
+                            <span>@_job.CompletedAt.Value.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                        </div>
+                    }
+                    <div class="build-detail-timeline-row">
+                        <span class="build-detail-label">Duration</span>
+                        <span>@FormatDuration(_job)</span>
+                    </div>
+                </div>
+
+                @* ── Actions ── *@
+                @if (_job.Status is BuildStatus.Queued or BuildStatus.Running or BuildStatus.Waiting
+                     or BuildStatus.Failed or BuildStatus.Cancelled)
+                {
+                    <div class="build-detail-actions">
+                        @if (_job.Status is BuildStatus.Queued or BuildStatus.Running or BuildStatus.Waiting)
                         {
-                            <div class="build-log-empty">No build logs are currently available.</div>
+                            <button class="btn-cancel-sm" @onclick="CancelJob" disabled="@_actionBusy">Cancel</button>
                         }
-                        else
+                        @if (_job.Status == BuildStatus.Waiting)
                         {
-                            var parsedLogs = LogParser.ParseLogMessages(_job.Logs);
-                            foreach (var log in parsedLogs)
+                            <button class="btn-approve-sm" @onclick="() => ApproveJob(true)"  disabled="@_actionBusy">Approve</button>
+                            <button class="btn-reject-sm"  @onclick="() => ApproveJob(false)" disabled="@_actionBusy">Reject</button>
+                        }
+                        @if (_job.Status is BuildStatus.Failed or BuildStatus.Cancelled)
+                        {
+                            <button class="btn-retry-sm" @onclick="RetryJob" disabled="@_actionBusy">Retry</button>
+                        }
+                        @if (_actionError is not null)
+                        {
+                            <span class="build-action-error">@_actionError</span>
+                        }
+                    </div>
+                }
+
+                @* ── Pull requests ── *@
+                @if (GetPrUrls(_job).ToList() is { Count: > 0 } prs)
+                {
+                    <div class="build-detail-section">
+                        <h3>Pull Requests</h3>
+                        <div class="build-detail-prs">
+                            @foreach (var url in prs)
                             {
-                                <div class="build-log-cached">
-                                    <span class="build-log-timestamp">@log.Timestamp.ToString("HH:mm:ss.fff")</span>
-                                    <span class="build-log-content">@log.Content</span>
-                                </div>
+                                <a href="@url" target="_blank" class="build-detail-pr-link">@url ↗</a>
                             }
-                        }
+                        </div>
+                    </div>
+                }
+
+                @* ── Error ── *@
+                @if (_job.ErrorMessage is not null)
+                {
+                    <div class="build-detail-section">
+                        <h3>Error</h3>
+                        <pre class="error">@_job.ErrorMessage</pre>
+                    </div>
+                }
+
+                @* ── Build logs widget ── *@
+                @if (_job.Logs is null)
+                {
+                    <div class="build-detail-section">
+                        <div class="build-detail-section-header">
+                            <h3>Build Logs</h3>
+                            <span class="build-detail-section-header-actions"></span>
+                        </div>
+                        <div class="build-log-container">
+                            <div class="build-log-empty">No build logs are currently available.</div>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="build-detail-section">
+                        <div class="build-detail-section-header">
+                            <h3>Build Logs</h3>
+                            <div class="build-log-actions">
+                                <button class="btn-secondary-sm" @onclick="RefreshLogs" disabled="@_detailLoading">
+                                    Refresh
+                                </button>
+                                <button class="btn-secondary-sm" @onclick="CopyLogs" disabled="@_detailLoading">
+                                    Copy
+                                </button>
+                                <button class="btn-secondary-sm" @onclick="DownloadLogs" disabled="@_detailLoading">
+                                    Download
+                                </button>
+                            </div>
+                        </div>
+                        <div class="build-log-container">
+                            @{
+                                if (string.IsNullOrEmpty(_job.Logs))
+                                {
+                                    <div class="build-log-empty">No build logs are currently available.</div>
+                                }
+                                else
+                                {
+                                    var parsedLogs = LogParser.ParseLogMessages(_job.Logs);
+                                    foreach (var log in parsedLogs)
+                                    {
+                                        <div class="build-log-cached">
+                                            <span class="build-log-timestamp">@log.Timestamp.ToString("HH:mm:ss.fff")</span>
+                                            <span class="build-log-content">@log.Content</span>
+                                        </div>
+                                    }
+                                }
+                            }
+                        </div>
+                    </div>
+                }
+
+                @* ── Foundry result ── *@
+                <div class="build-detail-section">
+                    <div class="build-detail-section-header">
+                        <h3>Foundry Result</h3>
+                        <button class="btn-secondary-sm" @onclick="RefreshDetail" disabled="@_detailLoading">
+                            @(_detailLoading ? "Loading…" : "Refresh")
+                        </button>
+                    </div>
+                    @if (_detailError is not null)
+                    {
+                        <div class="build-detail-fetch-error">@_detailError</div>
+                    }
+                    else if (_detail is null && !_detailLoading)
+                    {
+                        <div class="build-detail-fetch-error">Not available — Foundry may not be configured or reachable.</div>
+                    }
+                    else if (_detail?.ResultJson is not null)
+                    {
+                        <pre class="build-detail-pre">@_detail.ResultJson</pre>
+                    }
+                    else if (_detail is not null)
+                    {
+                        <div class="build-detail-fetch-error">No result data yet.</div>
                     }
                 </div>
             </div>
         }
 
-        @* ── Foundry result ── *@
-        <div class="build-detail-section">
-            <div class="build-detail-section-header">
-                <h3>Foundry Result</h3>
-                <button class="btn-secondary-sm" @onclick="RefreshDetail" disabled="@_detailLoading">
-                    @(_detailLoading ? "Loading…" : "Refresh")
-                </button>
+        @* ── Tab 2: AgentField ── *@
+        @if (_activeTab == 2)
+        {
+            <div class="tab-content agentfield-tab">
+                @* Loading Skeleton for iframe *@
+                @if (_detailLoading)
+                {
+                    <div class="logs-loader">
+                        <span>Loading AgentField control plane...</span>
+                    </div>
+                }
+                else if (_job.ControlPlaneUrl is null)
+                {
+                    @* Null state - Control plane URL not available *@
+                    <div class="errors-error">
+                        Control plane URL not available for this job.
+                    </div>
+                }
+                else
+                {
+                    <div class="build-frame-container">
+                        <iframe id="agentFieldIframe"
+                                src="@_job.ControlPlaneUrl"
+                                width="100%"
+                                height="100vh"
+                                frameborder="0"
+                                sandbox="allow-scripts allow-same-origin allow-forms">
+                        </iframe>
+                    </div>
+                }
             </div>
-            @if (_detailError is not null)
-            {
-                <div class="build-detail-fetch-error">@_detailError</div>
-            }
-            else if (_detail is null && !_detailLoading)
-            {
-                <div class="build-detail-fetch-error">Not available — Foundry may not be configured or reachable.</div>
-            }
-            else if (_detail?.ResultJson is not null)
-            {
-                <pre class="build-detail-pre">@_detail.ResultJson</pre>
-            }
-            else if (_detail is not null)
-            {
-                <div class="build-detail-fetch-error">No result data yet.</div>
-            }
-        </div>
+        }
+
+        @* ── Tab 3: Logs ── *@
+        @if (_activeTab == 3)
+        {
+            <div class="tab-content logs-tab">
+                <div class="logs-view-header">
+                    <h3>Logs</h3>
+                    <div class="toggle-controls">
+                        <label class="toggle-label">
+                            <input type="checkbox" @bind="showBuildLogs" />
+                            Show Build Logs
+                        </label>
+                        <label class="toggle-label">
+                            <input type="checkbox" @bind="showContainerLogs" />
+                            Show Container Logs
+                        </label>
+                    </div>
+                </div>
+
+                <div class="log-actions">
+                    <button class="btn-secondary-sm" @onclick="RefreshLogs">Refresh</button>
+                    <button class="btn-secondary-sm" @onclick="CopyLogs">Copy</button>
+                    <button class="btn-secondary-sm" @onclick="DownloadLogs">Download</button>
+                </div>
+
+                @if (showBuildLogs && _job.Logs is not null)
+                {
+                    <div class="build-log-container">
+                        <h4>Build Logs:</h4>
+                        @{
+                            if (string.IsNullOrEmpty(_job.Logs))
+                            {
+                                <div class="build-log-empty">No build logs are currently available.</div>
+                            }
+                            else
+                            {
+                                var parsedLogs = LogParser.ParseLogMessages(_job.Logs);
+                                foreach (var log in parsedLogs)
+                                {
+                                    <div class="build-log-cached">
+                                        <span class="build-log-timestamp">@log.Timestamp.ToString("HH:mm:ss.fff")</span>
+                                        <span class="build-log-content">@log.Content</span>
+                                    </div>
+                                }
+                            }
+                        }
+                    </div>
+                }
+
+                @if (showContainerLogs && _detail is not null && !string.IsNullOrEmpty(_detail.Logs))
+                {
+                    <div class="build-log-container">
+                        <h4>Container Logs:</h4>
+                        @{
+                            if (string.IsNullOrEmpty(_detail.Logs))
+                            {
+                                <div class="build-log-empty">No container logs are currently available.</div>
+                            }
+                            else
+                            {
+                                var parsedLogs = LogParser.ParseLogMessages(_detail.Logs);
+                                foreach (var log in parsedLogs)
+                                {
+                                    <div class="build-log-cached">
+                                        <span class="build-log-timestamp">@log.Timestamp.ToString("HH:mm:ss.fff")</span>
+                                        <span class="build-log-content">@log.Content</span>
+                                    </div>
+                                }
+                            }
+                        }
+                    </div>
+                }
+                @else if (showContainerLogs && _detail is not null && string.IsNullOrEmpty(_detail.Logs))
+                {
+                    <div class="build-log-container">
+                        <div class="build-log-empty">No container logs are currently available.</div>
+                    </div>
+                }
+            </div>
+        }
     }
-</div>
+}
 
 @code {
     [Parameter] public long JobId { get; set; }
@@ -212,6 +332,9 @@
     private string? _detailError;
     private bool   _actionBusy;
     private string? _actionError;
+    private int    _activeTab     = 1;
+    private bool   showBuildLogs  = true;
+    private bool   showContainerLogs = true;
 
     protected override async Task OnInitializedAsync()
     {
@@ -256,6 +379,12 @@
     }
 
     // ── Actions ───────────────────────────────────────────────────────────
+
+    private async Task ChangeTab(int tabNumber)
+    {
+        _activeTab = tabNumber;
+        StateHasChanged();
+    }
 
     private async Task CancelJob()
     {
@@ -378,5 +507,12 @@
         if (job.PrUrls is null) return [];
         try { return JsonSerializer.Deserialize<string[]>(job.PrUrls) ?? []; }
         catch { return []; }
+    }
+
+    private static string Truncate(string goal, int maxLength)
+    {
+        if (string.IsNullOrEmpty(goal)) return "";
+        if (goal.Length <= maxLength) return goal;
+        return goal.Substring(0, maxLength - 3) + "...";
     }
 }
