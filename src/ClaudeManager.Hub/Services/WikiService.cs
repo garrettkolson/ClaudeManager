@@ -164,7 +164,7 @@ public class WikiService : IWikiService
     /// AC-3, AC-4, AC-10: Semantic search for similar wiki entries by content similarity.
     /// Performs vector-based cosine similarity search with keyword fallback on timeout/error.
     /// </summary>
-    public async Task<(List<WikiSearchHit>, float queryScore)> FindSimilarAsync(
+    public async Task<(List<WikiSearchHit> Results, float queryScore)> FindSimilarAsync(
         string query,
         int k = 5,
         CancellationToken ct = default)
@@ -186,29 +186,32 @@ public class WikiService : IWikiService
 
             // Compute cosine similarity between query and each vector
             var scoredResults = vectors
-                .Zip(allEntries, (v, e) => new
+                .Zip(allEntries, (vector, entry) => new
                 {
-                    v: v,
-                    e: e,
-                    score: CosineSimilarity(queryEmbedding, v.Embedding),
+                    Vector = vector,
+                    Entry = entry,
+                    Score = CosineSimilarity(queryEmbedding, vector.Embedding),
                 })
                 // Sort by similarity score in descending order
-                .OrderByDescending(item => item.score)
+                .OrderByDescending(item => item.Score)
                 // Take top k results
                 .Take(k)
-                .Select(item => new WikiSearchHit
+                .ToList();
+
+            var results = scoredResults
+                .Select(hit => new WikiSearchHit
                 {
-                    Entry = item.e,
-                    Similarity = item.score,
+                    Entry = hit.Entry,
+                    Similarity = hit.Score,
                 })
                 .ToList();
 
             // Get the highest similarity score for the query
-            var queryScore = scoredResults.Count > 0
-                ? scoredResults.Max(r => r.Similarity)
+            var highestSimilarity = results.Count > 0
+                ? results.Max(h => h.Similarity)
                 : 0f;
 
-            return (scoredResults, queryScore);
+            return (results, highestSimilarity);
         }
         catch
         {
@@ -221,12 +224,13 @@ public class WikiService : IWikiService
     /// AC-6: Keyword-based fallback search for when vector search fails or times out.
     /// Used as a fallback mechanism for graceful degradation.
     /// </summary>
-    public async Task<(List<WikiSearchHit>, float queryScore)> FindSimilarViaKeyword(
+    public async Task<(List<WikiSearchHit> Results, float queryScore)> FindSimilarViaKeyword(
         string query,
         int k = 5,
         CancellationToken ct = default)
     {
-        return await _kanalaterSearcher.SearchKeyword(query, k, ct);
+        var (results, queryScore) = await _kanalaterSearcher.SearchKeyword(query, k, ct);
+        return (results, queryScore);
     }
 
     /// <summary>
