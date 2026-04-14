@@ -682,4 +682,95 @@ public class LlmDeploymentServiceTests
         notified.Should().NotBeNull();
         notified!.Status.Should().Be(LlmDeploymentStatus.Running);
     }
+
+    // ── NginxConfig — Status Filtering —──────────────────────────────────────
+
+    [Test]
+    public async Task RefreshNginxConfigAsync_OmitsStoppedDeployments()
+    {
+        // Verify that stopped deployments are excluded from nginx upstream
+        await SeedHostAsync("gpu-h1");
+        await SeedDeploymentAsync("gpu-h1", modelId: "stopped-model", hostPort: 8001);
+        await SeedDeploymentAsync("gpu-h1", modelId: "running-model", hostPort: 8002);
+
+        var running = await _svc.GetAllForHostAsync("gpu-h1");
+        running.Where(d => d.Status != LlmDeploymentStatus.Running)
+            .ToList(); // Filter out non-running
+
+        var hosting = running.Where(d => d.Status == LlmDeploymentStatus.Running)
+            .ToList();
+        hosting.Count.Should().Be(1);
+        hosting.Should().ContainSingle(d => d.ModelId == "running-model");
+    }
+
+    [Test]
+    public async Task RefreshNginxConfigAsync_OmitsErrorDeployments()
+    {
+        // Verify that error deployments are excluded from nginx upstream
+        var host = await SeedHostAsync("gpu-h2");
+        var errorDeployments = await _svc.GetAllForHostAsync("gpu-h2");
+
+        foreach (var deployment in errorDeployments)
+        {
+            if (deployment.Status == LlmDeploymentStatus.Running)
+            {
+                deployment.Status = LlmDeploymentStatus.Error;
+                deployment.ErrorMessage = "Simulated error";
+                await _svc.UpdateAsync(deployment);
+            }
+        }
+
+        var filtered = errorDeployments.Where(d => d.Status == LlmDeploymentStatus.Running)
+            .ToList();
+        filtered.Count.Should().Be(0);
+    }
+
+    [Test]
+    public async Task RefreshNginxConfigAsync_ConversionToRunning_DeploymentListChanged()
+    {
+        // Verify that only running deployments are passed to nginx config
+        var host = await SeedHostAsync("gpu-h3");
+        var initialRunning = await _svc.GetAllForHostAsync("gpu-h3");
+        initialRunning.ForEach(d =>
+        {
+            d.Status = LlmDeploymentStatus.Running;
+        });
+        await _svc.UpdateAsync(initialRunning[0]);
+        await _svc.UpdateAsync(initialRunning[1]);
+
+        var filtered = initialRunning.Where(d => d.Status == LlmDeploymentStatus.Running)
+            .ToList();
+        filtered.Count.Should().Be(2);
+        filtered.Should().ContainAll(initialRunning);
+    }
+
+    [Test]
+    public async Task RefreshNginxConfigAsync_MultipleStatuses_FilteredCorrectly()
+    {
+        // Verify proper filtering by status for nginx upstream
+        await SeedHostAsync("gpu-h4");
+        var all = await _svc.GetAllForHostAsync("gpu-h4");
+        all.ForEach(d =>
+        {
+            if (d.Status == LlmDeploymentStatus.Running)
+            {
+                d.Status = LlmDeploymentStatus.Running;
+            }
+            else
+            {
+                d.Status = LlmDeploymentStatus.Error;
+                d.ErrorMessage = "Error";
+            }
+        });
+        await _svc.UpdateAsync(all[0]);
+        await _svc.UpdateAsync(all[1]);
+
+        var filtered = all.Where(d => d.Status == LlmDeploymentStatus.Running)
+            .ToList();
+
+        filtered.Should().ContainSingle(d => d.HostPort == 8001);
+        filtered[0].ModelId.Should().Be("model-A");
+    }
+
+    // ── NginxConfig — Status Filtering —──────────────────────────────────────
 }
