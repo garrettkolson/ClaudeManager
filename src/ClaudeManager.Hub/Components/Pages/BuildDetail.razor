@@ -30,133 +30,250 @@
     }
     else
     {
-        <div class="build-detail-meta">
-            <div class="build-detail-meta-item">
-                <span class="build-detail-label">Status</span>
-                <span class="build-badge @_job.Status.ToString().ToLowerInvariant()">@_job.Status</span>
+        <!-- Tab Navigation -->
+        <div class="build-detail-tabs">
+            <div class="tab-btn @( _activeTab == 1 ? "tab_active" : "")" @onclick="() => ChangeTab(1)">
+                Build Details
             </div>
-            <div class="build-detail-meta-item">
-                <span class="build-detail-label">Repository</span>
-                <a href="@_job.RepoUrl" target="_blank" class="build-detail-link">@RepoName(_job.RepoUrl)</a>
+            <div class="tab-btn @( _activeTab == 2 ? "tab_active" : "")" @onclick="() => ChangeTab(2)">
+                AgentField
             </div>
-            <div class="build-detail-meta-item">
-                <span class="build-detail-label">Source</span>
-                <span>@(_job.TriggeredBy ?? "external")</span>
-            </div>
-            <div class="build-detail-meta-item">
-                <span class="build-detail-label">Job ID</span>
-                <span class="build-detail-id">@_job.ExternalJobId</span>
+            <div class="tab-btn @( _activeTab == 3 ? "tab_active" : "")" @onclick="() => ChangeTab(3)">
+                Logs
             </div>
         </div>
 
-        <div class="build-detail-timeline">
-            <div class="build-detail-timeline-row">
-                <span class="build-detail-label">Created</span>
-                <span>@_job.CreatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
-            </div>
-            @if (_job.StartedAt is not null)
-            {
-                <div class="build-detail-timeline-row">
-                    <span class="build-detail-label">Started</span>
-                    <span>@_job.StartedAt.Value.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
-                </div>
-            }
-            @if (_job.CompletedAt is not null)
-            {
-                <div class="build-detail-timeline-row">
-                    <span class="build-detail-label">Completed</span>
-                    <span>@_job.CompletedAt.Value.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
-                </div>
-            }
-            <div class="build-detail-timeline-row">
-                <span class="build-detail-label">Duration</span>
-                <span>@FormatDuration(_job)</span>
-            </div>
-        </div>
+        @renderMode
 
-        @* ── Actions ── *@
-        @if (_job.Status is BuildStatus.Queued or BuildStatus.Running or BuildStatus.Waiting
-             or BuildStatus.Failed or BuildStatus.Cancelled)
+        <!-- Tab 1: Build Details -->
+        @if (_activeTab == 1)
         {
-            <div class="build-detail-actions">
-                @if (_job.Status is BuildStatus.Queued or BuildStatus.Running or BuildStatus.Waiting)
-                {
-                    <button class="btn-cancel-sm" @onclick="CancelJob" disabled="@_actionBusy">Cancel</button>
-                }
-                @if (_job.Status == BuildStatus.Waiting)
-                {
-                    <button class="btn-approve-sm" @onclick="() => ApproveJob(true)"  disabled="@_actionBusy">Approve</button>
-                    <button class="btn-reject-sm"  @onclick="() => ApproveJob(false)" disabled="@_actionBusy">Reject</button>
-                }
-                @if (_job.Status is BuildStatus.Failed or BuildStatus.Cancelled)
-                {
-                    <button class="btn-retry-sm" @onclick="RetryJob" disabled="@_actionBusy">Retry</button>
-                }
-                @if (_actionError is not null)
-                {
-                    <span class="build-action-error">@_actionError</span>
-                }
-            </div>
-        }
+            <div class="build-details-tab-container">
+                <div class="build-detail-meta">
+                    <div class="build-detail-meta-item">
+                        <span class="build-detail-label">Status</span>
+                        <span class="build-badge @_job.Status.ToString().ToLowerInvariant()">@_job.Status</span>
+                    </div>
+                    <div class="build-detail-meta-item">
+                        <span class="build-detail-label">Repository</span>
+                        <a href="@_job.RepoUrl" target="_blank" class="build-detail-link">@RepoName(_job.RepoUrl)</a>
+                    </div>
+                    <div class="build-detail-meta-item">
+                        <span class="build-detail-label">Source</span>
+                        <span>@(_job.TriggeredBy ?? "external")</span>
+                    </div>
+                    <div class="build-detail-meta-item">
+                        <span class="build-detail-label">Job ID</span>
+                        <span class="build-detail-id">@_job.ExternalJobId</span>
+                    </div>
+                </div>
 
-        @* ── Pull requests ── *@
-        @if (GetPrUrls(_job).ToList() is { Count: > 0 } prs)
-        {
-            <div class="build-detail-section">
-                <h3>Pull Requests</h3>
-                <div class="build-detail-prs">
-                    @foreach (var url in prs)
+                <div class="build-detail-timeline">
+                    <div class="build-detail-timeline-row">
+                        <span class="build-detail-label">Created</span>
+                        <span>@_job.CreatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                    </div>
+                    @if (_job.StartedAt is not null)
                     {
-                        <a href="@url" target="_blank" class="build-detail-pr-link">@url ↗</a>
+                        <div class="build-detail-timeline-row">
+                            <span class="build-detail-label">Started</span>
+                            <span>@_job.StartedAt.Value.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                        </div>
+                    }
+                    @if (_job.CompletedAt is not null)
+                    {
+                        <div class="build-detail-timeline-row">
+                            <span class="build-detail-label">Completed</span>
+                            <span>@_job.CompletedAt.Value.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                        </div>
+                    }
+                    <div class="build-detail-timeline-row">
+                        <span class="build-detail-label">Duration</span>
+                        <span>@FormatDuration(_job)</span>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                @if (_job.Status is BuildStatus.Queued or BuildStatus.Running or BuildStatus.Waiting
+                     or BuildStatus.Failed or BuildStatus.Cancelled)
+                {
+                    <div class="build-detail-actions">
+                        @if (_job.Status is BuildStatus.Queued or BuildStatus.Running or BuildStatus.Waiting)
+                        {
+                            <button class="btn-cancel-sm" @onclick="CancelJob" disabled="@_actionBusy">Cancel</button>
+                        }
+                        @if (_job.Status == BuildStatus.Waiting)
+                        {
+                            <button class="btn-approve-sm" @onclick="() => ApproveJob(true)" disabled="@_actionBusy">Approve</button>
+                            <button class="btn-reject-sm" @onclick="() => ApproveJob(false)" disabled="@_actionBusy">Reject</button>
+                        }
+                        @if (_job.Status is BuildStatus.Failed or BuildStatus.Cancelled)
+                        {
+                            <button class="btn-retry-sm" @onclick="RetryJob" disabled="@_actionBusy">Retry</button>
+                        }
+                        @if (_actionError is not null)
+                        {
+                            <span class="build-action-error">@_actionError</span>
+                        }
+                    </div>
+                }
+
+                <!-- PR Links Section -->
+                @if (GetPrUrls(_job).ToList() is { Count: > 0 } prs)
+                {
+                    <div class="build-detail-section">
+                        <h3>Pull Requests</h3>
+                        <div class="build-detail-prs">
+                            @foreach (var url in prs)
+                            {
+                                <a href="@url" target="_blank" class="build-detail-pr-link">@url ↗</a>
+                            }
+                        </div>
+                    </div>
+                }
+
+                <!-- Error Section -->
+                @if (_job.ErrorMessage is not null)
+                {
+                    <div class="build-detail-section">
+                        <h3>Error</h3>
+                        <pre class="build-detail-pre error">@_job.ErrorMessage</pre>
+                    </div>
+                }
+
+                <!-- Build Logs Widget -->
+                @if (_job.Logs is null)
+                {
+                    <div class="build-detail-section">
+                        <div class="build-detail-section-header">
+                            <h3>Build Logs</h3>
+                            <span class="build-detail-section-header-actions"></span>
+                        </div>
+                        <div class="build-log-container">
+                            <div class="build-log-empty">No build logs are currently available.</div>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="build-detail-section">
+                        <div class="build-detail-section-header">
+                            <h3>Build Logs</h3>
+                            <div class="build-log-actions">
+                                <button class="btn-secondary-sm" @onclick="RefreshLogs" disabled="@_detailLoading">
+                                    Refresh
+                                </button>
+                                <button class="btn-secondary-sm" @onclick="CopyLogs" disabled="@_detailLoading">
+                                    Copy
+                                </button>
+                                <button class="btn-secondary-sm" @onclick="DownloadLogs" disabled="@_detailLoading">
+                                    Download
+                                </button>
+                            </div>
+                        </div>
+                        <div class="build-log-container">
+                            @{
+                                if (string.IsNullOrEmpty(_job.Logs))
+                                {
+                                    <div class="build-log-empty">No build logs are currently available.</div>
+                                }
+                                else
+                                {
+                                    var parsedLogs = LogParser.ParseLogMessages(_job.Logs);
+                                    foreach (var log in parsedLogs)
+                                    {
+                                        <div class="build-log-cached">
+                                            <span class="build-log-timestamp">@log.Timestamp.ToString("HH:mm:ss.fff")</span>
+                                            <span class="build-log-content">@log.Content</span>
+                                        </div>
+                                    }
+                                }
+                            }
+                        </div>
+                    </div>
+                }
+
+                <!-- Foundry Result JSON -->
+                <div class="build-detail-section">
+                    <div class="build-detail-section-header">
+                        <h3>Foundry Result</h3>
+                        <button class="btn-secondary-sm" @onclick="RefreshDetail" disabled="@_detailLoading">
+                            @(_detailLoading ? "Loading…" : "Refresh")
+                        </button>
+                    </div>
+                    @if (_detailError is not null)
+                    {
+                        <div class="build-detail-fetch-error">@_detailError</div>
+                    }
+                    else if (_detail is null && !_detailLoading)
+                    {
+                        <div class="build-detail-fetch-error">Not available — Foundry may not be configured or reachable.</div>
+                    }
+                    else if (_detail?.ResultJson is not null)
+                    {
+                        <pre class="build-detail-pre">@_detail.ResultJson</pre>
+                    }
+                    else if (_detail is not null)
+                    {
+                        <div class="build-detail-fetch-error">No result data yet.</div>
                     }
                 </div>
             </div>
         }
+    }
 
-        @* ── Error ── *@
-        @if (_job.ErrorMessage is not null)
-        {
-            <div class="build-detail-section">
-                <h3>Error</h3>
-                <pre class="build-detail-pre error">@_job.ErrorMessage</pre>
-            </div>
-        }
+    <!-- Tab 2: AgentField -->
+    @if (_activeTab == 2)
+    {
+        <div class="build-detail-tabs-tab-content agentfield-tab">
+            @if (_job.ControlPlaneUrl is null)
+            {
+                <div class="errors-error">Control plane URL not available for this job.</div>
+            }
+            else
+            {
+                <div class="logs-loader">@(_detailLoading ? "Loading AgentField…" : "AgentField loaded.")</div>
+                <div class="build-frame-container">
+                    <iframe id="agentFieldIframe"
+                            src="@(_job.ControlPlaneUrl ?? "http://localhost:5258")"
+                            style="width: 100%; height: 100vh;"
+                            sandbox="allow-scripts allow-same-origin">
+                    </iframe>
+                </div>
+                @if (_controlPlaneError is not null)
+                {
+                    <div class="errors-error">@_controlPlaneError</div>
+                }
+            }
+        </div>
+    }
 
-        @* ── Build logs widget ── *@
-        @if (_job.Logs is null)
-        {
-            <div class="build-detail-section">
-                <div class="build-detail-section-header">
-                    <h3>Build Logs</h3>
-                    <span class="build-detail-section-header-actions"></span>
-                </div>
-                <div class="build-log-container">
-                    <div class="build-log-empty">No build logs are currently available.</div>
-                </div>
+    <!-- Tab 3: Logs Viewer -->
+    @if (_activeTab == 3)
+    {
+        <div class="build-detail-tabs-tab-content logs-tab">
+            <div class="toggle-container">
+                <input type="checkbox" checked="@(showBuildLogs == true)" @onchange="@(e => showBuildLogs = e.Target.checked)" />
+                <span class="log-label">Build Logs</span>
             </div>
-        }
-        else
-        {
-            <div class="build-detail-section">
-                <div class="build-detail-section-header">
-                    <h3>Build Logs</h3>
-                    <div class="build-log-actions">
-                        <button class="btn-secondary-sm" @onclick="RefreshLogs" disabled="@_detailLoading">
-                            Refresh
-                        </button>
-                        <button class="btn-secondary-sm" @onclick="CopyLogs" disabled="@_detailLoading">
-                            Copy
-                        </button>
-                        <button class="btn-secondary-sm" @onclick="DownloadLogs" disabled="@_detailLoading">
-                            Download
-                        </button>
-                    </div>
-                </div>
+            <div class="toggle-container">
+                <input type="checkbox" checked="@(showContainerLogs == true)" @onchange="@(e => showContainerLogs = e.Target.checked)" />
+                <span class="log-label">Container Logs</span>
+            </div>
+
+            <div class="build-log-actions-wrapper">
+                <button class="btn-secondary-sm" @onclick="RefreshLogs" disabled="@_detailLoading">Refresh</button>
+                <button class="btn-secondary-sm" @onclick="CopyLogs" disabled="@_detailLoading">Copy</button>
+                <button class="btn-secondary-sm" @onclick="DownloadLogs" disabled="@_detailLoading">Download</button>
+            </div>
+
+            @if (showBuildLogs)
+            {
                 <div class="build-log-container">
                     @{
                         if (string.IsNullOrEmpty(_job.Logs))
                         {
-                            <div class="build-log-empty">No build logs are currently available.</div>
+                            <div class="build-log-empty">No build logs available.</div>
                         }
                         else
                         {
@@ -171,212 +288,203 @@
                         }
                     }
                 </div>
-            </div>
-        }
+            }
 
-        @* ── Foundry result ── *@
-        <div class="build-detail-section">
-            <div class="build-detail-section-header">
-                <h3>Foundry Result</h3>
-                <button class="btn-secondary-sm" @onclick="RefreshDetail" disabled="@_detailLoading">
-                    @(_detailLoading ? "Loading…" : "Refresh")
-                </button>
-            </div>
-            @if (_detailError is not null)
+            @if (showContainerLogs)
             {
-                <div class="build-detail-fetch-error">@_detailError</div>
-            }
-            else if (_detail is null && !_detailLoading)
-            {
-                <div class="build-detail-fetch-error">Not available — Foundry may not be configured or reachable.</div>
-            }
-            else if (_detail?.ResultJson is not null)
-            {
-                <pre class="build-detail-pre">@_detail.ResultJson</pre>
-            }
-            else if (_detail is not null)
-            {
-                <div class="build-detail-fetch-error">No result data yet.</div>
+                <div class="build-log-container">
+                    @if (_detail?.Logs is not null)
+                    {
+                        <pre class="build-detail-pre">@_detail.Logs</pre>
+                    }
+                    else
+                    {
+                        <div class="build-log-empty">Container logs not available.</div>
+                    }
+                </div>
             }
         </div>
     }
-</div>
 
-@code {
-    [Parameter] public long JobId { get; set; }
+    @code {
+        [Parameter] public long JobId { get; set; }
 
-    private SweAfJobEntity?      _job;
-    private BuildExecutionDetail? _detail;
-    private bool   _loading       = true;
-    private bool   _detailLoading = false;
-    private string? _detailError;
-    private bool   _actionBusy;
-    private string? _actionError;
+        private SweAfJobEntity?_job;
+        private BuildExecutionDetail? _detail;
+        private bool   _loading       = true;
+        private bool   _detailLoading = false;
+        private string? _detailError;
+        private bool   _actionBusy;
+        private string? _actionError;
+        private int _activeTab = 1;
 
-    protected override async Task OnInitializedAsync()
-    {
-        _job     = await BuildsSvc.GetJobAsync(JobId);
-        _loading = false;
-        Notifier.BuildChanged += OnBuildChanged;
+        // Tab 3 toggle states
+        private bool   showBuildLogs   = true;
+        private bool    showContainerLogs = true;
+        private string? _controlPlaneError;
 
-        if (_job is not null)
+        protected override async Task OnInitializedAsync()
         {
-            // Re-register the webhook in case it was never set or the control plane
-            // was reprovisioned and lost its configuration.
-            if (_job.Status is BuildStatus.Queued or BuildStatus.Running or BuildStatus.Waiting)
-                await BuildsSvc.EnsureWebhookRegisteredAsync();
+            _job     = await BuildsSvc.GetJobAsync(JobId);
+            _loading = false;
+            Notifier.BuildChanged += OnBuildChanged;
 
-            await RefreshDetail();
-        }
-    }
-
-    private void OnBuildChanged(SweAfJobEntity updated)
-    {
-        if (updated.Id != JobId) return;
-        _job = updated;
-        InvokeAsync(StateHasChanged);
-    }
-
-    public void Dispose() => Notifier.BuildChanged -= OnBuildChanged;
-
-    // ── AgentField detail ──────────────────────────────────────────────────
-
-    private async Task RefreshDetail()
-    {
-        if (_job is null) return;
-        _detailLoading = true;
-        _detailError   = null;
-        StateHasChanged();
-
-        _detail = await BuildsSvc.FetchExecutionDetailAsync(_job.ExternalJobId);
-        _detailLoading = false;
-
-        if (_detail is null)
-            _detailError = "Could not fetch execution detail from Foundry.";
-    }
-
-    // ── Actions ───────────────────────────────────────────────────────────
-
-    private async Task CancelJob()
-    {
-        _actionBusy  = true;
-        _actionError = null;
-        StateHasChanged();
-        var (ok, err) = await BuildsSvc.CancelJobAsync(JobId);
-        _actionBusy = false;
-        if (!ok) _actionError = err ?? "Cancel failed.";
-    }
-
-    private async Task ApproveJob(bool approved)
-    {
-        _actionBusy  = true;
-        _actionError = null;
-        StateHasChanged();
-        var (ok, err) = await BuildsSvc.ApproveJobAsync(JobId, approved);
-        _actionBusy = false;
-        if (!ok) _actionError = err ?? "Request failed.";
-    }
-
-    private async Task RetryJob()
-    {
-        _actionBusy  = true;
-        _actionError = null;
-        StateHasChanged();
-        var (ok, err) = await BuildsSvc.RetryJobAsync(JobId);
-        _actionBusy = false;
-        if (!ok) _actionError = err ?? "Retry failed.";
-    }
-
-    private async Task RefreshLogs()
-    {
-        if (_job is null) return;
-        if (string.IsNullOrEmpty(_job.ExternalJobId)) return;
-
-        _detailLoading = true;
-        StateHasChanged();
-
-        try
-        {
-            var detail = await BuildsSvc.FetchExecutionDetailAsync(_job.ExternalJobId);
-            if (detail is not null)
+            if (_job is not null)
             {
-                // Update job logs directly and save to database
-                _job.Logs = detail.Logs;
-                await using var db = await BuildsSvc.DbContextFactory.CreateDbContextAsync();
-                db.SweAfJobs.Update(_job);
-                await db.SaveChangesAsync();
+                if (_job.Status is BuildStatus.Queued or BuildStatus.Running or BuildStatus.Waiting)
+                    await BuildsSvc.EnsureWebhookRegisteredAsync();
+
+                await RefreshDetail();
             }
         }
-        catch (Exception ex)
+
+        private void OnBuildChanged(SweAfJobEntity updated)
         {
-            _detailError = $"Failed to refresh logs: {ex.Message}";
+            if (updated.Id != JobId) return;
+            _job = updated;
+            InvokeAsync(StateHasChanged);
         }
-        finally
+
+        public void Dispose() => Notifier.BuildChanged -= OnBuildChanged;
+
+        private async Task RefreshDetail()
         {
+            if (_job is null) return;
+            _detailLoading = true;
+            _detailError   = null;
+            StateHasChanged();
+
+            _detail = await BuildsSvc.FetchExecutionDetailAsync(_job.ExternalJobId);
             _detailLoading = false;
+
+            if (_detail is null)
+                _detailError = "Could not fetch execution detail from Foundry.";
+        }
+
+        private async Task CancelJob()
+        {
+            _actionBusy  = true;
+            _actionError = null;
+            StateHasChanged();
+            var (ok, err) = await BuildsSvc.CancelJobAsync(JobId);
+            _actionBusy = false;
+            if (!ok) _actionError = err ?? "Cancel failed.";
+        }
+
+        private async Task ApproveJob(bool approved)
+        {
+            _actionBusy  = true;
+            _actionError = null;
+            StateHasChanged();
+            var (ok, err) = await BuildsSvc.ApproveJobAsync(JobId, approved);
+            _actionBusy = false;
+            if (!ok) _actionError = err ?? "Request failed.";
+        }
+
+        private async Task RetryJob()
+        {
+            _actionBusy  = true;
+            _actionError = null;
+            StateHasChanged();
+            var (ok, err) = await BuildsSvc.RetryJobAsync(JobId);
+            _actionBusy = false;
+            if (!ok) _actionError = err ?? "Retry failed.";
+        }
+
+        private async Task RefreshLogs()
+        {
+            if (_job is null) return;
+            if (string.IsNullOrEmpty(_job.ExternalJobId)) return;
+
+            _detailLoading = true;
+            StateHasChanged();
+
+            try
+            {
+                var detail = await BuildsSvc.FetchExecutionDetailAsync(_job.ExternalJobId);
+                if (detail is not null)
+                {
+                    _job.Logs = detail.Logs;
+                    await using var db = await BuildsSvc.DbContextFactory.CreateDbContextAsync();
+                    db.SweAfJobs.Update(_job);
+                    await db.SaveChangesAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                _detailError = $"Failed to refresh logs: {ex.Message}";
+            }
+            finally
+            {
+                _detailLoading = false;
+                StateHasChanged();
+            }
+        }
+
+        private async Task CopyLogs()
+        {
+            if (_job.Logs is null || string.IsNullOrEmpty(_job.Logs))
+                return;
+
+            await Clipboard.SetDataAsync(_job.Logs);
+        }
+
+        private async Task DownloadLogs()
+        {
+            if (_job.Logs is null || string.IsNullOrEmpty(_job.Logs))
+                return;
+
+            const string jsScript = @"
+                function downloadLogs() {
+                    var blob = new Blob(['@(Html.Raw(_job.Logs))'], { type: 'text/plain;charset=utf-8' });
+                    var url = URL.createObjectURL(blob);
+                    var a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'build-logs.txt';
+                    a.style.display = 'none';
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                }
+                downloadLogs();
+            ";
+
+            await JSRuntime.InvokeVoidAsync("eval", jsScript);
+        }
+
+        private void ChangeTab(int tab)
+        {
+            _activeTab = tab;
             StateHasChanged();
         }
-    }
 
-    private async Task CopyLogs()
-    {
-        if (_job.Logs is null || string.IsNullOrEmpty(_job.Logs))
-            return;
-
-        await Clipboard.SetDataAsync(_job.Logs);
-    }
-
-    private async Task DownloadLogs()
-    {
-        if (_job.Logs is null || string.IsNullOrEmpty(_job.Logs))
-            return;
-
-        const string jsScript = @"
-            function downloadLogs() {
-                var blob = new Blob(['@(Html.Raw(_job.Logs))'], { type: 'text/plain;charset=utf-8' });
-                var url = URL.createObjectURL(blob);
-                var a = document.createElement('a');
-                a.href = url;
-                a.download = 'build-logs.txt';
-                a.style.display = 'none';
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
-            }
-            downloadLogs();
-        ";
-
-        await JSRuntime.InvokeVoidAsync("eval", jsScript);
-    }
-
-    // ── Helpers ───────────────────────────────────────────────────────────
-
-    private static string RepoName(string url)
-    {
-        try
+        private static string RepoName(string url)
         {
-            var uri   = new Uri(url);
-            var parts = uri.AbsolutePath.Trim('/').Split('/');
-            return parts.Length >= 2 ? $"{parts[^2]}/{parts[^1]}" : url;
+            try
+            {
+                var uri   = new Uri(url);
+                var parts = uri.AbsolutePath.Trim('/').Split('/');
+                return parts.Length >= 2 ? $"{parts[^2]}/{parts[^1]}" : url;
+            }
+            catch { return url; }
         }
-        catch { return url; }
-    }
 
-    private static string FormatDuration(SweAfJobEntity job)
-    {
-        var end   = job.CompletedAt ?? DateTimeOffset.UtcNow;
-        var start = job.StartedAt   ?? job.CreatedAt;
-        var span  = end - start;
-        if (span.TotalHours   >= 1) return $"{(int)span.TotalHours}h {span.Minutes}m";
-        if (span.TotalMinutes >= 1) return $"{(int)span.TotalMinutes}m {span.Seconds}s";
-        return $"{(int)span.TotalSeconds}s";
-    }
+        private static string FormatDuration(SweAfJobEntity job)
+        {
+            var end   = job.CompletedAt ?? DateTimeOffset.UtcNow;
+            var start = job.StartedAt   ?? job.CreatedAt;
+            var span  = end - start;
+            if (span.TotalHours   >= 1) return $"{(int)span.TotalHours}h {span.Minutes}m";
+            if (span.TotalMinutes >= 1) return $"{(int)span.TotalMinutes}m {span.Seconds}s";
+            return $"{(int)span.TotalSeconds}s";
+        }
 
-    private static IEnumerable<string> GetPrUrls(SweAfJobEntity job)
-    {
-        if (job.PrUrls is null) return [];
-        try { return JsonSerializer.Deserialize<string[]>(job.PrUrls) ?? []; }
-        catch { return []; }
+        private static IEnumerable<string> GetPrUrls(SweAfJobEntity job)
+        {
+            if (job.PrUrls is null) return [];
+            try { return JsonSerializer.Deserialize<string[]>(job.PrUrls) ?? []; }
+            catch { return []; }
+        }
     }
 }
