@@ -289,8 +289,8 @@ public class WikiService : IWikiService
         s.Replace("&", "&amp;").Replace("\"", "&quot;").Replace("<", "&lt;").Replace(">", "&gt;");
 
     /// <summary>
-    /// Pre-seeds the vector index with embeddings for all active wiki entries.
-    /// Called on application startup to ensure search functionality is available.
+    /// AC-2, AC-8: Populates vector index with embeddings for all active wiki entries on creation or update.
+    /// Generates embeddings for entries that don't have them using IEmbeddingService.GenerateAsync.
     /// </summary>
     public async Task InitVectorIndexAsync(CancellationToken ct = default)
     {
@@ -301,18 +301,30 @@ public class WikiService : IWikiService
 
         foreach (var entry in activeEntries)
         {
-            if (entry.Embedding != null && entry.Embedding.Length == 768)
+            // Generate embedding if not present or incomplete
+            float[]? embedding = null;
+            if (entry.Embedding == null || entry.Embedding.Length != 768)
             {
-                var vectorIndex = new ViaVectorIndex
-                {
-                    Id = entry.Id,
-                    SessionId = "entry-" + entry.Id,
-                    Embedding = entry.Embedding,
-                    CreatedAt = entry.CreatedAt,
-                };
-
-                await _vectorIndexWrapper.SaveAsync(vectorIndex, ct);
+                // Generate new embedding using IEmbeddingService
+                embedding = await _embeddingService.GenerateAsync(entry.Content, ct);
+                // Update the wiki entry with the generated embedding
+                entry.Embedding = embedding;
             }
+            else
+            {
+                // Use existing embedding
+                embedding = entry.Embedding;
+            }
+
+            var vectorIndex = new ViaVectorIndex
+            {
+                Id = entry.Id,
+                SessionId = "entry-" + entry.Id,
+                Embedding = embedding,
+                CreatedAt = entry.CreatedAt,
+            };
+
+            await _vectorIndexWrapper.SaveAsync(vectorIndex, ct);
         }
     }
 }
