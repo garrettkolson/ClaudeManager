@@ -11,6 +11,19 @@ public class KalendarSearcher : IKalendarSearcher
     private List<WikiEntryEntity> _entries = new();
 
     /// <summary>
+    /// Configurable timeout threshold in milliseconds for fallback behavior.
+    /// Default is 1000ms as per AC-6 requirement.
+    /// </summary>
+    public TimeSpan TimeoutThreshold { get; set; } = TimeSpan.FromMilliseconds(1000);
+
+    /// <summary>
+    /// Stop words to filter out from search results (case-insensitive).
+    /// </summary>
+    private static readonly HashSet<string> _stopWords = new(
+        new[] { "a", "an", "the", "is", "are", "was", "were", "in", "on", "at", "to", "of" },
+        StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Initializes a new instance of KalendarSearcher.
     /// Loads all active wiki entries into memory.
     /// </summary>
@@ -137,7 +150,7 @@ public class KalendarSearcher : IKalendarSearcher
         var normalized = query.ToLowerInvariant().Trim();
         var tokens = normalized
             .Split(new[] { ' ', '\n', '\t' }, StringSplitOptions.RemoveEmptyEntries)
-            .Where(t => t.Length > 0)
+            .Where(t => t.Length > 0 && !_stopWords.Contains(t))
             .ToArray();
 
         return tokens;
