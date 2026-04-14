@@ -89,6 +89,18 @@ builder.Services.AddSingleton<SweAfHostService>();
 builder.Services.AddHostedService<SweAfRecoveryService>();
 builder.Services.AddSingleton<NotificationService>();
 
+// Vector DB Semantic Search Services (vector embedding support)
+builder.Services.AddSingleton<IVectorIndexWrapper, VectorIndexWrapper>();
+builder.Services.AddSingleton<IWikiService>(sp => sp.GetRequiredService<WikiService>());
+
+// Embedding startup service - initialization on application startup
+builder.Services.AddSingleton<EmbeddingServiceOptions>(new EmbeddingServiceOptions
+{
+    ConnectionTimeout = 1000,
+    IndexInitTimeout = 30000
+});
+builder.Services.AddHostedService<EmbeddingStartupService>();
+
 // ── SignalR ───────────────────────────────────────────────────────────────────
 
 builder.Services.AddSignalR(opts =>

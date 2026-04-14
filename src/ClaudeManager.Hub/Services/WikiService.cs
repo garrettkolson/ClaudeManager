@@ -283,4 +283,32 @@ public class WikiService : IWikiService
 
     private static string XmlEscape(string s) =>
         s.Replace("&", "&amp;").Replace("\"", "&quot;").Replace("<", "&lt;").Replace(">", "&gt;");
+
+    /// <summary>
+    /// Pre-seeds the vector index with embeddings for all active wiki entries.
+    /// Called on application startup to ensure search functionality is available.
+    /// </summary>
+    public async Task InitVectorIndexAsync(CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var activeEntries = await db.WikiEntries
+            .Where(e => !e.IsArchived && e.Id > 0)
+            .ToListAsync(ct);
+
+        foreach (var entry in activeEntries)
+        {
+            if (entry.Embedding != null && entry.Embedding.Length == 768)
+            {
+                var vectorIndex = new ViaVectorIndex
+                {
+                    Id = entry.Id,
+                    SessionId = "entry-" + entry.Id,
+                    Embedding = entry.Embedding,
+                    CreatedAt = entry.CreatedAt,
+                };
+
+                await _vectorIndexWrapper.SaveAsync(vectorIndex, ct);
+            }
+        }
+    }
 }
