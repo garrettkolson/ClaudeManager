@@ -683,12 +683,12 @@ public class SweAfService
 
             job = new SweAfJobEntity
             {
-                ExternalJobId = externalJobId,
-	        ComposeProjectName = $"agentfield-{externalJobId.GetHashCode()}",
-                Goal          = data.TryGetProperty("goal",     out var g) ? g.GetString() ?? "" : "",
-                RepoUrl       = data.TryGetProperty("repo_url", out var r) ? r.GetString() ?? "" : "",
-                Status        = BuildStatus.Queued,
-                CreatedAt     = DateTimeOffset.UtcNow,
+                ExternalJobId     = externalJobId,
+                Goal              = data.TryGetProperty("goal",     out var g) ? g.GetString() ?? "" : "",
+                RepoUrl           = data.TryGetProperty("repo_url", out var r) ? r.GetString() ?? "" : "",
+                Status            = BuildStatus.Queued,
+                CreatedAt         = DateTimeOffset.UtcNow,
+                ComposeProjectName = $"agentfield-{externalJobId.GetHashCode()}",
             };
             db.SweAfJobs.Add(job);
         }
@@ -727,6 +727,7 @@ public class SweAfService
                 job.Status      = BuildStatus.Cancelled;
                 job.CompletedAt = now;
                 break;
+
 
 
             case "execution_waiting":
