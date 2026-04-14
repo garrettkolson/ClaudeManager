@@ -3,10 +3,10 @@
 @inject SweAfService BuildsSvc
 @inject BuildNotifier Notifier
 @inject ILogParser LogParser
+@inject Microsoft.JSInterop.IJSRuntime JSRuntime
+
 @using System.Text.Json
-@using ClaudeManager.Hub.Persistence.Entities
-@using ClaudeManager.Hub.Services
-@using ClaudeManager.Hub.Services.StringExtensions
+@using static ClaudeManager.Hub.Services.StringExtensions
 
 <PageTitle>@Truncate(_job?.Goal ?? "", 40)</PageTitle>
 
@@ -210,7 +210,7 @@
                     {
                         <div class="build-detail-fetch-error ">AgentField control plane URL not available for this job.</div>
                     }
-                    else if (_detail?.ControlPlaneUrl is null)
+                    else if (_job?.ControlPlaneUrl is null)
                     {
                         <div class="build-detail-fetch-error ">AgentField control plane URL not available for this job.</div>
                     }
@@ -219,7 +219,7 @@
                         <div class="logs-loader">@(_detailLoading ? "Loading…" : "")</div>
                         <div class="build-frame-container">
                             <iframe id="agentFieldIframe"
-                                    src="@(_detail.ControlPlaneUrl ?? "http://localhost:5258")"
+                                    src="@(_job.ControlPlaneUrl ?? "http://localhost:5258")"
                                     style="width: 100%; height: 100vh;"
                                     sandbox="allow-scripts allow-same-origin">
                             </iframe>
@@ -303,6 +303,13 @@
     private string? _actionError;
     private bool   showBuildLogs  = true;
     private bool   showContainerLogs = true;
+
+    private bool    _logsLoading;
+    private string? _logsError;
+
+    private string? _containerLogs;
+    private bool    _containerLogsLoading;
+    private string? _containerLogsError;
 
     protected override async Task OnInitializedAsync()
     {
@@ -388,9 +395,10 @@
     private async Task RefreshLogs()
     {
         if (_job is null) return;
-        if (string.IsNullOrEmpty(_job.ExternalJobId)) return;
 
         _detailLoading = true;
+        _logsLoading = true;
+        _logsError   = null;
         StateHasChanged();
 
         try
@@ -411,17 +419,32 @@
         }
         finally
         {
-            _detailLoading = false;
-            StateHasChanged();
+            _logsLoading = false;
         }
     }
 
-    private async Task CopyLogs()
+    private async Task RefreshContainerLogs()
     {
-        if (_job.Logs is null || string.IsNullOrEmpty(_job.Logs))
-            return;
+        if (_job is null) return;
 
-        await Clipboard.SetDataAsync(_job.Logs);
+        _containerLogsLoading = true;
+        _containerLogsError   = null;
+        StateHasChanged();
+
+        try
+        {
+            var (logs, error) = await BuildsSvc.GetContainerLogsAsync(_job.Id);
+            if (error is not null) _containerLogsError = error;
+            else _containerLogs = logs;
+        }
+        catch (Exception ex)
+        {
+            _containerLogsError = $"Failed to fetch container logs: {ex.Message}";
+        }
+        finally
+        {
+            _containerLogsLoading = false;
+        }
     }
 
     private async Task DownloadLogs()
@@ -471,7 +494,6 @@
         return $"{(int)span.TotalSeconds}s";
     }
 
-    [Markdown]
     private string Truncate(string value, int maxLength)
     {
         if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
