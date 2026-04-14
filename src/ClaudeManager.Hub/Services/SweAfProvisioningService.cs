@@ -19,6 +19,9 @@ public interface ISwarmProvisioningService
         string projectName, CancellationToken ct = default);
 
     Task<List<string>> ListActiveComposeProjectsAsync(CancellationToken ct = default);
+
+    Task<(string? Logs, string? Error)> GetContainerLogsAsync(
+        string projectName, int lines = 200, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -292,6 +295,35 @@ public class SweAfProvisioningService(
         }
 
         return ParseComposeProjectNames(output);
+    }
+
+    /// <summary>
+    /// Fetches the last <paramref name="lines"/> lines of combined stdout/stderr from all
+    /// containers in the given Compose project.
+    /// </summary>
+    public async Task<(string? Logs, string? Error)> GetContainerLogsAsync(
+        string projectName, int lines = 200, CancellationToken ct = default)
+    {
+        var config = await GetConfigAsync(ct);
+        if (!IsProvisioningConfigured(config))
+            return (null, "Provisioning host is not configured.");
+
+        var repoPath = string.IsNullOrWhiteSpace(config.SweAfRepoPath)
+            ? DefaultSweAfRepoPath
+            : config.SweAfRepoPath;
+        var cmd = $"cd {repoPath} && docker compose --project-name {projectName} logs --tail={lines} --no-color 2>&1";
+        var (stdout, stderr, exitCode) = IsLocalHost(config.ProvisionHost!)
+            ? await ExecLocalShellAsync(cmd, ct)
+            : await ExecSshShellAsync(config, cmd, ct);
+
+        if (exitCode != 0)
+        {
+            var err = (stderr ?? stdout ?? "docker compose logs failed").Trim();
+            logger.LogWarning("docker compose logs failed (project={Project}): {Error}", projectName, err);
+            return (null, err);
+        }
+
+        return (stdout?.Trim(), null);
     }
 
     private static List<string> ParseComposeProjectNames(string? json)

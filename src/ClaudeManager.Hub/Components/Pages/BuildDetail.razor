@@ -122,64 +122,85 @@
             </div>
         }
         
-        @if (_job.Status == BuildStatus.Running)
+        @if (_job.Status is BuildStatus.Running or BuildStatus.Waiting)
         {
             <div id="agentfield-execution" title="AgentField Workflow Execution" data-workflow-execution="true"
                  class="build-detail-section agentfield-execution">
-                <iframe src="@_job.ControlPlaneUrl/index.html?execution_id=@_job.ExternalJobId"
-                        class="agentfield-iframe"
-                        style="width: 100%; height: 500px; min-height: 500px; border: 1px solid #ccc; display: block;"
-                        scrolling="no"></iframe>
+                @if (_job.ControlPlaneUrl is not null)
+                {
+                    <iframe src="@(_job.ControlPlaneUrl)/ui/workflows/@_job.ExternalJobId"
+                            class="agentfield-iframe"
+                            style="width: 100%; height: 500px; min-height: 500px; border: 1px solid #ccc; display: block;"
+                            scrolling="no"></iframe>
+                }
+                else
+                {
+                    <div class="build-detail-fetch-error">AgentField UI not available — control plane URL not set for this build.</div>
+                }
             </div>
         }
 
         @* ── Build logs widget ── *@
-        @if (_job.Logs is null)
-        {
-            <div class="build-detail-section">
-                <div class="build-detail-section-header">
-                    <h3>Build Logs</h3>
-                    <span class="build-detail-section-header-actions"></span>
-                </div>
-                <div class="build-log-container">
-                    <div class="build-log-empty">No build logs are currently available.</div>
-                </div>
-            </div>
-        }
-        else
-        {
-            <div class="build-detail-section">
-                <div class="build-detail-section-header">
-                    <h3>Build Logs</h3>
-                    <div class="build-log-actions">
-                        <button class="btn-secondary-sm" @onclick="RefreshLogs" disabled="@_detailLoading">
-                            Refresh
-                        </button>
-                        @* <button class="btn-secondary-sm" @onclick="CopyLogs" disabled="@_detailLoading"> *@
-                        @*     Copy *@
-                        @* </button> *@
-                        <button class="btn-secondary-sm" @onclick="DownloadLogs" disabled="@_detailLoading">
+        <div class="build-detail-section">
+            <div class="build-detail-section-header">
+                <h3>Build Logs</h3>
+                <div class="build-log-actions">
+                    <button class="btn-secondary-sm" @onclick="RefreshLogs" disabled="@_logsLoading">
+                        @(_logsLoading ? "Loading…" : "Refresh")
+                    </button>
+                    @if (_job.Logs is not null)
+                    {
+                        <button class="btn-secondary-sm" @onclick="DownloadLogs" disabled="@_logsLoading">
                             Download
                         </button>
-                    </div>
+                    }
                 </div>
+            </div>
+            @if (_logsError is not null)
+            {
+                <div class="build-detail-fetch-error">@_logsError</div>
+            }
+            <div class="build-log-container">
+                @if (string.IsNullOrEmpty(_job.Logs))
+                {
+                    <div class="build-log-empty">No build logs are currently available. Click Refresh to fetch from Foundry.</div>
+                }
+                else
+                {
+                    var parsedLogs = LogParser.ParseLogMessages(_job.Logs);
+                    foreach (var log in parsedLogs)
+                    {
+                        <div class="build-log-cached">
+                            <span class="build-log-timestamp">@log.Timestamp.ToString("HH:mm:ss.fff")</span>
+                            <span class="build-log-content">@log.Content</span>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+
+        @* ── Container logs ── *@
+        @if (_job.ComposeProjectName is not null)
+        {
+            <div class="build-detail-section">
+                <div class="build-detail-section-header">
+                    <h3>Container Logs</h3>
+                    <button class="btn-secondary-sm" @onclick="RefreshContainerLogs" disabled="@_containerLogsLoading">
+                        @(_containerLogsLoading ? "Loading…" : "Refresh")
+                    </button>
+                </div>
+                @if (_containerLogsError is not null)
+                {
+                    <div class="build-detail-fetch-error">@_containerLogsError</div>
+                }
                 <div class="build-log-container">
-                    @{
-                        if (string.IsNullOrEmpty(_job.Logs))
-                        {
-                            <div class="build-log-empty">No build logs are currently available.</div>
-                        }
-                        else
-                        {
-                            var parsedLogs = LogParser.ParseLogMessages(_job.Logs);
-                            foreach (var log in parsedLogs)
-                            {
-                                <div class="build-log-cached">
-                                    <span class="build-log-timestamp">@log.Timestamp.ToString("HH:mm:ss.fff")</span>
-                                    <span class="build-log-content">@log.Content</span>
-                                </div>
-                            }
-                        }
+                    @if (string.IsNullOrEmpty(_containerLogs))
+                    {
+                        <div class="build-log-empty">Click Refresh to fetch Docker container output.</div>
+                    }
+                    else
+                    {
+                        <pre class="build-detail-pre">@_containerLogs</pre>
                     }
                 </div>
             </div>
@@ -223,6 +244,13 @@
     private string? _detailError;
     private bool   _actionBusy;
     private string? _actionError;
+
+    private bool    _logsLoading;
+    private string? _logsError;
+
+    private string? _containerLogs;
+    private bool    _containerLogsLoading;
+    private string? _containerLogsError;
 
     protected override async Task OnInitializedAsync()
     {
@@ -301,64 +329,57 @@
     private async Task RefreshLogs()
     {
         if (_job is null) return;
-        if (string.IsNullOrEmpty(_job.ExternalJobId)) return;
 
-        _detailLoading = true;
+        _logsLoading = true;
+        _logsError   = null;
         StateHasChanged();
 
         try
         {
-            var detail = await BuildsSvc.FetchExecutionDetailAsync(_job.ExternalJobId);
-            if (detail is not null)
-            {
-                // Update job logs directly and save to database
-                _job.Logs = detail.Logs;
-                await using var db = await BuildsSvc.DbContextFactory.CreateDbContextAsync();
-                db.SweAfJobs.Update(_job);
-                await db.SaveChangesAsync();
-            }
+            var (logs, error) = await BuildsSvc.RefreshAndCacheLogsAsync(_job.Id);
+            if (error is not null)
+                _logsError = error;
+            else
+                _job.Logs = logs;
         }
         catch (Exception ex)
         {
-            _detailError = $"Failed to refresh logs: {ex.Message}";
+            _logsError = $"Failed to refresh logs: {ex.Message}";
         }
         finally
         {
-            _detailLoading = false;
-            StateHasChanged();
+            _logsLoading = false;
         }
     }
-    //
-    // private async Task CopyLogs()
-    // {
-    //     if (_job.Logs is null || string.IsNullOrEmpty(_job.Logs))
-    //         return;
-    //
-    //     await Clipboard.SetDataAsync(_job.Logs);
-    // }
+
+    private async Task RefreshContainerLogs()
+    {
+        if (_job is null) return;
+
+        _containerLogsLoading = true;
+        _containerLogsError   = null;
+        StateHasChanged();
+
+        try
+        {
+            var (logs, error) = await BuildsSvc.GetContainerLogsAsync(_job.Id);
+            if (error is not null) _containerLogsError = error;
+            else _containerLogs = logs;
+        }
+        catch (Exception ex)
+        {
+            _containerLogsError = $"Failed to fetch container logs: {ex.Message}";
+        }
+        finally
+        {
+            _containerLogsLoading = false;
+        }
+    }
 
     private async Task DownloadLogs()
     {
-        if (_job.Logs is null || string.IsNullOrEmpty(_job.Logs))
-            return;
-
-        const string jsScript = @"
-            function downloadLogs() {
-                var blob = new Blob(['@(Html.Raw(_job.Logs))'], { type: 'text/plain;charset=utf-8' });
-                var url = URL.createObjectURL(blob);
-                var a = document.createElement('a');
-                a.href = url;
-                a.download = 'build-logs.txt';
-                a.style.display = 'none';
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
-            }
-            downloadLogs();
-        ";
-
-        await JSRuntime.InvokeVoidAsync("eval", jsScript);
+        if (string.IsNullOrEmpty(_job?.Logs)) return;
+        await JSRuntime.InvokeVoidAsync("claudeManager.downloadText", "build-logs.txt", _job.Logs);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────

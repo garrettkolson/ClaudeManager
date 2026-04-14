@@ -88,6 +88,7 @@ builder.Services.AddSingleton<SweAfService>();
 builder.Services.AddSingleton<SweAfHostService>();
 builder.Services.AddHostedService<SweAfRecoveryService>();
 builder.Services.AddSingleton<NotificationService>();
+builder.Services.AddSingleton<ILogParser, LogParser>();
 
 // ── SignalR ───────────────────────────────────────────────────────────────────
 

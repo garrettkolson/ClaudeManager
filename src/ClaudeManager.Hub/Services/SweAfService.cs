@@ -139,7 +139,17 @@ public class SweAfService
             cfg,
             JsonContent.Create(payload));
 
-        var resp = await Http().SendAsync(request, ct);
+        HttpResponseMessage resp;
+        try
+        {
+            resp = await Http().SendAsync(request, ct);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Webhook registration HTTP call failed: {Message}", ex.Message);
+            return (false, ex.Message);
+        }
+
         if (!resp.IsSuccessStatusCode)
         {
             _logger.LogWarning("Webhook registration returned {Status}", (int)resp.StatusCode);
@@ -233,6 +243,12 @@ public class SweAfService
             throw new InvalidOperationException($"Control plane provisioning failed: {provError}");
         }
 
+        // Persist ControlPlaneUrl immediately so the detail page can show the iframe
+        // while the container is still starting up (before health check completes).
+        job.ControlPlaneUrl = controlPlaneUrl;
+        await setupDb.SaveChangesAsync();
+        _notifier.NotifyBuildChanged(job);
+
         // Wait for the container to be ready
         progress?.Report("Waiting for agent server to be ready… (0s)");
         await LogStep("Waiting for agent server to be ready…");
@@ -254,7 +270,6 @@ public class SweAfService
         }
 
         var waitElapsed = (int)(DateTimeOffset.UtcNow - waitStart).TotalSeconds;
-        job.ControlPlaneUrl = controlPlaneUrl;
 
         progress?.Report("Registering webhook…");
         await LogStep($"Agent server ready ({waitElapsed}s). Registering webhook…");
@@ -512,6 +527,44 @@ public class SweAfService
             return (null, "Failed to fetch logs from AgentField.");
 
         return (detail.Logs, null);
+    }
+
+    /// <summary>
+    /// Fetches the latest AgentField execution logs and persists them to the job record.
+    /// Used by the detail page Refresh button so the cached value stays fresh.
+    /// </summary>
+    public async Task<(string? Logs, string? Error)> RefreshAndCacheLogsAsync(
+        long jobId, CancellationToken ct = default)
+    {
+        var (logs, error) = await GetLogsAsync(jobId, ct: ct);
+        if (error is not null) return (null, error);
+
+        if (logs is not null)
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            var job = await db.SweAfJobs.FindAsync([jobId], ct);
+            if (job is not null)
+            {
+                job.Logs = logs;
+                await db.SaveChangesAsync(ct);
+            }
+        }
+
+        return (logs, null);
+    }
+
+    /// <summary>
+    /// Fetches the last <paramref name="lines"/> lines of combined Docker container output
+    /// for the Compose project associated with this build.
+    /// </summary>
+    public async Task<(string? Logs, string? Error)> GetContainerLogsAsync(
+        long jobId, int lines = 200, CancellationToken ct = default)
+    {
+        var job = await GetJobAsync(jobId, ct);
+        if (job is null) return (null, "Job not found.");
+        if (string.IsNullOrWhiteSpace(job.ComposeProjectName))
+            return (null, "No container associated with this build.");
+        return await _provisioningSvc.GetContainerLogsAsync(job.ComposeProjectName, lines, ct);
     }
 
     // ── Job control ───────────────────────────────────────────────────────────
