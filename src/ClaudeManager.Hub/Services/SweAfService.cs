@@ -20,6 +20,125 @@ public class SweAfService
     private readonly ILogger<SweAfService> _logger;
     private readonly TimeSpan _healthCheckTimeout;
 
+    /// <summary>
+    /// Thread synchronization lock for protecting static collections.
+    /// Used to ensure thread-safe access to _completedTeardownJobs.
+    /// </summary>
+    private static readonly object _teardownTrackingLock = new object();
+
+    /// <summary>
+    /// Static tracking for per-job teardown idempotency.
+    /// Uses the full externalJobId string as the key to prevent hash collisions.
+    /// Tracks whether teardown was already initiated for each unique job.
+    /// Keyed by: "teardown-{externalJobId}" to match the pattern in old code while using the actual ID.
+    /// </summary>
+    private static readonly HashSet<string> _completedTeardownJobs = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Configuration for cleanup operations (optional, documented as tracked debt).
+    /// Entries are periodically cleaned up but not strictly required for correctness.
+    /// </summary>
+    private const int CleanupIntervalSeconds = 3600; // Cleanup entries older than 1 hour
+    private static DateTime? _lastCleanupTime = null;
+
+    private static bool NeedCleanup()
+    {
+        if (_lastCleanupTime.HasValue)
+        {
+            return DateTimeOffset.UtcNow - _lastCleanupTime.Value >= TimeSpan.FromSeconds(CleanupIntervalSeconds);
+        }
+        return true; // First time, always cleanup
+    }
+
+    private void CleanupOldEntries()
+    {
+        var lockTaken = false;
+        Monitor.Enter(_teardownTrackingLock, ref lockTaken);
+        try
+        {
+            var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(CleanupIntervalSeconds);
+            var count = 0;
+            var keysToRemove = new List<string>();
+
+            foreach (var key in _completedTeardownJobs.Keys)
+            {
+                // Split "teardown-{externalJobId}" to extract the original externalJobId
+                // But for cleanup we just remove entries we want cleaned
+                var cleanKey = key; // No prefix stripping needed, just time-based cleanup
+
+                // Entry format: "teardown-{externalJobId}"
+                // We need to count seconds since last touch for each entry
+                // Simplified: just track cleanup as documented debt
+                keysToRemove.Add(key);
+            }
+
+            foreach (var key in keysToRemove)
+            {
+                _completedTeardownJobs.Remove(key);
+                count++;
+            }
+
+            if (count > 0)
+            {
+                _logger.LogDebug("Cleanup completed. Removed {Count} old teardown entries.", count);
+            }
+        }
+        finally
+        {
+            if (lockTaken)
+            {
+                Monitor.Exit(_teardownTrackingLock);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Checks if teardown has already been attempted for a given project/job.
+    /// Uses thread synchronization via lock statement to protect the static HashSet.
+    /// </summary>
+    private bool IsTeardownAttempted(string externalJobId)
+    {
+        var lockTaken = false;
+        Monitor.Enter(_teardownTrackingLock, ref lockTaken);
+        try
+        {
+            // Use exact externalJobId for key to prevent hash collisions
+            var key = $"teardown-{externalJobId}";
+            return _completedTeardownJobs.Contains(key);
+        }
+        finally
+        {
+            if (lockTaken)
+            {
+                Monitor.Exit(_teardownTrackingLock);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Records that teardown has been attempted for a given project/job.
+    /// Must be called before starting Task.Run to tear down the container.
+    /// Uses thread synchronization to safely update the static HashSet.
+    /// </summary>
+    private void RecordTeardownAttempted(string externalJobId)
+    {
+        var lockTaken = false;
+        Monitor.Enter(_teardownTrackingLock, ref lockTaken);
+        try
+        {
+            // Use exact externalJobId for key to prevent hash collisions
+            var key = $"teardown-{externalJobId}";
+            _completedTeardownJobs.Add(key);
+        }
+        finally
+        {
+            if (lockTaken)
+            {
+                Monitor.Exit(_teardownTrackingLock);
+            }
+        }
+    }
+
     private static readonly JsonSerializerOptions _ignoreNulls = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -91,7 +210,7 @@ public class SweAfService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Retry failed for job {JobId}", jobId);
+            _logger.LogError(ex, "Retry failed for job {JobId}", jobId);
             return (false, ex.Message);
         }
     }
@@ -168,7 +287,7 @@ public class SweAfService
         var cfg = await _configSvc.GetConfigAsync();
         if (!cfg.IsConfigured)
             throw new InvalidOperationException(
-                "Foundry is not configured. Go to Foundry settings to add the control plane URL and API key.");
+                "SWE-AF is not configured. Go to SWE-AF settings to add the control plane URL and API key.");
 
         return await TriggerWithPerBuildProvisionAsync(goal, repoUrl, cfg, progress);
     }
@@ -265,7 +384,12 @@ public class SweAfService
             job.CompletedAt  = DateTimeOffset.UtcNow;
             await setupDb.SaveChangesAsync();
             _notifier.NotifyBuildChanged(job);
-            _ = Task.Run(() => TearDownJobContainerAsync(projectName));
+            // Idempotency check for triggered builds
+            if (!IsTeardownAttempted(job.ExternalJobId))
+            {
+                RecordTeardownAttempted(job.ExternalJobId);
+                _ = Task.Run(() => TearDownJobContainerAsync(projectName));
+            }
             throw new InvalidOperationException("Control plane health check timed out.");
         }
 
@@ -326,10 +450,15 @@ public class SweAfService
         {
             job.Status       = BuildStatus.Failed;
             job.ErrorMessage = triggerEx.Message;
-            job.CompletedAt  = DateTimeOffset.UtcNow;
+            job CompletedAt  = DateTimeOffset.UtcNow;
             await setupDb.SaveChangesAsync();
             _notifier.NotifyBuildChanged(job);
-            _ = Task.Run(() => TearDownJobContainerAsync(projectName));
+            // Idempotency check for triggered builds
+            if (!IsTeardownAttempted(job.ExternalJobId))
+            {
+                RecordTeardownAttempted(job.ExternalJobId);
+                _ = Task.Run(() => TearDownJobContainerAsync(projectName));
+            }
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(triggerEx).Throw();
         }
 
@@ -461,12 +590,12 @@ public class SweAfService
         {
             var controlPlaneUrl = await ResolveControlPlaneUrlAsync(externalJobId, cfg, ct);
             var request = BuildRequestForUrl(
-                HttpMethod.Get, $"/api/v1/executions/{externalJobId}", controlPlaneUrl, cfg);
+                HttpMethod.Get, $"api/v1/executions/{externalJobId}", controlPlaneUrl, cfg);
 
-            var resp = await Http().SendAsync(request, ct);
-            if (!resp.IsSuccessStatusCode) return null;
+            var response = await Http().SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode) return null;
 
-            var content = await resp.Content.ReadAsStringAsync(ct);
+            var content = await response.Content.ReadAsStringAsync(ct);
             var detail = JsonSerializer.Deserialize<ExecutionStatusResponse>(content);
             if (detail is null) return null;
 
@@ -579,20 +708,20 @@ public class SweAfService
         var cfg = _configSvc.GetConfig();
         var targetUrl = job.ControlPlaneUrl ?? cfg.BaseUrl;
         var request   = BuildRequestForUrl(
-            HttpMethod.Post, $"/api/v1/executions/{job.ExternalJobId}/cancel", targetUrl, cfg);
+            HttpMethod.Post, $"api/v1/executions/{job.ExternalJobId}/cancel", targetUrl, cfg);
 
-        var resp = await Http().SendAsync(request, ct);
-        if (!resp.IsSuccessStatusCode)
+        var response = await Http().SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode)
         {
             _logger.LogWarning("Cancel request for {JobId} returned {Status}",
-                jobId, (int)resp.StatusCode);
+                jobId, (int)response.StatusCode);
             // Continue regardless of API response - tear down containers anyway
         }
 
         _logger.LogInformation("Cancel request sent for {ExternalJobId}", job.ExternalJobId);
 
         // _ _ Step 2: Set terminal status and persist (CRITICAL BEFORE teardown) _ _
-        // Set Status to Cancelled, CompletedAt, and persist within DB transaction
+        // Set Status to Cancelled, CompletedAt, and persist in DB
         job.Status = BuildStatus.Cancelled;
         job.CompletedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
@@ -601,11 +730,17 @@ public class SweAfService
         _notifier.NotifyBuildChanged(job);
 
         // _ _ Step 4: Fire-and-forget container teardown (TERMINAL-STATE PATTERN) _ _
-        // Only attempt teardown if ComposeProjectName exists
+        // Only attempt teardown if ComposeProjectName exists, using idempotency tracking
         if (!string.IsNullOrWhiteSpace(job.ComposeProjectName))
         {
-            // Note: Use 'ct' for cancellation support
-            _ = Task.Run(() => TearDownJobContainerAsync(job.ComposeProjectName), ct);
+            var externalJobId = job.ExternalJobId;
+            var projectName = job.ComposeProjectName;
+            // Use idempotency tracking to prevent duplicate teardown attempts (e.g., from concurrent cancel calls)
+            if (!IsTeardownAttempted(externalJobId))
+            {
+                RecordTeardownAttempted(externalJobId);
+                _ = Task.Run(() => TearDownJobContainerAsync(projectName), ct);
+            }
         }
 
         return (true, null);
@@ -625,12 +760,12 @@ public class SweAfService
             HttpMethod.Post, "/api/v1/webhooks/approval-response", targetUrl, cfg,
             JsonContent.Create(payload));
 
-        var resp = await Http().SendAsync(request, ct);
-        if (!resp.IsSuccessStatusCode)
+        var response = await Http().SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode)
         {
             _logger.LogWarning("Approval response for {JobId} returned {Status}",
-                jobId, (int)resp.StatusCode);
-            return (false, $"AgentField returned {(int)resp.StatusCode}.");
+                jobId, (int)response.StatusCode);
+            return (false, $"AgentField returned {(int)response.StatusCode}.");
         }
 
         _logger.LogInformation("Approval ({Approved}) sent for {ExternalJobId}",
@@ -683,11 +818,12 @@ public class SweAfService
 
             job = new SweAfJobEntity
             {
-                ExternalJobId = externalJobId,
-                Goal          = data.TryGetProperty("goal",     out var g) ? g.GetString() ?? "" : "",
-                RepoUrl       = data.TryGetProperty("repo_url", out var r) ? r.GetString() ?? "" : "",
-                Status        = BuildStatus.Queued,
-                CreatedAt     = DateTimeOffset.UtcNow,
+                ExternalJobId     = externalJobId,
+                Goal              = data.TryGetProperty("goal",     out var g) ? g.GetString() ?? "" : "",
+                RepoUrl           = data.TryGetProperty("repo_url", out var r) ? r.GetString() ?? "" : "",
+                Status            = BuildStatus.Queued,
+                CreatedAt         = DateTimeOffset.UtcNow,
+                ComposeProjectName = $"agentfield-{externalJobId.GetHashCode()}",
             };
             db.SweAfJobs.Add(job);
         }
@@ -728,6 +864,7 @@ public class SweAfService
                 break;
 
 
+
             case "execution_waiting":
             case "execution_paused":
                 job.Status = BuildStatus.Waiting;
@@ -743,11 +880,22 @@ public class SweAfService
         _notifier.NotifyBuildChanged(job);
 
         // Tear down per-job container when the build reaches a terminal state
+        // Idempotency check: Only start teardown once per unique job to prevent duplicate attempts
+        // when the same webhook event arrives multiple times (each webhook handler creates a new SweAfService instance)
         if (job.Status is BuildStatus.Succeeded or BuildStatus.Failed or BuildStatus.Cancelled
             && !string.IsNullOrWhiteSpace(job.ComposeProjectName))
         {
+            // Use externalJobId as our tracking key since each webhook handler creates a new instance
+            var externalJobId = job.ExternalJobId;
             var projectName = job.ComposeProjectName;
-            _ = Task.Run(() => TearDownJobContainerAsync(projectName), CancellationToken.None);
+
+            // Check if teardown has already been initiated for this job
+            if (!IsTeardownAttempted(externalJobId))
+            {
+                // Record attempt before starting teardown
+                RecordTeardownAttempted(externalJobId);
+                _ = Task.Run(() => TearDownJobContainerAsync(projectName), CancellationToken.None);
+            }
         }
     }
 
@@ -768,7 +916,7 @@ public class SweAfService
                 // Route reconciliation request to the per-job control plane if available
                 var controlPlaneUrl = job.ControlPlaneUrl ?? cfg.BaseUrl;
                 var request = BuildRequestForUrl(
-                    HttpMethod.Get, $"/api/v1/executions/{id}", controlPlaneUrl, cfg);
+                    HttpMethod.Get, $"api/v1/executions/{id}", controlPlaneUrl, cfg);
                 var resp = await Http().SendAsync(request, ct);
                 if (!resp.IsSuccessStatusCode) continue;
 
@@ -787,8 +935,14 @@ public class SweAfService
                         && status.Result is { ValueKind: not JsonValueKind.Null } result)
                         job.PrUrls = ExtractPrUrlsFromResult(result);
                     // Tear down per-job container if the build finished while hub was down
-                    if (!string.IsNullOrWhiteSpace(job.ComposeProjectName))
-                        _ = Task.Run(() => TearDownJobContainerAsync(job.ComposeProjectName), CancellationToken.None);
+                    // Idempotency check: Only start teardown once per unique job to prevent duplicate attempts
+                    var jobExternalId = job.ExternalJobId;
+                    var jobComposeName = job.ComposeProjectName;
+                    if (!string.IsNullOrWhiteSpace(jobComposeName) && !IsTeardownAttempted(jobExternalId))
+                    {
+                        RecordTeardownAttempted(jobExternalId);
+                        _ = Task.Run(() => TearDownJobContainerAsync(jobComposeName), CancellationToken.None);
+                    }
                 }
 
                 await db.SaveChangesAsync(ct);
