@@ -1,3 +1,4 @@
+using System.Linq;
 using ClaudeManager.Hub.Persistence.Entities;
 using ClaudeManager.Hub.Services;
 using FluentAssertions;
@@ -20,6 +21,63 @@ public class NginxProxyServiceTests
         Quantization = "none",
         Status       = status,
     };
+
+    // ── GenerateConfig — status filtering ──────────────────────────────────────
+
+    [Test]
+    public void GenerateConfig_OnlyRunningDeployments_InUpstream()
+    {
+        // Verify that only Running deployments are included in nginx upstream
+        var running = new[] { MakeDeployment("running-model-a", 8001) };
+        var stopped = new[] { MakeDeployment("stopped-model-b", 8002, LlmDeploymentStatus.Stopped) };
+        var error = new[] { MakeDeployment("error-model-c", 8003, LlmDeploymentStatus.Error) };
+        var starting = new[] { MakeDeployment("starting-model-d", 8004, LlmDeploymentStatus.Starting) };
+
+        var allDeployments = running.Concat(stopped).Concat(error).Concat(starting).ToList();
+        var onlyRunning = allDeployments.Where(d => d.Status == LlmDeploymentStatus.Running)
+            .ToList();
+
+        var config = NginxProxyService.GenerateConfig(onlyRunning, proxyPort: 8080);
+
+        config.Should().Contain("server 127.0.0.1:8001");
+        config.Should().NotContain("server 127.0.0.1:8002");
+        config.Should().NotContain("server 127.0.0.1:8003");
+        config.Should().NotContain("server 127.0.0.1:8004");
+    }
+
+    [Test]
+    public void GenerateConfig_EmptyDeployments_Returns503()
+    {
+        // Verify that no deployments returns 503 response
+        var config = NginxProxyService.GenerateConfig([], proxyPort: 8080);
+
+        config.Should().Contain("503");
+        config.Should().Contain("No vLLM instances are currently running");
+    }
+
+    [Test]
+    public void GenerateConfig_NoStoppedDeployments_InConfig()
+    {
+        var stopped = new[] { MakeDeployment("stopped", 8001, LlmDeploymentStatus.Stopped) };
+        var running = new[] { MakeDeployment("running", 8002, LlmDeploymentStatus.Running) };
+
+        var config = NginxProxyService.GenerateConfig(running, proxyPort: 8080);
+
+        config.Should().Contain("server 127.0.0.1:8002");
+        config.Should().NotContain("server 127.0.0.1:8001");
+    }
+
+    [Test]
+    public void GenerateConfig_NoErrorDeployments_InConfig()
+    {
+        var error = new[] { MakeDeployment("error", 8001, LlmDeploymentStatus.Error) };
+        var running = new[] { MakeDeployment("running", 8002, LlmDeploymentStatus.Running) };
+
+        var config = NginxProxyService.GenerateConfig(running, proxyPort: 8080);
+
+        config.Should().Contain("server 127.0.0.1:8002");
+        config.Should().NotContain("server 127.0.0.1:8001");
+    }
 
     // ── GenerateConfig — no deployments ──────────────────────────────────────
 

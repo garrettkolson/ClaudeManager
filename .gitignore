@@ -46,6 +46,11 @@ secrets.json
 appsettings.Local.json
 appsettings.*.local.json
 
+# Environment files
+.env
+.env.local
+.env.*.local
+
 # Runtime data
 *.db
 *.db-shm
