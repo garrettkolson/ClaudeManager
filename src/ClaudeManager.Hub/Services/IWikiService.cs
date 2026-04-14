@@ -32,4 +32,12 @@ public interface IWikiService
         string query,
         int k = 5,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// AC-2, AC-8: Populates vector index with embeddings for all active wiki entries on creation or update.
+    /// Generates embeddings for entries that don't have them using IEmbeddingService.GenerateAsync.
+    /// </summary>
+    /// <param name="ct">Cancellation token for async operations.</param>
+    /// <returns>Task representing the initialization operation.</returns>
+    Task InitVectorIndexAsync(CancellationToken ct = default);
 }
