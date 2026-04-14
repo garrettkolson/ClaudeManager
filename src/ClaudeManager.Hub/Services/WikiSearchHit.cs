@@ -9,12 +9,12 @@ namespace ClaudeManager.Hub.Services;
 public record WikiSearchHit
 {
     /// <summary>The matched wiki entry.</summary>
-    public WikiEntryEntity Entry { get; set; } = default!;
+    public WikiEntryEntity Entry { get; init; } = default!;
 
     /// <summary>
     /// Similarity score in range 0.0-1.0.
     /// For vector search: cosine similarity.
     /// For keyword search: keyword-based relevance score.
     /// </summary>
-    public float Similarity { get; set; }
+    public float Similarity { get; init; }
 }
