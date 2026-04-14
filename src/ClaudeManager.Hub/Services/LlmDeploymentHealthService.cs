@@ -13,7 +13,7 @@ namespace ClaudeManager.Hub.Services;
 /// </summary>
 public class LlmDeploymentHealthService : BackgroundService
 {
-    private const int MaxAutoRestarts = 3;
+    public const int MaxAutoRestarts = 3;
     private const int PollIntervalSeconds = 30;
     private const int HealthCheckTimeoutSeconds = 5;
 
@@ -178,7 +178,7 @@ public class LlmDeploymentHealthService : BackgroundService
         await SaveAndNotifyAsync(deployment, ct);
     }
 
-    private async Task HandleUnhealthyAsync(
+    public async Task HandleUnhealthyAsync(
         LlmDeploymentEntity deployment, GpuHostEntity host, string reason, CancellationToken ct)
     {
         _logger.LogWarning(

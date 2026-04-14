@@ -155,6 +155,9 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("TEXT");
 
+                    b.Property<double?>("GpuMemoryUtilization")
+                        .HasColumnType("REAL");
+
                     b.Property<string>("GpuIndices")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -196,10 +199,21 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                     b.Property<int>("RestartCount")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("ServedModelName")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ShmSize")
+                        .HasMaxLength(10)
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTimeOffset?>("StartedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("UseHostNetwork")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");

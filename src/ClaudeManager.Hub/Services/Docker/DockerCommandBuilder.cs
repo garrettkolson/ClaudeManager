@@ -20,6 +20,7 @@ public class DockerCommandBuilder
     private string _containerPort = "8000";
     private string _restartPolicy = "no";
     private bool _detached = true;
+    private bool _interactive = false;
     private string[] _commandArgs = [];
     private bool _requiresSudo = false;
     private string? _sudoPassword = null;
@@ -57,6 +58,26 @@ public class DockerCommandBuilder
     public DockerCommandBuilder InInteractiveMode()
     {
         _detached = false;
+        return this;
+    }
+
+    /// <summary>
+    /// Runs the container in interactive detached mode (-itd).
+    /// Keeps stdin open and allocates a pseudo-TTY while running in the background.
+    /// </summary>
+    public DockerCommandBuilder WithInteractiveDetached()
+    {
+        _detached = true;
+        _interactive = true;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the shared memory size (--shm-size), e.g. "16G".
+    /// </summary>
+    public DockerCommandBuilder WithShmSize(string size)
+    {
+        _flags.Add($"--shm-size {size}");
         return this;
     }
 
@@ -216,7 +237,7 @@ public class DockerCommandBuilder
         var args = new List<string> { "run" };
 
         if (_detached)
-            args.Add("-d");
+            args.Add(_interactive ? "-itd" : "-d");
 
         args.Add($"--name {_containerName}");
 

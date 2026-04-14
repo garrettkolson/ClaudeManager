@@ -60,7 +60,7 @@ public class SweAfService
             var count = 0;
             var keysToRemove = new List<string>();
 
-            foreach (var key in _completedTeardownJobs.Keys)
+            foreach (var key in _completedTeardownJobs)
             {
                 // Split "teardown-{externalJobId}" to extract the original externalJobId
                 // But for cleanup we just remove entries we want cleaned
@@ -450,7 +450,7 @@ public class SweAfService
         {
             job.Status       = BuildStatus.Failed;
             job.ErrorMessage = triggerEx.Message;
-            job CompletedAt  = DateTimeOffset.UtcNow;
+            job.CompletedAt  = DateTimeOffset.UtcNow;
             await setupDb.SaveChangesAsync();
             _notifier.NotifyBuildChanged(job);
             // Idempotency check for triggered builds
@@ -886,14 +886,14 @@ public class SweAfService
             && !string.IsNullOrWhiteSpace(job.ComposeProjectName))
         {
             // Use externalJobId as our tracking key since each webhook handler creates a new instance
-            var externalJobId = job.ExternalJobId;
+            var extJobId = job.ExternalJobId;
             var projectName = job.ComposeProjectName;
 
             // Check if teardown has already been initiated for this job
-            if (!IsTeardownAttempted(externalJobId))
+            if (!IsTeardownAttempted(extJobId))
             {
                 // Record attempt before starting teardown
-                RecordTeardownAttempted(externalJobId);
+                RecordTeardownAttempted(extJobId);
                 _ = Task.Run(() => TearDownJobContainerAsync(projectName), CancellationToken.None);
             }
         }

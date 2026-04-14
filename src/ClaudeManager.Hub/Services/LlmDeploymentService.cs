@@ -63,22 +63,28 @@ public class LlmDeploymentService
         string hostId, string modelId, string gpuIndices, int hostPort,
         string quantization = "none", string imageTag = "latest",
         string? extraArgs = null, string? hfTokenOverride = null,
-        int? maxModelLen = null)
+        int? maxModelLen = null, bool useHostNetwork = false,
+        string? shmSize = null, string? servedModelName = null,
+        double? gpuMemoryUtilization = null)
     {
         var entity = new LlmDeploymentEntity
         {
-            DeploymentId    = Guid.NewGuid().ToString("N")[..12],
-            HostId          = hostId,
-            ModelId         = modelId.Trim(),
-            GpuIndices      = gpuIndices.Trim(),
-            HostPort        = hostPort,
-            Quantization    = quantization,
-            ImageTag        = string.IsNullOrWhiteSpace(imageTag) ? "latest" : imageTag.Trim(),
-            ExtraArgs       = string.IsNullOrWhiteSpace(extraArgs) ? null : extraArgs.Trim(),
-            HfTokenOverride = string.IsNullOrWhiteSpace(hfTokenOverride) ? null : hfTokenOverride.Trim(),
-            MaxModelLen     = maxModelLen > 0 ? maxModelLen : null,
-            Status         = LlmDeploymentStatus.Stopped,
-            CreatedAt      = DateTimeOffset.UtcNow,
+            DeploymentId         = Guid.NewGuid().ToString("N")[..12],
+            HostId               = hostId,
+            ModelId              = modelId.Trim(),
+            GpuIndices           = gpuIndices.Trim(),
+            HostPort             = hostPort,
+            Quantization         = quantization,
+            ImageTag             = string.IsNullOrWhiteSpace(imageTag) ? "latest" : imageTag.Trim(),
+            ExtraArgs            = string.IsNullOrWhiteSpace(extraArgs) ? null : extraArgs.Trim(),
+            HfTokenOverride      = string.IsNullOrWhiteSpace(hfTokenOverride) ? null : hfTokenOverride.Trim(),
+            MaxModelLen          = maxModelLen > 0 ? maxModelLen : null,
+            UseHostNetwork       = useHostNetwork,
+            ShmSize              = string.IsNullOrWhiteSpace(shmSize) ? null : shmSize.Trim(),
+            ServedModelName      = string.IsNullOrWhiteSpace(servedModelName) ? null : servedModelName.Trim(),
+            GpuMemoryUtilization = gpuMemoryUtilization,
+            Status               = LlmDeploymentStatus.Stopped,
+            CreatedAt            = DateTimeOffset.UtcNow,
         };
 
         await using var db = _dbFactory.CreateDbContext();

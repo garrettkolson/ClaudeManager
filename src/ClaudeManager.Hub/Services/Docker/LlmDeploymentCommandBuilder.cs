@@ -12,7 +12,10 @@ public record LlmDeploymentConfig(
     int? MaxModelLen = null,
     int? TensorParallelSize = null,
     string? ExtraArgs = null,
-    string? HfToken = null
+    string? HfToken = null,
+    string? ServedModelName = null,
+    double? GpuMemoryUtilization = null,
+    bool UseHostNetwork = false
 );
 
 /// <summary>
@@ -39,11 +42,15 @@ public class LlmDeploymentCommandBuilder
     }
 
     /// <summary>
-    /// Configures GPU device allocation.
+    /// Configures GPU device allocation. Pass "all" to allocate all GPUs (--gpus all),
+    /// or a comma-separated list of indices (--gpus '"device=0,1"').
     /// </summary>
     public LlmDeploymentCommandBuilder WithGpus(string gpuIndices)
     {
-        _baseBuilder.WithGpus($"device={gpuIndices}");
+        if (gpuIndices.Equals("all", StringComparison.OrdinalIgnoreCase))
+            _baseBuilder.WithFlag("--gpus all");
+        else
+            _baseBuilder.WithGpus($"device={gpuIndices}");
         return this;
     }
 
@@ -71,6 +78,25 @@ public class LlmDeploymentCommandBuilder
     public LlmDeploymentCommandBuilder WithHostPort(int hostPort)
     {
         _baseBuilder.WithPortMapping(hostPort, "8000");
+        return this;
+    }
+
+    /// <summary>
+    /// Uses host networking (--network host). vLLM binds directly to the host network stack;
+    /// no port mapping is added. Use WithModel's hostPort parameter to set the --port arg.
+    /// </summary>
+    public LlmDeploymentCommandBuilder WithHostNetwork()
+    {
+        _baseBuilder.WithHostNetwork();
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the shared memory size (--shm-size), e.g. "16G".
+    /// </summary>
+    public LlmDeploymentCommandBuilder WithShmSize(string size)
+    {
+        _baseBuilder.WithShmSize(size);
         return this;
     }
 
@@ -120,17 +146,45 @@ public class LlmDeploymentCommandBuilder
     /// </summary>
     public LlmDeploymentCommandBuilder WithModel(string modelId, string? quantization = null, int? maxModelLen = null)
     {
-        _config = new LlmDeploymentConfig(
+        _config = (_config ?? new LlmDeploymentConfig(
             ImageTag: string.Empty,
             ModelId: modelId,
-            HostPort: 0,
-            GpuIndices: null,
-            Quantization: quantization ?? string.Empty,
-            MaxModelLen: maxModelLen,
-            TensorParallelSize: null,
-            ExtraArgs: null,
-            HfToken: null
-        );
+            HostPort: 0)) with
+        {
+            ModelId = modelId,
+            Quantization = quantization ?? string.Empty,
+            MaxModelLen = maxModelLen,
+        };
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the served model name for the OpenAI-compatible API (--served-model-name).
+    /// </summary>
+    public LlmDeploymentCommandBuilder WithServedModelName(string name)
+    {
+        _config ??= new LlmDeploymentConfig(ImageTag: string.Empty, ModelId: string.Empty, HostPort: 0);
+        _config = _config with { ServedModelName = name };
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the GPU memory utilization fraction (--gpu-memory-utilization), e.g. 0.88.
+    /// </summary>
+    public LlmDeploymentCommandBuilder WithGpuMemoryUtilization(double utilization)
+    {
+        _config ??= new LlmDeploymentConfig(ImageTag: string.Empty, ModelId: string.Empty, HostPort: 0);
+        _config = _config with { GpuMemoryUtilization = utilization };
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the host port, stored on the config for use as the vLLM --port arg when using host networking.
+    /// </summary>
+    public LlmDeploymentCommandBuilder WithVllmPort(int port)
+    {
+        _config ??= new LlmDeploymentConfig(ImageTag: string.Empty, ModelId: string.Empty, HostPort: 0);
+        _config = _config with { HostPort = port, UseHostNetwork = true };
         return this;
     }
 
@@ -195,7 +249,7 @@ public class LlmDeploymentCommandBuilder
 
         var args = BuildVllmCommandArgs(_config);
         var baseCommand = _baseBuilder
-            .InDetachedMode()
+            .WithInteractiveDetached()
             .WithCommand(args)
             .Build();
 
@@ -213,7 +267,8 @@ public class LlmDeploymentCommandBuilder
         args.Add("--host");
         args.Add("0.0.0.0");
         args.Add("--port");
-        args.Add("8000");
+        // With host networking the user configures the actual host port directly; otherwise always 8000.
+        args.Add(config.UseHostNetwork && config.HostPort > 0 ? config.HostPort.ToString() : "8000");
         args.Add("--model");
         args.Add(config.ModelId);
 
@@ -233,6 +288,18 @@ public class LlmDeploymentCommandBuilder
         {
             args.Add("--max-model-len");
             args.Add(config.MaxModelLen.Value.ToString());
+        }
+
+        if (config.GpuMemoryUtilization.HasValue)
+        {
+            args.Add("--gpu-memory-utilization");
+            args.Add(config.GpuMemoryUtilization.Value.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        if (!string.IsNullOrEmpty(config.ServedModelName))
+        {
+            args.Add("--served-model-name");
+            args.Add(config.ServedModelName);
         }
 
         if (!string.IsNullOrEmpty(config.ExtraArgs))

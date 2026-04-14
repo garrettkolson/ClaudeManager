@@ -361,7 +361,13 @@
                     <select class="llm-input" @bind="_deployForm.ImageTag">
                         <option value="latest">latest (stable)</option>
                         <option value="nightly">nightly (cutting edge)</option>
+                        <option value="__custom">custom tag…</option>
                     </select>
+                    @if (_deployForm.ImageTag == "__custom")
+                    {
+                        <input class="llm-input" @bind="_deployForm.CustomImageTag"
+                               placeholder="e.g. gemma4" />
+                    }
 
                     <label class="llm-label">Quantization</label>
                     <select class="llm-input" @bind="_deployForm.Quantization">
@@ -401,6 +407,25 @@
                         <input class="llm-input llm-maxlen-input" @bind="_deployForm.MaxModelLen" type="number"
                                placeholder="leave blank for vLLM default" />
                     </div>
+
+                    <label class="llm-label">Host Network</label>
+                    <label class="llm-checkbox-label">
+                        <input type="checkbox" @bind="_deployForm.UseHostNetwork" />
+                        Use host networking (--network host)
+                    </label>
+
+                    <label class="llm-label">SHM Size</label>
+                    <input class="llm-input" @bind="_deployForm.ShmSize"
+                           placeholder="e.g. 16G (leave blank for Docker default)" />
+
+                    <label class="llm-label">Served Model Name</label>
+                    <input class="llm-input" @bind="_deployForm.ServedModelName"
+                           placeholder="e.g. gemma4-moe (optional alias for API)" />
+
+                    <label class="llm-label">GPU Memory Util.</label>
+                    <input class="llm-input" @bind="_deployForm.GpuMemoryUtilization" type="number"
+                           step="0.01" min="0.01" max="1.0"
+                           placeholder="e.g. 0.88 (leave blank for vLLM default)" />
 
                     <label class="llm-label">Extra Args</label>
                     <input class="llm-input" @bind="_deployForm.ExtraArgs"
@@ -592,7 +617,13 @@
                 <select class="llm-input" @bind="_deployEditForm.ImageTag">
                     <option value="latest">latest (stable)</option>
                     <option value="nightly">nightly (cutting edge)</option>
+                    <option value="__custom">custom tag…</option>
                 </select>
+                @if (_deployEditForm.ImageTag == "__custom")
+                {
+                    <input class="llm-input" @bind="_deployEditForm.CustomImageTag"
+                           placeholder="e.g. gemma4" />
+                }
 
                 <label class="llm-label">Quantization</label>
                 <select class="llm-input" @bind="_deployEditForm.Quantization">
@@ -604,6 +635,25 @@
                 <label class="llm-label">Max Context</label>
                 <input class="llm-input" @bind="_deployEditForm.MaxModelLen" type="number"
                        placeholder="leave blank for vLLM default" />
+
+                <label class="llm-label">Host Network</label>
+                <label class="llm-checkbox-label">
+                    <input type="checkbox" @bind="_deployEditForm.UseHostNetwork" />
+                    Use host networking (--network host)
+                </label>
+
+                <label class="llm-label">SHM Size</label>
+                <input class="llm-input" @bind="_deployEditForm.ShmSize"
+                       placeholder="e.g. 16G (leave blank for Docker default)" />
+
+                <label class="llm-label">Served Model Name</label>
+                <input class="llm-input" @bind="_deployEditForm.ServedModelName"
+                       placeholder="e.g. gemma4-moe (optional alias for API)" />
+
+                <label class="llm-label">GPU Memory Util.</label>
+                <input class="llm-input" @bind="_deployEditForm.GpuMemoryUtilization" type="number"
+                       step="0.01" min="0.01" max="1.0"
+                       placeholder="e.g. 0.88 (leave blank for vLLM default)" />
 
                 <label class="llm-label">Extra Args</label>
                 <input class="llm-input" @bind="_deployEditForm.ExtraArgs"
@@ -952,16 +1002,24 @@
         _addingDeployment = true;
         try
         {
+            var resolvedTag = _deployForm.ImageTag == "__custom"
+                ? _deployForm.CustomImageTag?.Trim()
+                : _deployForm.ImageTag;
+
             var d = await DeploymentSvc.CreateAsync(
-                hostId:          _deployForm.HostId,
-                modelId:         _deployForm.ModelId,
-                gpuIndices:      gpuIndices,
-                hostPort:        _deployForm.HostPort,
-                quantization:    _deployForm.Quantization,
-                imageTag:        _deployForm.ImageTag,
-                extraArgs:       _deployForm.ExtraArgs,
-                hfTokenOverride: _deployForm.HfTokenOverride,
-                maxModelLen:     _deployForm.MaxModelLen);
+                hostId:               _deployForm.HostId,
+                modelId:              _deployForm.ModelId,
+                gpuIndices:           gpuIndices,
+                hostPort:             _deployForm.HostPort,
+                quantization:         _deployForm.Quantization,
+                imageTag:             resolvedTag ?? "latest",
+                extraArgs:            _deployForm.ExtraArgs,
+                hfTokenOverride:      _deployForm.HfTokenOverride,
+                maxModelLen:          _deployForm.MaxModelLen,
+                useHostNetwork:       _deployForm.UseHostNetwork,
+                shmSize:              _deployForm.ShmSize,
+                servedModelName:      _deployForm.ServedModelName,
+                gpuMemoryUtilization: _deployForm.GpuMemoryUtilization);
 
             _deployments ??= [];
             _deployments.Add(d);
@@ -1005,15 +1063,21 @@
     {
         _editingDeployment = dep;
         _deployEditError   = null;
+        var knownTags = new[] { "latest", "nightly" };
         _deployEditForm    = new DeploymentEditForm
         {
-            GpuIndices      = dep.GpuIndices,
-            HostPort        = dep.HostPort,
-            ImageTag        = dep.ImageTag,
-            Quantization    = dep.Quantization,
-            MaxModelLen     = dep.MaxModelLen,
-            ExtraArgs       = dep.ExtraArgs,
-            HfTokenOverride = null, // keep blank; only update if user types something
+            GpuIndices           = dep.GpuIndices,
+            HostPort             = dep.HostPort,
+            ImageTag             = knownTags.Contains(dep.ImageTag) ? dep.ImageTag : "__custom",
+            CustomImageTag       = knownTags.Contains(dep.ImageTag) ? null : dep.ImageTag,
+            Quantization         = dep.Quantization,
+            MaxModelLen          = dep.MaxModelLen,
+            UseHostNetwork       = dep.UseHostNetwork,
+            ShmSize              = dep.ShmSize,
+            ServedModelName      = dep.ServedModelName,
+            GpuMemoryUtilization = dep.GpuMemoryUtilization,
+            ExtraArgs            = dep.ExtraArgs,
+            HfTokenOverride      = null, // keep blank; only update if user types something
         };
         _showDeployEditModal = true;
     }
@@ -1034,12 +1098,20 @@
         _savingDeployEdit = true;
         try
         {
-            _editingDeployment.GpuIndices   = _deployEditForm.GpuIndices.Trim();
-            _editingDeployment.HostPort      = _deployEditForm.HostPort;
-            _editingDeployment.ImageTag      = _deployEditForm.ImageTag;
-            _editingDeployment.Quantization  = _deployEditForm.Quantization;
-            _editingDeployment.MaxModelLen   = _deployEditForm.MaxModelLen > 0 ? _deployEditForm.MaxModelLen : null;
-            _editingDeployment.ExtraArgs     = NullIfBlank(_deployEditForm.ExtraArgs);
+            var resolvedEditTag = _deployEditForm.ImageTag == "__custom"
+                ? _deployEditForm.CustomImageTag?.Trim()
+                : _deployEditForm.ImageTag;
+
+            _editingDeployment.GpuIndices           = _deployEditForm.GpuIndices.Trim();
+            _editingDeployment.HostPort              = _deployEditForm.HostPort;
+            _editingDeployment.ImageTag              = string.IsNullOrWhiteSpace(resolvedEditTag) ? "latest" : resolvedEditTag;
+            _editingDeployment.Quantization          = _deployEditForm.Quantization;
+            _editingDeployment.MaxModelLen           = _deployEditForm.MaxModelLen > 0 ? _deployEditForm.MaxModelLen : null;
+            _editingDeployment.UseHostNetwork        = _deployEditForm.UseHostNetwork;
+            _editingDeployment.ShmSize               = NullIfBlank(_deployEditForm.ShmSize);
+            _editingDeployment.ServedModelName       = NullIfBlank(_deployEditForm.ServedModelName);
+            _editingDeployment.GpuMemoryUtilization  = _deployEditForm.GpuMemoryUtilization;
+            _editingDeployment.ExtraArgs             = NullIfBlank(_deployEditForm.ExtraArgs);
             if (!string.IsNullOrWhiteSpace(_deployEditForm.HfTokenOverride))
                 _editingDeployment.HfTokenOverride = _deployEditForm.HfTokenOverride.Trim();
 
@@ -1276,27 +1348,37 @@
 
     private sealed class DeploymentEditForm
     {
-        public string  GpuIndices      { get; set; } = "";
-        public int     HostPort        { get; set; } = 8000;
-        public string  ImageTag        { get; set; } = "latest";
-        public string  Quantization    { get; set; } = "none";
-        public int?    MaxModelLen     { get; set; }
-        public string? ExtraArgs       { get; set; }
-        public string? HfTokenOverride { get; set; }
+        public string  GpuIndices            { get; set; } = "";
+        public int     HostPort              { get; set; } = 8000;
+        public string  ImageTag              { get; set; } = "latest";
+        public string? CustomImageTag        { get; set; }
+        public string  Quantization          { get; set; } = "none";
+        public int?    MaxModelLen           { get; set; }
+        public bool    UseHostNetwork        { get; set; }
+        public string? ShmSize              { get; set; }
+        public string? ServedModelName       { get; set; }
+        public double? GpuMemoryUtilization  { get; set; }
+        public string? ExtraArgs             { get; set; }
+        public string? HfTokenOverride       { get; set; }
     }
 
     private sealed class DeploymentForm
     {
-        public string  HostId          { get; set; } = "";
-        public string  ModelId         { get; set; } = "";
-        public string  GpuIndicesText  { get; set; } = "";
-        public List<int> SelectedGpuIndices { get; set; } = [];
-        public int     HostPort        { get; set; } = 8000;
-        public string  ImageTag        { get; set; } = "latest";
-        public string  Quantization    { get; set; } = "none";
-        public double? ParamsBillions  { get; set; }
-        public int?    MaxModelLen     { get; set; }
-        public string? ExtraArgs       { get; set; }
-        public string? HfTokenOverride { get; set; }
+        public string  HostId                { get; set; } = "";
+        public string  ModelId               { get; set; } = "";
+        public string  GpuIndicesText        { get; set; } = "";
+        public List<int> SelectedGpuIndices  { get; set; } = [];
+        public int     HostPort              { get; set; } = 8000;
+        public string  ImageTag              { get; set; } = "latest";
+        public string? CustomImageTag        { get; set; }
+        public string  Quantization          { get; set; } = "none";
+        public double? ParamsBillions        { get; set; }
+        public int?    MaxModelLen           { get; set; }
+        public bool    UseHostNetwork        { get; set; }
+        public string? ShmSize              { get; set; }
+        public string? ServedModelName       { get; set; }
+        public double? GpuMemoryUtilization  { get; set; }
+        public string? ExtraArgs             { get; set; }
+        public string? HfTokenOverride       { get; set; }
     }
 }

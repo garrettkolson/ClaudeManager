@@ -32,7 +32,7 @@ public class LlmInstanceServiceTests
 
         var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
 
-        cmd.Args.Should().Contain("run -d");
+        cmd.Args.Should().Contain("run -itd");
         cmd.Args.Should().Contain("--runtime nvidia");
         cmd.Args.Should().Contain("--gpus '\"device=0\"'");
         cmd.Args.Should().Contain("--ipc=host");
@@ -168,6 +168,117 @@ public class LlmInstanceServiceTests
         var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
 
         cmd.Args.Should().NotEndWith(" ");
+    }
+
+    [Test]
+    public void BuildDockerRunCommand_GpusAll_UsesAllFlag()
+    {
+        var deployment = MakeDeployment("model/m", gpuIndices: "all", port: 8000);
+
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
+
+        cmd.Args.Should().Contain("--gpus all");
+        cmd.Args.Should().NotContain("device=");
+        cmd.Args.Should().NotContain("--tensor-parallel-size");
+    }
+
+    [Test]
+    public void BuildDockerRunCommand_HostNetwork_UsesNetworkHostAndNoPortMapping()
+    {
+        var deployment = MakeDeployment("model/m", gpuIndices: "0", port: 8000);
+        deployment.UseHostNetwork = true;
+
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
+
+        cmd.Args.Should().Contain("--network host");
+        cmd.Args.Should().NotContain("-p 8000:8000");
+        cmd.Args.Should().Contain("--port 8000");
+    }
+
+    [Test]
+    public void BuildDockerRunCommand_ShmSize_AddsShmSizeFlag()
+    {
+        var deployment = MakeDeployment("model/m", gpuIndices: "0", port: 8001);
+        deployment.ShmSize = "16G";
+
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
+
+        cmd.Args.Should().Contain("--shm-size 16G");
+    }
+
+    [Test]
+    public void BuildDockerRunCommand_ServedModelName_AddsFlag()
+    {
+        var deployment = MakeDeployment("model/m", gpuIndices: "0", port: 8001);
+        deployment.ServedModelName = "gemma4-moe";
+
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
+
+        cmd.Args.Should().Contain("--served-model-name gemma4-moe");
+    }
+
+    [Test]
+    public void BuildDockerRunCommand_GpuMemoryUtilization_AddsFlag()
+    {
+        var deployment = MakeDeployment("model/m", gpuIndices: "0", port: 8001);
+        deployment.GpuMemoryUtilization = 0.88;
+
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
+
+        cmd.Args.Should().Contain("--gpu-memory-utilization 0.88");
+    }
+
+    [Test]
+    public void BuildDockerRunCommand_CustomImageTag_UsesTag()
+    {
+        var deployment = MakeDeployment("model/m", gpuIndices: "0", port: 8001);
+        deployment.ImageTag = "gemma4";
+
+        var cmd = _svc.BuildDockerRunCommand(deployment, DummyHost, hfToken: null);
+
+        cmd.Args.Should().Contain("vllm/vllm-openai:gemma4");
+        cmd.Args.Should().NotContain("vllm/vllm-openai:latest");
+    }
+
+    [Test]
+    public void BuildDockerRunCommand_Gemma4Integration_MatchesTargetCommand()
+    {
+        var deployment = new LlmDeploymentEntity
+        {
+            DeploymentId         = "gemma4-test",
+            HostId               = "gpu-host",
+            ModelId              = "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit",
+            GpuIndices           = "all",
+            HostPort             = 8000,
+            Quantization         = "awq",
+            ImageTag             = "gemma4",
+            MaxModelLen          = 131072,
+            UseHostNetwork       = true,
+            ShmSize              = "16G",
+            GpuMemoryUtilization = 0.88,
+            ServedModelName      = "gemma4-moe",
+            ExtraArgs            = "--async-scheduling --enable-auto-tool-choice --tool-call-parser gemma4",
+        };
+        var host = new ExecutionHost("gpu-server", 22, "root", HostAuthType.None);
+
+        var cmd = _svc.BuildDockerRunCommand(deployment, host, hfToken: null);
+
+        cmd.Args.Should().Contain("run -itd");
+        cmd.Args.Should().Contain("--ipc=host");
+        cmd.Args.Should().Contain("--network host");
+        cmd.Args.Should().Contain("--shm-size 16G");
+        cmd.Args.Should().Contain("--gpus all");
+        cmd.Args.Should().Contain("--runtime nvidia");
+        cmd.Args.Should().Contain("-v /root/.cache/huggingface:/root/.cache/huggingface");
+        cmd.Args.Should().Contain("vllm/vllm-openai:gemma4");
+        cmd.Args.Should().Contain("--model cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit");
+        cmd.Args.Should().Contain("--max-model-len 131072");
+        cmd.Args.Should().Contain("--gpu-memory-utilization 0.88");
+        cmd.Args.Should().Contain("--host 0.0.0.0 --port 8000");
+        cmd.Args.Should().Contain("--served-model-name gemma4-moe");
+        cmd.Args.Should().Contain("--quantization awq");
+        cmd.Args.Should().Contain("--async-scheduling --enable-auto-tool-choice --tool-call-parser gemma4");
+        cmd.Args.Should().NotContain("-p 8000:8000");
     }
 
     // ── ParseDockerInspect ────────────────────────────────────────────────────

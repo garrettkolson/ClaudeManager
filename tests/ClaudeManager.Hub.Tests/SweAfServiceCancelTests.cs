@@ -6,9 +6,11 @@ using ClaudeManager.Hub.Persistence.Entities;
 using ClaudeManager.Hub.Services;
 using ClaudeManager.Hub.Tests.Helpers;
 using FluentAssertions;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using Moq.Protected;
 
 namespace ClaudeManager.Hub.Tests.Services;
 
@@ -36,7 +38,7 @@ public class SweAfServiceCancelTests
             .Setup(x => x.StopControlPlaneForJobAsync(
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string? null));
+            .ReturnsAsync((string?) null);
     }
 
     [TearDown]
@@ -216,9 +218,9 @@ public class SweAfServiceCancelTests
 
         SweAfJobEntity seededJob = null!;
         {
-            await using (var db = _dbFactory.CreateDbContext())
+            await using (var db1 = _dbFactory.CreateDbContext())
             {
-                db.SweAfJobs.Add(new SweAfJobEntity
+                db1.SweAfJobs.Add(new SweAfJobEntity
                 {
                     ExternalJobId = "exec-cancel-missing-prov",
                     Goal          = "Goal",
@@ -227,8 +229,8 @@ public class SweAfServiceCancelTests
                     CreatedAt     = DateTimeOffset.UtcNow,
                     ComposeProjectName = "missing-prov-project",
                 });
-                await db.SaveChangesAsync();
-                seededJob = db.SweAfJobs.First();
+                await db1.SaveChangesAsync();
+                seededJob = db1.SweAfJobs.First();
             }
         }
 
@@ -261,8 +263,8 @@ public class SweAfServiceCancelTests
             NullLogger<SweAfService>.Instance);
 
         // Act: Cancel the job
-        await using var db = _dbFactory.CreateDbContext();
-        var job = await db.SweAfJobs.SingleAsync();
+        await using var db2 = _dbFactory.CreateDbContext();
+        var job = await db2.SweAfJobs.SingleAsync();
         var (ok, err) = await svc.CancelJobAsync(job.Id);
 
         // Assert: Cancel succeeds even with missing provisioning config

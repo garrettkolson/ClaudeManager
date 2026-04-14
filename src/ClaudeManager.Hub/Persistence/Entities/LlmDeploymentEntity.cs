@@ -42,6 +42,20 @@ public class LlmDeploymentEntity
     [MaxLength(1000)]
     public string? ExtraArgs { get; set; }
 
+    /// <summary>Use host networking (--network host) instead of port mapping (-p).</summary>
+    public bool UseHostNetwork { get; set; } = false;
+
+    /// <summary>Shared memory size passed to Docker (--shm-size), e.g. "16G". Null uses Docker default.</summary>
+    [MaxLength(10)]
+    public string? ShmSize { get; set; }
+
+    /// <summary>Custom name for the served model in the OpenAI-compatible API (--served-model-name).</summary>
+    [MaxLength(100)]
+    public string? ServedModelName { get; set; }
+
+    /// <summary>Fraction of GPU memory to reserve for the model (--gpu-memory-utilization), e.g. 0.88.</summary>
+    public double? GpuMemoryUtilization { get; set; }
+
     /// <summary>Per-deployment HuggingFace token; overrides the global Hub secret when set.</summary>
     [MaxLength(500)]
     public string? HfTokenOverride { get; set; }

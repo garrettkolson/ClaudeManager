@@ -303,8 +303,15 @@ public class LlmInstanceService(
             .WithGpus(deployment.GpuIndices ?? "0")
             .WithNvidiaRuntime()
             .WithHostIPC()
-            .WithHostPort(deployment.HostPort)
             .WithHfCacheVolume(host.User);
+
+        if (deployment.UseHostNetwork)
+            builder = builder.WithHostNetwork().WithVllmPort(deployment.HostPort);
+        else
+            builder = builder.WithHostPort(deployment.HostPort);
+
+        if (!string.IsNullOrWhiteSpace(deployment.ShmSize))
+            builder = builder.WithShmSize(deployment.ShmSize);
 
         if (!string.IsNullOrWhiteSpace(hfToken))
             builder = builder.WithHfToken(hfToken);
@@ -318,9 +325,17 @@ public class LlmInstanceService(
             builder = builder.WithModel(deployment.ModelId, maxModelLen: deployment.MaxModelLen);
         }
 
-        var gpuCount = deployment.GpuIndices?.Split(',').Length ?? 1;
+        var gpuCount = (deployment.GpuIndices ?? "").Equals("all", StringComparison.OrdinalIgnoreCase)
+            ? 1
+            : deployment.GpuIndices?.Split(',').Length ?? 1;
         if (gpuCount > 1)
             builder = builder.WithTensorParallelSize(gpuCount);
+
+        if (deployment.GpuMemoryUtilization.HasValue)
+            builder = builder.WithGpuMemoryUtilization(deployment.GpuMemoryUtilization.Value);
+
+        if (!string.IsNullOrWhiteSpace(deployment.ServedModelName))
+            builder = builder.WithServedModelName(deployment.ServedModelName);
 
         if (!string.IsNullOrWhiteSpace(deployment.ExtraArgs))
             builder = builder.WithExtraArgs(deployment.ExtraArgs.Trim());

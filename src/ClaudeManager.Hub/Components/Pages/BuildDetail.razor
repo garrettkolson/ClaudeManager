@@ -18,16 +18,10 @@
     else if (_job is not null)
     {
         <!-- Tab Navigation -->
-        <div class="build-detail-tabs">
-            <button class="tab-btn@(string.Equals(_activeTab, 1) ? " tab_active" : "")" @onclick="() => ChangeTab(1)">
-                Build Details
-            </button>
-            <button class="tab-btn@(string.Equals(_activeTab, 2) ? " tab_active" : "")" @onclick="() => ChangeTab(2)">
-                AgentField
-            </button>
-            <button class="tab-btn@(string.Equals(_activeTab, 3) ? " tab_active" : "")" @onclick="() => ChangeTab(3)">
-                Logs
-            </button>
+        <div class="foundry-tabs">
+            <button class="foundry-tab @(_activeTab == 1 ? "active" : "")" @onclick="() => ChangeTab(1)">Build Details</button>
+            <button class="foundry-tab @(_activeTab == 2 ? "active" : "")" @onclick="() => ChangeTab(2)">AgentField</button>
+            <button class="foundry-tab @(_activeTab == 3 ? "active" : "")" @onclick="() => ChangeTab(3)">Logs</button>
         </div>
 
         <!-- Tab 1: Build Details -->
@@ -39,8 +33,15 @@
                     <a href="/foundry" class="back-link">← Foundry</a>
                     @if (_job is not null)
                     {
-                        <h2 class="build-detail-goal">@_job.Goal</h2>
+                        <h2 class="build-detail-goal">@Truncate(_job?.Goal ?? "", 40)</h2>
                     }
+                </div>
+                
+                <div class="build-detail-meta">
+                    <div class="build-detail-meta-item">
+                        <span class="build-detail-label">Goal</span>
+                        <span>@(_job?.Goal ?? "")</span>
+                    </div>
                 </div>
 
                 <div class="build-detail-meta">
@@ -133,44 +134,44 @@
                         </div>
                     }
                     @* ── Build logs widget ── *@
-                    @if (_job.Logs is not null)
-                    {
-                        <div class="build-detail-section">
-                            <div class="build-detail-section-header">
-                                <h3>Build Logs</h3>
-                                <div class="build-log-actions">
-                                    <button class="btn-secondary-sm" @onclick="RefreshLogs" disabled="@_detailLoading">
-                                        Refresh
-                                    </button>
-                                    @* <button class="btn-secondary-sm" @onclick="CopyLogs" disabled="@_detailLoading"> *@
-                                    @*     Copy *@
-                                    @* </button> *@
-                                    <button class="btn-secondary-sm" @onclick="DownloadLogs" disabled="@_detailLoading">
-                                        Download
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="build-log-container">
-                                @{
-                                    if (string.IsNullOrEmpty(_job.Logs))
-                                    {
-                                        <div class="build-log-empty">No build logs are currently available.</div>
-                                    }
-                                    else
-                                    {
-                                        var parsedLogs = LogParser.ParseLogMessages(_job.Logs);
-                                        foreach (var log in parsedLogs)
-                                        {
-                                            <div class="build-log-cached">
-                                                <span class="build-log-timestamp">@log.Timestamp.ToString("HH:mm:ss.fff")</span>
-                                                <span class="build-log-content">@log.Content</span>
-                                            </div>
-                                        }
-                                    }
-                                }
-                            </div>
-                        </div>
-                    }
+                    @* @if (_job.Logs is not null) *@
+                    @* { *@
+                    @*     <div class="build-detail-section"> *@
+                    @*         <div class="build-detail-section-header"> *@
+                    @*             <h3>Build Logs</h3> *@
+                    @*             <div class="build-log-actions"> *@
+                    @*                 <button class="btn-secondary-sm" @onclick="RefreshLogs" disabled="@_detailLoading"> *@
+                    @*                     Refresh *@
+                    @*                 </button> *@
+                    @*                 $1$ <button class="btn-secondary-sm" @onclick="CopyLogs" disabled="@_detailLoading"> #1# *@
+                    @*                 $1$     Copy #1# *@
+                    @*                 $1$ </button> #1# *@
+                    @*                 <button class="btn-secondary-sm" @onclick="DownloadLogs" disabled="@_detailLoading"> *@
+                    @*                     Download *@
+                    @*                 </button> *@
+                    @*             </div> *@
+                    @*         </div> *@
+                    @*         <div class="build-log-container"> *@
+                    @*             @{ *@
+                    @*                 if (string.IsNullOrEmpty(_job.Logs)) *@
+                    @*                 { *@
+                    @*                     <div class="build-log-empty">No build logs are currently available.</div> *@
+                    @*                 } *@
+                    @*                 else *@
+                    @*                 { *@
+                    @*                     var parsedLogs = LogParser.ParseLogMessages(_job.Logs); *@
+                    @*                     foreach (var log in parsedLogs) *@
+                    @*                     { *@
+                    @*                         <div class="build-log-cached"> *@
+                    @*                             <span class="build-log-timestamp">@log.Timestamp.ToString("HH:mm:ss.fff")</span> *@
+                    @*                             <span class="build-log-content">@log.Content</span> *@
+                    @*                         </div> *@
+                    @*                     } *@
+                    @*                 } *@
+                    @*             } *@
+                    @*         </div> *@
+                    @*     </div> *@
+                    @* } *@
 
                     @* ── Foundry result ── *@
                     <div class="build-detail-section">
@@ -236,6 +237,8 @@
                         <div class="log-actions">
                             <button class="btn-secondary-sm" @onclick="() => { showBuildLogs = true; showContainerLogs = true; }">Show Both</button>
                             <label><input type="checkbox" @bind="showBuildLogs" class="toggle-checkbox" /> Build Logs</label>
+                            <label><input type="checkbox" @bind="showContainerLogs" class="toggle-checkbox" /> Container Logs</label>
+                            <button class="btn-secondary-sm" @onclick="RefreshContainerLogs" disabled="@_containerLogsLoading">Refresh</button>
                         </div>
                     </div>
 
@@ -262,27 +265,31 @@
                         </div>
                     }
 
-                    @if (showContainerLogs && _detail?.Logs is not null)
+                    @if (showContainerLogs)
                     {
-                        <div class="build-log-container">
-                            @{
-                                if (string.IsNullOrEmpty(_detail.Logs))
+                        @if (_containerLogsError is not null)
+                        {
+                            <div class="build-detail-fetch-error">@_containerLogsError</div>
+                        }
+                        else if (_containerLogsLoading)
+                        {
+                            <div class="build-log-empty">Loading container logs…</div>
+                        }
+                        else if (!string.IsNullOrWhiteSpace(_containerLogs))
+                        {
+                            <div class="build-log-container">
+                                @foreach (var line in _containerLogs.Split('\n', StringSplitOptions.RemoveEmptyEntries))
                                 {
-                                    <div class="build-log-empty">No container logs are currently available.</div>
+                                    <div class="build-log-cached">
+                                        <span class="build-log-content">@line</span>
+                                    </div>
                                 }
-                                else
-                                {
-                                    var parsedLogs = LogParser.ParseLogMessages(_detail.Logs);
-                                    foreach (var log in parsedLogs)
-                                    {
-                                        <div class="build-log-cached">
-                                            <span class="build-log-timestamp">@log.Timestamp.ToString("HH:mm:ss.fff")</span>
-                                            <span class="build-log-content">@log.Content</span>
-                                        </div>
-                                    }
-                                }
-                            }
-                        </div>
+                            </div>
+                        }
+                        else if (_containerLogs is not null)
+                        {
+                            <div class="build-log-empty">No container logs are currently available.</div>
+                        }
                     }
                 </div>
             }
@@ -355,11 +362,13 @@
 
     // ── Actions ───────────────────────────────────────────────────────────
 
-    private void ChangeTab(int tab)
+    private async Task ChangeTab(int tab)
     {
         if (tab < 1 || tab > 3) return;
         _activeTab = tab;
         StateHasChanged();
+        if (tab == 3)
+            await RefreshContainerLogs();
     }
 
     private async Task CancelJob()
