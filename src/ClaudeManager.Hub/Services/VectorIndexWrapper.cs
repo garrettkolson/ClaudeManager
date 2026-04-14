@@ -31,6 +31,7 @@ public class VectorIndexWrapper : IVectorIndexWrapper
             .ToListAsync(ct);
     }
 
+
     /// <summary>
     /// Saves a new or updated vector entry to the database.
     /// If an entry with the same ID already exists, it will be updated (upsert).
@@ -38,7 +39,23 @@ public class VectorIndexWrapper : IVectorIndexWrapper
     public async Task SaveAsync(ViaVectorIndex entry, CancellationToken ct = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        db.Set<ViaVectorIndex>().AddOrUpdate(entry);
+
+        var existingEntry = await db.ViaVectorIndices
+            .FirstOrDefaultAsync(v => v.Id == entry.Id, ct);
+
+        if (existingEntry != null)
+        {
+            // Update existing entry - merge properties from new entry into existing
+            existingEntry.SessionId = entry.SessionId;
+            existingEntry.Embedding = entry.Embedding;
+            existingEntry.CreatedAt = entry.CreatedAt;
+        }
+        else
+        {
+            // Add new entry
+            db.ViaVectorIndices.Add(entry);
+        }
+
         await db.SaveChangesAsync(ct);
     }
 
