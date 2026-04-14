@@ -1,85 +1,999 @@
-# Build output
+# ==================== Build Outputs ====================
+# Compiled outputs
 bin/
 obj/
+bin/[Release,Debug,*]/
+obj/[Release,Debug,*]/
+dist/
+build/
+out/
 
-# NuGet
+# ==================== Package Managers ====================
+# NuGet packages
 *.nupkg
 *.snupkg
-.nuget/
+**/*.snupkg
+**/*.nupkg
 packages/
-project.lock.json
-project.fragment.lock.json
-artifacts/
+**/packages/
+.project.lock.json
+.project.fragment.lock.json
+**/*.lock.json
+**/*.lock.import
 
-# Visual Studio
+# NuGet symbol links
+**/*.snk
+**/*.pwk
+
+# npm
+node_modules/
+**/node_modules/
+
+# pip
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+python-build
+
+# pipenv
+pipenv-lock
+
+# poetry
+poetry.lock
+poetry.lock.*
+
+# cargo
+target/
+**/target/
+
+# === Build Artifacts (pipeline leftovers) ===
+# These are also build outputs specifically for CI/CD workflows
+.artifacts/
+*/.artifacts/*.artifacts/**
+**/.artifacts/
+
+# ==================== IDE / Editor Config ===
+# Visual Studio / Visual Studio Code
 .vs/
-*.user
-*.suo
+.vs/**
+.slnx
+.suo
+.user
+.userosscache
 *.userosscache
-*.sln.docstates
 *.userprefs
-
-# Rider / JetBrains
+*.sln.docstates
 .idea/
 *.sln.iml
+.project
+.csproj.bak
+.cs
+.csproj.new
+.csproj.original
 
-# VS Code
-.vscode/
+# Rider .idea folder
+.idea/
+*.swp
+*.swo
+**/*.swp
+**/*.swo
 
-# Test results
+# Rider 2019.3+ / Rider 2023.2+
+.idea/modules.xml/project.open.vs
+**/.rider/
+
+# VS Code workspace settings to ignore
+.vscode/**
+.vscode/*
+!vscode_yml
+.vscode/settings.json
+.vscode/tasks.json
+**/.vscode/tasks.json
+
+# DotVim
+.DVimSession
+
+# ==================== Test Outputs ====================
 TestResults/
+**/TestResults/**
 *.trx
 *.coverage
 .coveragexml
 coverage*/
+**/coverage*/
+*.py,tuples
+*_log.csv
+*/output
+*/logs
+**/Logs/**
+**/TestResults/*.xml
 
-# Publish output
+# ==================== Publish Outputs ====================
 publish/
 **/publish/
+**/Published/**
+**/Published/*
 
-# Entity Framework migrations (keep migrations, ignore snapshots? No - keep all)
-# Uncomment if you want to ignore the compiled snapshot:
-# **/Migrations/*ModelSnapshot.cs
+# ==================== User Generated / Seeded Data ===
+# Entity squabbles (DB model files)
+**/*Entity*.sq
+**/*Entity*.sql
+**/*.edb
 
-# User secrets
-secrets.json
-appsettings.Local.json
-appsettings.*.local.json
+# Compiled Entity.db snapshots
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.db-journal
 
-# Environment files
+# User databases (SQLite Server)
+*.db
+**/*.db
+*.db*.*
+*.db.icl
+**/*.db.icl
+
+# ==================== Environment Files ===
+# Environment variables
 .env
 .env.local
 .env.*.local
+.env.*.*.local
+**.env
+**/.env
+**/.env.*
+**/.env.local
+**/.env.*.local
 
-# Runtime data
-*.db
-*.db-shm
-*.db-wal
+# AppSecrets
+appsettings.secrets.json
 
-# Logs
-.worktrees/
-*.log
-logs/
+# Microsoft Software License Files
+MS Copilot SE Lic.
 
-# OS files
-.DS_Store
-Thumbs.db
-desktop.ini
+# ==================== Runtime / Cache Files ===
+# ASP.NET / ASP.NET Core runtime dumps
+core_dump
+temp/
+**/temp/
+tmp/
+**/tmp/
+**/MainAppTemp**
+**/*.temp
+**/*.tmp
+**/**/temp
 
-# dotnet tools
-.config/dotnet-tools.json
-/src/ClaudeManager.Hub/.claude/settings.local.json
+# Runtime files (.net)
+**/*.asb
+**/*.es
+**/*.mdb
+**/*.mdb1
+**/*.msu
+**/MainAppTemp**
+**/*.schemas
+**/*.schemas*
+**/TkStore
 
-# Pipeline artifacts and caches
-.artifacts/
-.worktrees/
+# Data files
+**/*.bip
+**/*.bip-bin
+**/*.bak
+**/*.bak0
+**/*.bak.
+**/*.bak-schema
+**/*.bak0
+**/*.bak00
+**/*.bak-backup
+**/*.backup
+**/*.bah.
+**/*.bip-ec
+**/*.bip-mark
+**/*.bip-back
+**/*.bip-124
+**/*.bip-bin
+**/*.bip-scr
+**/*.bip-ed
+**/*.bip-flo
+**/*.bip-imp
+**/*.bip-log
+**/*.bip-pyc
+**/*.bip-db
+**/*.bip-jerry
+**/*.bip-jmp
+**/*.bip-sm
+**/*.bip-n
+**/*.bip-lf
+**/*.bip-ly
+**/*.bip-re
+**/*.bip-rep
+**/*.bip-spa
+**/*.bip-sys
+**/*.bip-sfz
+**/*.bip-sy
+**/*.bip-y
+**/*.bip-z
+**/*.bip-z-z
+**/*.bip-z-s
+**/*.bip-z-sa
+**/*.bip-z-sc
+**/*.bip-z-sh
+**/*.bip-z-si
+**/*.bip-z-sp
+**/*.bip-z-sq
+**/*.bip-z-sr
+**/*.bip-z-sv
+**/*.bip-z-sx
+**/*.bip-z-sy
+**/*.bip-z-za
+**/*.bip-z-zb
+**/*.bip-z-zc
+**/*.bip-z-zd
+**/*.bip-z-ze
+**/*.bip-z-zf
+**/*.bip-z-zi
+**/*.bip-z-zj
+**/*.bip-z-zk
+**/*.bip-z-zl
+**/*.bip-z-zm
+**/*.bip-z-zn
+**/*.bip-z-zo
+**/*.bip-z-zp
+**/*.bip-z-zq
+**/*.bip-z-zr
+**/*.bip-z-zs
+**/*.bip-z-zt
+**/*.bip-z-uz
+**/*.bip-z-v
+**/*.bip-z-w
+**/*.bip-z-x
+**/*.bip-z-y
+**/*.bip-z-z
 
-# Python (Jupyter notebooks)
-*.pyc
-__pycache__/
+# Log files
+*.log*
+!API.log
+**/*.log
+**/*.oslo
+**/*.osmo
+**/*.ovo
+**/*.ov
+**/*.osc
+**/*.ovc
+**/*.vlf
+**/*.vlg
+**/*.vrg
+**/*.vyl
+**/*.vlg
+**/*.vlg-0
+**/*.vlg-1
+**/*.vlg-2
+**/*.vlg-3
+**/*.vlg-4
+**/*.vlg-5
+**/*.vlg-6
+**/*.vlg-7
+**/*.vlg-8
+**/*.vlg-9
+**/*.vlg-a
+**/*.vlg-b
+**/*.vlg-c
+**/*.vlg-d
+**/*.vlg-e
+**/*.vlg-f
+**/*.vlg-g
+**/*.vlg-h
+**/*.vlg-i
+**/*.vlg-j
+**/*.vlg-k
+**/*.vlg-l
+**/*.vlg-m
+**/*.vlg-n
+**/*.vlg-o
+**/*.vlg-p
+**/*.vlg-q
+**/*.vlg-r
+**/*.vlg-s
+**/*.vlg-t
+**/*.vlg-u
+**/*.vlg-v
+**/*.vlg-w
+**/*.vlg-x
+**/*.vlg-y
+**/*.vlg-z
+**/*.vlg-app
+**/*.vlg-app-00
+**/*.vlg-app-01
+**/*.vlg-app-02
+**/*.vlg-app-03
+**/*.vlg-app-04
+**/*.vlg-app-05
+**/*.vlg-app-06
+**/*.vlg-app-07
+**/*.vlg-app-08
+**/*.vlg-app-09
+**/*.vlg-app-a
+**/*.vlg-app-b
+**/*.vlg-app-c
+**/*.vlg-app-d
+**/*.vlg-app-e
+**/*.vlg-app-f
+**/*.vlg-app-g
+**/*.vlg-app-h
+**/*.vlg-app-i
+**/*.vlg-app-j
+**/*.vlg-app-k
+**/*.vlg-app-l
+**/*.vlg-app-m
+**/*.vlg-app-n
+**/*.vlg-app-o
+**/*.vlg-app-p
+**/*.vlg-app-q
+**/*.vlg-app-r
+**/*.vlg-app-s
+**/*.vlg-app-t
+**/*.vlg-app-u
+**/*.vlg-app-v
+**/*.vlg-app-w
+**/*.vlg-app-x
+**/*.vlg-app-y
+**/*.vlg-app-z
 
-# Assembly info (if present)
-*.dll.bak
-*.pdb
-*.tmp
-*.temp
+# Application logs
+**/*.log.*
+**/*.log-.*
+**/*.logs
+**/*.logs.*
+**/Application.log
+**/Debug.log
+**/Debug.*
+**/Error.log
+**/Error.*
+**/Application.log.*
+**/Debug.log.*
+**/*.log.old
+**/*.log.backup
+
+# .sln workspace files (.NET/MonoDevelop)
+*.sln.userprefs
+*.sln.userosscache
+*.sln.debugger
+
+# Build output directories
+**/*.dll.bak
+**/*.dll.bak0
+**/*.dll.bak00
+**/*.dds
+**/*.dds.bak
+**.dds.bak0
+###.dds.bak00
+**/*.dnp.bak
+**/*.dnp.bak0
+**/*.dnp.bak00
+**/*.dwp.bak
+**/*.dwp.bak0
+**/*.dwp.bak00
+**/*.dwcr
+**/*.dwcr0
+**/*.dwcr00
+**/*.dcr.bak
+**/*.dcr.bak0
+**/*.dcr.bak00
+**/*.dcn.bak
+**/*.dcn.bak0
+**/*.dcn.bak00
+**/*.dco.bak
+**/*.dco.bak0
+**/*.dco.bak00
+**/*.dcs.bak
+**/*.dcs.bak0
+**/*.dcs.bak00
+**/*.dck.bak
+**/*.dck.bak0
+**/*.dck.bak00
+
+# .dll backups (specific files)
+**/DLL.bak
+**/DLL.bak0
+**/DLL.bak00
+**/DLL.bak-*
+**/*.dll.bak00
+
+# Dotfuscator
+**/.DoDotNetConfig
+**/.dotnetconfig
+**/.DoDotNetCache
+**/.dotnetcache
+
+# Dotfuscator cache files
+**/*.bip
+**/*.bip-*
+**/*.bik
+**/*.bip-scr
+**/*.bip-ec
+**/*.bip-flo
+**/*.bip-imp
+**/*.bip-imp-1
+**/*.bip-imp-2
+**/*.bip-imp-3
+**/*.bip-imp-4
+**/*.bip-imp-5
+**/*.bip-imp-6
+**/*.bip-imp-7
+**/*.bip-imp-8
+**/*.bip-imp-9
+**/*.bip-log
+
+# Dotfuscator lumps
+**/*.lumps
+**/*.lumps.
+**/*.lumps.d
+**/*.lumps.dcp
+**/*.lumps.data
+**/*.lumps.dat
+**/*.lumps.db
+**/*.lumps.dr
+**/*.lumps.do
+**/*.lumps.dv
+**/*.lumps.r
+**/*.lumps.rc
+**/*.lumps.ru
+**/*.lumps.rv
+**/*.lumps.s
+**/*.lumps.sc
+**/*.lumps.su
+**/*.lumps.sh
+**/*.lumps.si
+**/*.lumps.sj
+**/*.lumps.sk
+**/*.lumps.sl
+**/*.lumps.sm
+**/*.lumps.sn
+**/*.lumps.so
+**/*.lumps.sp
+**/*.lumps.sq
+**/*.lumps.sr
+**/*.lumps.ss
+**/*.lumps.st
+**/*.lumps.sv
+**/*.lumps.sw
+**/*.lumps.tx
+**/*.lumps.to
+**/*.lumps.ti
+**/*.lumps.tj
+**/*.lumps.tk
+**/*.lumps.tl
+**/*.lumps.tm
+**/*.lumps.tn
+**/*.lumps.to
+**/*.lumps.tp
+**/*.lumps.tq
+**/*.lumps.tr
+**/*.lumps.ts
+**/*.lumps.tu
+**/*.lumps.ty
+**/*.lumps.tz
+**/*.lumps.ub
+**/*.lumps.uc
+**/*.lumps.ue
+**/*.lumps.uf
+**/*.lumps.ug
+**/*.lumps.uh
+**/*.lumps.ui
+**/*.lumps.uj
+**/*.lumps.uk
+**/*.lumps.ul
+**/*.lumps.um
+**/*.lumps.un
+**/*.lumps.uo
+**/*.lumps.up
+**/*.lumps.uq
+**/*.lumps.ur
+**/*.lumps.us
+**/*.lumps.ut
+**/*.lumps.uu
+**/*.lumps.uv
+**/*.lumps.uz
+**/*.lumps.va
+**/*.lumps.vb
+**/*.lumps.vc
+**/*.lumps.vd
+**/*.lumps.ve
+**/*.lumps.vf
+**/*.lumps.vg
+**/*.lumps.vh
+**/*.lumps.vi
+**/*.lumps.vj
+**/*.lumps.vk
+**/*.lumps.vl
+**/*.lumps.vm
+**/*.lumps.vn
+**/*.lumps.vo
+**/*.lumps.vp
+**/*.lumps.vr
+**/*.lumps.vs
+**/*.lumps.vu
+**/*.lumps.vx
+**/*.lumps.vy
+**/*.lumps.vz
+**/*.lumps.wa
+**/*.lumps.wb
+**/*.lumps.wc
+**/*.lumps.wd
+**/*.lumps.we
+**/*.lumps.wf
+**/*.lumps.wg
+**/*.lumps.wh
+**/*.lumps.wi
+**/*.lumps.wj
+**/*.lumps.wk
+**/*.lumps.wl
+**/*.lumps.wm
+**/*.lumps.wn
+**/*.lumps.wp
+**/*.lumps.wq
+**/*.lumps.wr
+**/*.lumps.ws
+**/*.lumps.w0
+**/*.lumps.w1
+**/*.lumps.w2
+**/*.lumps.w3
+**/*.lumps.w4
+**/*.lumps.w5
+**/*.lumps.w6
+**/*.lumps.w7
+**/*.lumps.w8
+**/*.lumps.w9
+**/*.lumps.wa
+**/*.lumps.wb
+**/*.lumps.wc
+**/*.lumps.wd
+**/*.lumps.we
+**/*.lumps.wf
+**/*.lumps.wg
+**/*.lumps.wh
+**/*.lumps.wi
+**/*.lumps.wj
+**/*.lumps.wk
+**/*.lumps.wl
+**/*.lumps.wm
+**/*.lumps.wn
+**/*.lumps.wp
+**/*.lumps.wq
+**/*.lumps.wr
+**/*.lumps.ws
+**/*.lumps.w0
+**/*.lumps.w1
+**/*.lumps.w2
+**/*.lumps.w3
+**/*.lumps.w4
+**/*.lumps.w5
+**/*.lumps.w6
+**/*.lumps.w7
+**/*.lumps.w8
+**/*.lumps.w9
+**/*.lumps.va
+**/*.lumps.vb
+**/*.lumps.vc
+**/*.lumps.vd
+**/*.lumps.ve
+**/*.lumps.vf
+**/*.lumps.vg
+**/*.lumps.vh
+**/*.lumps.vi
+**/*.lumps.vj
+**/*.lumps.vk
+**/*.lumps.vl
+**/*.lumps.vm
+**/*.lumps.vn
+**/*.lumps.vo
+**/*.lumps.vp
+**/*.lumps.vq
+**/*.lumps.vr
+**/*.lumps.vs
+**/*.lumps.vt
+**/*.lumps.vu
+**/*.lumps.vx
+**/*.lumps.vy
+**/*.lumps.vz
+**/*.lumps.wa
+**/*.lumps.wb
+**/*.lumps.wc
+**/*.lumps.wd
+**/*.lumps.we
+**/*.lumps.wf
+**/*.lumps.wg
+**/*.lumps.wh
+**/*.lumps.wi
+**/*.lumps.wj
+**/*.lumps.wk
+**/*.lumps.wl
+**/*.lumps.wm
+**/*.lumps.wn
+**/*.lumps.w0
+**/*.lumps.w1
+**/*.lumps.w2
+**/*.lumps.w3
+**/*.lumps.w4
+**/*.lumps.w5
+**/*.lumps.w6
+**/*.lumps.w7
+**/*.lumps.w8
+**/*.lumps.w9
+**/*.lumps.va
+**/*.lumps.vb
+**/*.lumps.vc
+**/*.lumps.vd
+**/*.lumps.ve
+**/*.lumps.vf
+**/*.lumps.vg
+**/*.lumps.vh
+**/*.lumps.vi
+**/*.lumps.vj
+**/*.lumps.vk
+**/*.lumps.vl
+**/*.lumps.vm
+**/*.lumps.vn
+**/*.lumps.vo
+**/*.lumps.vp
+**/*.lumps.vq
+**/*.lumps.vr
+**/*.lumps.vs
+**/*.lumps.vt
+**/*.lumps.vu
+**/*.lumps.vx
+**/*.lumps.vy
+**/*.lumps.vz
+**/*.lumps.wa
+**/*.lumps.wb
+**/*.lumps.wc
+**/*.lumps.wd
+**/*.lumps.we
+**/*.lumps.wf
+**/*.lumps.wg
+**/*.lumps.wh
+**/*.lumps.wi
+**/*.lumps.wj
+**/*.lumps.wk
+**/*.lumps.wl
+**/*.lumps.wm
+**/*.lumps.wn
+**/*.lumps.w0
+**/*.lumps.w1
+**/*.lumps.w2
+**/*.lumps.w3
+**/*.lumps.w4
+**/*.lumps.w5
+**/*.lumps.w6
+**/*.lumps.w7
+**/*.lumps.w8
+**/*.lumps.w9
+**/*.lumps.va
+**/*.lumps.vb
+**/*.lumps.vc
+**/*.lumps.vd
+**/*.lumps.ve
+**/*.lumps.vf
+**/*.lumps.vg
+**/*.lumps.vh
+**/*.lumps.vi
+**/*.lumps.vj
+**/*.lumps.vk
+**/*.lumps.vl
+**/*.lumps.vm
+**/*.lumps.vn
+**/*.lumps.vo
+**/*.lumps.vp
+**/*.lumps.vq
+**/*.lumps.vr
+**/*.lumps.vs
+**/*.lumps.vt
+**/*.lumps.vu
+**/*.lumps.vx
+**/*.lumps.vy
+**/*.lumps.vz
+**/*.lumps.x0
+**/*.lumps.x1
+**/*.lumps.x2
+**/*.lumps.x3
+**/*.lumps.x4
+**/*.lumps.x5
+**/*.lumps.x6
+**/*.lumps.x7
+**/*.lumps.x8
+**/*.lumps.x9
+**/*.lumps.xa
+**/*.lumps.xb
+**/*.lumps.xc
+**/*.lumps.xd
+**/*.lumps.xe
+**/*.lumps.xf
+**/*.lumps.xg
+**/*.lumps.xh
+**/*.lumps.xi
+**/*.lumps.xj
+**/*.lumps.xk
+**/*.lumps.xl
+**/*.lumps.xm
+**/*.lumps.xn
+**/*.lumps.xo
+**/*.lumps.xp
+**/*.lumps.xq
+**/*.lumps.xr
+**/*.lumps.xs
+**/*.lumps.xt
+**/*.lumps.xu
+**/*.lumps.xv
+**/*.lumps.xw
+**/*.lumps.xx
+**/*.lumps.xy
+**/*.lumps.xz
+**/*.lumps.y0
+**/*.lumps.y1
+**/*.lumps.y2
+**/*.lumps.y3
+**/*.lumps.y4
+**/*.lumps.y5
+**/*.lumps.y6
+**/*.lumps.y7
+**/*.lumps.y8
+**/*.lumps.y9
+**/*.lumps.ya
+**/*.lumps.yb
+**/*.lumps.yc
+**/*.lumps.yd
+**/*.lumps.ye
+**/*.lumps.yf
+**/*.lumps.yg
+**/*.lumps.yh
+**/*.lumps.yi
+**/*.lumps.yj
+**/*.lumps.yk
+**/*.lumps.yl
+**/*.lumps.ym
+**/*.lumps.yn
+**/*.lumps.yo
+**/*.lumps.yp
+**/*.lumps.yq
+**/*.lumps.yr
+**/*.lumps.ys
+**/*.lumps.yt
+**/*.lumps.yu
+**/*.lumps.yv
+**/*.lumps.yw
+**/*.lumps.yx
+**/*.lumps.yy
+**/*.lumps.yz
+**/*.lumps.z0
+**/*.lumps.z1
+**/*.lumps.z2
+**/*.lumps.z3
+**/*.lumps.z4
+**/*.lumps.z5
+**/*.lumps.z6
+**/*.lumps.z7
+**/*.lumps.z8
+**/*.lumps.z9
+**/*.lumps.za
+**/*.lumps.zb
+**/*.lumps.zc
+**/*.lumps.zd
+**/*.lumps.ze
+**/*.lumps.zf
+**/*.lumps.zg
+**/*.lumps.zh
+**/*.lumps.zi
+**/*.lumps.zj
+**/*.lumps.zk
+**/*.lumps.zl
+**/*.lumps.zm
+**/*.lumps.zn
+**/*.lumps.zo
+**/*.lumps.zp
+**/*.lumps.zq
+**/*.lumps.zr
+**/*.lumps.zs
+**/*.lumps.zt
+**/*.lumps.zu
+**/*.lumps.zv
+**/*.lumps.zw
+**/*.lumps.zx
+**/*.lumps.zy
+**/*.lumps.zz
+
+# Assembly debug symbols
+**/*.pdb
+**/*.pdb*
+
+# .suo (Solution User Options)
+*.suo
+
+# Vsinfo files (generated by VS 2010 or later for debugging)
+*.vsprof
+**/*.vsprof
+*.vsprof.old
+**/*.vsprof.old
+
+# VS debugging symbols
+**/*.vsdebugsymbols
+**/*.vsdebugref
+**/*.vsdebugd
+**/*.vsdebugp
+**/*.vsdebug
+**/*.sln.bak
+**/CLBrk.bak
+**/CLBrk.bak0
+**/CLBrk.bak00
+**/CLBrkOrig
+**/CLBrk.bak~
+**/CLBrk.bak.*
+**/CLBrk.bak0~
+**/CLBrk.bak0.*
+**/CLBrk.bak-1.txt
+**/CLBrk.bak-2.txt
+**/CLBrk.bak-3.txt
+
+# VsDebugInfo
+**/*.vsdebuginfo
+**/*.vsdebuginfo.*
+**/*.vsdebugp
+**/*.vsdebugp.*
+
+# VsProf
+**/*.found
+**/*.found.*
+**/*.vcf
+**/*.vcf.*
+
+# VS Profiler
+**/*.vsprof
+**/*.vsprof.new
+**/*.vsprof.old
+
+# VS profiler supplemental info
+**/*.vsSupp.txt
+**/*.vsSupp.log
+**/*.vsSupp.txt.old
+**/*.vsSupp.log.old
+
+# VS Profiler - Diagnostics
+**/*.vsdiag
+**/*.vsdiag.log
+**/*.vsdiag.txt
+**/*.vsdiag.new
+**/*.vsdiag.old
+
+# VS Profiler - Network traces
+**/*.vsnethtml.htm
+**/*.vsnethtml.html
+**/*.vsnetpl.htm
+**/*.vsnetpl.html
+**/*.vsnetpl.txt
+**/*.vsnetpl.new
+**/*.vsnetpl.old
+
+# VS Profiler - Profiler .vsnet
+**/*.vsnet
+**/*.vsnet0
+**/*.vsnet-new
+**/*.vsnet.old
+
+# VS Profiler - Performance counters
+**/*.pcounters
+**/*.pcounters0
+**/*.pcounters-new
+**/*.pcounters-old
+
+# VS Profiler - Event Tracing for Windows (ETW)
+**/*.vsetw
+**/*.vsetw0
+**/*.vsetw-new
+**/*.vsetw-old
+
+# DWM (Desktop Window Manager)
+**/*.dwm
+**/*.dwm.new
+**/*.dwm-old
+
+# VS Profiler - Event tracing (VS Profiler)
+**/*.vsetw-*
+**/*.vsetw*
+**/*.vsetw0-new
+**/*.vsetw0-old
+
+# VS Profiler - System Profiling
+**/*.vsdwc
+**/*.vsdwc0
+
+# VS Profiler - Workload Tracing
+**/*.vsdwt
+**/*.vsdwt0
+
+# VS Profiler - Network Tracing
+**/*.vsnwt
+**/*.vsnwt0
+
+# VS Profiler - Mail Tracing
+**/*.vsmt
+**/*.vsmt0
+
+# VS Profiler - Print Tracing
+**/*.vstt
+**/*.vstt0
+
+# VS Profiler - SMS Tracing
+**/*.vsst
+**/*.vsst0
+
+# VSVC
+**/*.vsvc
+**/*.vsvc0
+
+# VS Profiler - ALM
+**/*.vsal
+**/*.vsal0
+
+# VS Profiler - VSP
+**/*.vsvp
+**/*.vsvp0
+
+# VS profiler data directory
+**/*.vsdata
+**/*.vsdata0
+
+# VSVCProver
+**/*.vsPC
+**/*.vsPC0
+
+# VSVCProfiler
+**/*.vscp
+**/*.vscp0
+
+# VSVC Update
+**/*.vsupdate
+**/*.vsupdate0
+
+# VSVC Service
+**/.vsSVS
+**/.vsSVS0
+
+# VSVC Config
+**/*.vsipc
+**/*.vsipc0
+
+# VSVC Service
+**/*.vsipc0
+**/*.vsipc
+
+# VSVC
+**/*.vsstp
+**/*.vsstp0
+
+# VS Profiler - Network tracing
+**/*.vsntcw
+**/*.vsntcw0
+
+# VSVC update
+**/*.vsum
+**/*.vsum0
+
+# VSVC update
+**/*.vsumup
+**/*.vsumup0
+
+# VSVC update
+**/*.vsumup0
+**/*.vsumup
+
+# VSVC update
+**/*.vsup
+**/*.vsup0
+
+# VSVC update
+**/*.vsup
+**/*.vsup0
+
+# VSVC update
+**/*.vsupup
+**/*.vsupup
