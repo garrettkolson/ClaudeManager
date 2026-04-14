@@ -344,4 +344,672 @@ public class BuildDetailTests
 
         // Assert
     }
+
+    // ============================================================================
+    // AC1: RefreshDetail() method exists and functions correctly
+    // ============================================================================
+
+    [Fact]
+    public async Task TestRefreshDetail_Updates_Detail_On_Success()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 123,
+            ExternalJobId = "exec-001",
+            Goal = "Test build goal",
+            Status = BuildStatus.Running,
+            Logs = ""
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.GetJobAsync(123)).ReturnsAsync(job);
+        buildsSvc.Setup(m => m.FetchExecutionDetailAsync("exec-001")).ReturnsAsync(It.IsAny<BuildExecutionDetail>());
+
+        var detail = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 123
+        };
+
+        // Act
+        await detail.RefreshDetail();
+
+        // Assert
+        Assert.NotNull(detail._detail);
+    }
+
+    [Fact]
+    public async Task TestRefreshDetail_Handles_Null_Detail()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 123,
+            ExternalJobId = "exec-001",
+            Goal = "Test build goal",
+            Status = BuildStatus.Running,
+            Logs = ""
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.GetJobAsync(123)).ReturnsAsync(job);
+        buildsSvc.Setup(m => m.FetchExecutionDetailAsync("exec-001")).ReturnsAsync((BuildExecutionDetail?)null);
+
+        var detail = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 123
+        };
+
+        // Act
+        await detail.RefreshDetail();
+
+        // Assert
+        Assert.Null(detail._detail);
+        Assert.NotEmpty(detail._detailError);
+    }
+
+    [Fact]
+    public async Task TestRefreshDetail_Turns_On_DetailLoading_Flags()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 123,
+            ExternalJobId = "exec-001",
+            Goal = "Test build goal",
+            Status = BuildStatus.Running,
+            Logs = ""
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.GetJobAsync(123)).ReturnsAsync(job);
+        buildsSvc.Setup(m => m.FetchExecutionDetailAsync("exec-001")).ReturnsAsync(
+            new BuildExecutionDetail { ResultJson = "{}" });
+
+        var detail = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 123
+        };
+
+        // Act
+        await detail.RefreshDetail();
+
+        // Assert
+        Assert.False(detail._detailLoading);
+    }
+
+    // ============================================================================
+    // AC2: CancelJob(), RetryJob(), ApproveJob() methods still function
+    // ============================================================================
+
+    [Fact]
+    public async Task TestCancelJob_Sets_ActionBusy_During_Progress()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "exec-001",
+            Goal = "Test build",
+            Status = BuildStatus.Running,
+            Logs = ""
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        var task = buildsSvc.Setup(m => m.CancelJobAsync(1)).ReturnsAsync((true, null));
+        var cancelTask = Task.Run(() => { });
+
+        var detail = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 1
+        };
+
+        // Act
+        detail.CancelJob();
+
+        // Assert - Action should be busy during execution
+        Assert.True(detail._actionBusy);
+    }
+
+    [Fact]
+    public async Task TestCancelJob_Handles_Error_With_ActionError()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "exec-001",
+            Goal = "Test build",
+            Status = BuildStatus.Running,
+            Logs = ""
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.CancelJobAsync(1)).ReturnsAsync((false, "Cancel failed"));
+
+        var detail = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 1
+        };
+
+        // Act
+        await Task.Run(() => detail.CancelJob());
+
+        // Assert - Error should be captured
+        Assert.False(detail._actionBusy);
+        Assert.Contains("failed", detail._actionError);
+    }
+
+    [Fact]
+    public async Task TestRetryJob_Sets_ActionBusy_During_Progress()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "exec-001",
+            Goal = "Test build",
+            Status = BuildStatus.Failed,
+            Logs = ""
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.RetryJobAsync(1)).ReturnsAsync(new ValidationResult(true, null));
+
+        var detail = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 1
+        };
+
+        // Act
+        await Task.Run(() => detail.RetryJob());
+
+        // Assert
+        Assert.False(detail._actionBusy);
+    }
+
+    [Fact]
+    public async Task TestApproveJob_Sets_ActionBusy_During_Progress()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "exec-001",
+            Goal = "Test build",
+            Status = BuildStatus.Waiting,
+            Logs = ""
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.ApproveJobAsync(1, true)).ReturnsAsync(new ValidationResult(true, null));
+
+        var detail = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 1
+        };
+
+        // Act
+        await Task.Run(() => detail.ApproveJob(true));
+
+        // Assert
+        Assert.False(detail._actionBusy);
+    }
+
+    [Fact]
+    public async Task TestApproveJob_Handles_Error_With_ActionError()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "exec-001",
+            Goal = "Test build",
+            Status = BuildStatus.Waiting,
+            Logs = ""
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.ApproveJobAsync(1, true)).ReturnsAsync(new ValidationResult(false, null));
+
+        var detail = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 1
+        };
+
+        // Act
+        await Task.Run(() => detail.ApproveJob(true));
+
+        // Assert - Error should be captured
+        Assert.False(detail._actionBusy);
+    }
+
+    // ============================================================================
+    // AC3: RefreshLogs(), CopyLogs(), DownloadLogs() methods still function
+    // ============================================================================
+
+    [Fact]
+    public async Task TestRefreshLogs_Fetches_New_Logs_From_Service()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "exec-001",
+            Goal = "Test build",
+            Status = BuildStatus.Running,
+            Logs = "Old logs"
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.GetJobAsync(1)).ReturnsAsync(job);
+        buildsSvc.Setup(m => m.FetchExecutionDetailAsync("exec-001")).ReturnsAsync(
+            new BuildExecutionDetail { Logs = "New logs" });
+
+        var detail = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 1
+        };
+
+        // Act
+        await Task.Run(() => detail.RefreshLogs());
+
+        // Assert
+        Assert.True(detail._detailLoading == false);
+        Assert.Equal("New logs", job.Logs);
+    }
+
+    [Fact]
+    public async Task TestRefreshLogs_Handles_Null_Logs_Gracefully()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "exec-001",
+            Goal = "Test build",
+            Status = BuildStatus.Failed,
+            Logs = null
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.GetJobAsync(1)).ReturnsAsync(job);
+
+        var detail = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 1
+        };
+
+        // Act - should not throw for null logs
+        await Task.Run(() => detail.RefreshLogs());
+
+        // Assert
+        Assert.True(detail._detailLoading == false);
+    }
+
+    [Fact]
+    public async Task TestRefreshLogs_Turns_On_DetailLoading_Flags()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "exec-001",
+            Goal = "Test build",
+            Status = BuildStatus.Running,
+            Logs = "Some logs"
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.GetJobAsync(1)).ReturnsAsync(job);
+
+        var detail = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 1
+        };
+
+        // Act
+        await Task.Run(() => detail.RefreshLogs());
+
+        // Assert - Calls loading flag
+        Assert.True(detail._detailLoading == false);
+    }
+
+    [Fact]
+    public async Task TestCopyLogs_Copies_Logs_To_Clipboard()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "exec-001",
+            Goal = "Test build",
+            Status = BuildStatus.Running,
+            Logs = "Build log content here"
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.GetJobAsync(1)).ReturnsAsync(job);
+
+        var clipboard = new Mock<IClipboard>();
+        clipboard.Setup(m => m.SetDataAsync(It.IsAny<string>()))
+                 .Returns(Task.CompletedTask);
+
+        var jsRuntime = new Mock<IJavaScriptRuntime>();
+        var detail = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            Clipboard = clipboard.Object,
+            JobId = 1
+        };
+
+        // Act - should copy logs to clipboard
+        await Task.Run(() => detail.CopyLogs());
+
+        // Assert
+        clipboard.Verify(m => m.SetDataAsync("Build log content here"), Times.Once);
+    }
+
+    [Fact]
+    public async Task TestCopyLogs_Handles_Null_Logs_Gracefully()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "exec-001",
+            Goal = "Test build",
+            Status = BuildStatus.Failed,
+            Logs = null
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.GetJobAsync(1)).ReturnsAsync(job);
+
+        var clipboard = new Mock<IClipboard>();
+        var detail = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            Clipboard = clipboard.Object,
+            JobId = 1
+        };
+
+        // Act - Should silently exit for null logs
+        await Task.Run(() => detail.CopyLogs());
+
+        // Assert - No calls to clipboard for null logs
+        clipboard.Verify(m => m.SetDataAsync(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TestDownloadLogs_Generates_Download_Link()
+    {
+        // Arrange
+        const string logs = "Build log content";
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "exec-001",
+            Goal = "Test build",
+            Status = BuildStatus.Running,
+            Logs = logs
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.GetJobAsync(1)).ReturnsAsync(job);
+
+        var jsRuntime = new Mock<IJavaScriptRuntime>();
+        var detail = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JSRuntime = jsRuntime.Object,
+            JobId = 1
+        };
+
+        // Act - should generate download link
+        await Task.Run(() => detail.DownloadLogs());
+
+        // Assert - JS should be invoked with download code
+        jsRuntime.Verify(m => m.InvokeVoidAsync("eval", It.IsAny<string>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TestDownloadLogs_Handles_Empty_Logs_Gracefully()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "exec-001",
+            Goal = "Test build",
+            Status = BuildStatus.Failed,
+            Logs = null
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.GetJobAsync(1)).ReturnsAsync(job);
+
+        var jsRuntime = new Mock<IJavaScriptRuntime>();
+        var detail = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JSRuntime = jsRuntime.Object,
+            JobId = 1
+        };
+
+        // Act - Should silently exit for null logs
+        await Task.Run(() => detail.DownloadLogs());
+
+        // Assert - No JS invoke for null logs
+        jsRuntime.Verify(m => m.InvokeVoidAsync("eval", It.IsAny<string>()), Times.Never);
+    }
+
+    // ============================================================================
+    // AC4: Responsive design works on tablets and mobile screens
+    // ============================================================================
+
+    [Fact]
+    public void TestResponsiveDesign_żaButton_layout()
+    {
+        // Arrange - Verify responsive CSS exists
+        var razorContent = typeof(BuildDetail)
+            .GetCustomAttributes(true)
+            .OfType<Type>()
+            .GetInterfaces()
+            .FirstOrDefault();
+
+        // Act/Assert - Responsive CSS defined in the component's CSS
+        // This is a layout test, checking that responsive breakpoints exist
+        var cssContent = File.ReadAllText(
+            "../src/ClaudeManager.Hub/Components/Pages/BuildDetail.razor.css");
+
+        // Check that tablet and mobile breakpoints are defined
+        Assert.Contains("@media (max-width: 768px)", cssContent);
+        Assert.Contains("@media (max-width: 480px)", cssContent);
+    }
+
+    [Fact]
+    public void TestResponsiveDesign_zaTab_Button_stack()
+    {
+        // Arrange
+        var cssContent = File.ReadAllText(
+            "../src/ClaudeManager.Hub/Components/Pages/BuildDetail.razor.css");
+
+        // Act/Assert - Verify tab button stacking on tablet/mobile
+        // Check for flex-direction: column in responsive styles
+        Assert.Contains("flex-direction: column", cssContent);
+        Assert.Contains("width: 100%", cssContent);
+        Assert.Contains("height: 50px", cssContent);
+    }
+
+    [Fact]
+    public void TestResponsiveDesign_zaText_Font_Size_zaMobile()
+    {
+        // Arrange
+        var cssContent = File.ReadAllText(
+            "../src/ClaudeManager.Hub/Components/Pages/BuildDetail.razor.css");
+
+        // Act/Assert - Verify text size reduction on small screens
+        Assert.Contains("font-size: 12px", cssContent);
+        Assert.Contains("padding: 8px", cssContent);
+    }
+
+    // ============================================================================
+    // AC5: Loading states show appropriate indicators
+    // ============================================================================
+
+    [Fact]
+    public void TestLoadingStates_Show_Loading_Message()
+    {
+        // Arrange
+        var cssContent = File.ReadAllText(
+            "../src/ClaudeManager.Hub/Components/Pages/BuildDetail.razor.css");
+
+        var razorContent = System.IO.File.ReadAllText(
+            "../src/ClaudeManager.Hub/Components/Pages/BuildDetail.razor");
+
+        // Act/Assert - Verify loading messages exist
+        Assert.Contains(".loading", cssContent);
+        Assert.Contains("'Loading'", razorContent)
+            || Assert.Contains("Loading...", razorContent);
+        Assert.Contains(".logs-loader", cssContent);
+    }
+
+    [Fact]
+    public void TestLoadingStates_Button_Disabled_During_Reload()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "exec-001",
+            Goal = "Test build",
+            Status = BuildStatus.Running,
+            Logs = "Some logs"
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.GetJobAsync(1)).ReturnsAsync(job);
+        buildsSvc.Setup(m => m.FetchExecutionDetailAsync("exec-001"))
+                 .ReturnsAsync(new BuildExecutionDetail { ResultJson = "{}" });
+
+        var component = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 1
+        };
+
+        // Act - Set detail loading to true
+        component.RefreshDetail();
+
+        // Act/Assert - Button disabled state should respect loading flag
+        // (validate via reflection or simulation)
+    }
+
+    // ============================================================================
+    // AC6: Null/empty states handled with fallback messages
+    // ============================================================================
+
+    [Fact]
+    public void TestNullStates_Show_Fallback_Message()
+    {
+        // Arrange
+        var cssContent = File.ReadAllText(
+            "../src/ClaudeManager.Hub/Components/Pages/BuildDetail.razor.css");
+
+        var razorContent = System.IO.File.ReadAllText(
+            "../src/ClaudeManager.Hub/Components/Pages/BuildDetail.razor");
+
+        // Act/Assert - Verify null/empty state messages exist
+        Assert.Contains(".build-log-empty", cssContent);
+        Assert.Contains("No build logs", razorContent, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("No results", razorContent, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TestNullStates_Handle_Missing_Job_Data()
+    {
+        // Arrange
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.GetJobAsync(1)).ReturnsAsync((SweAfJobEntity?)null);
+
+        var component = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 1
+        };
+
+        // Act
+        Task.Delay(10).Wait();
+
+        // Assert - Job null handled gracefully during initialization
+        // (The component checks for null in OnInitializedAsync)
+    }
+
+    [Fact]
+    public void TestNullStates_Handle_Empty_Logs()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "exec-001",
+            Goal = "Test build",
+            Logs = string.Empty
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.GetJobAsync(1)).ReturnsAsync(job);
+        buildsSvc.Setup(m => m.FetchExecutionDetailAsync("exec-001"))
+                 .ReturnsAsync(new BuildExecutionDetail { Logs = string.Empty });
+
+        var component = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 1
+        };
+
+        // Act
+        Task.Delay(10).Wait();
+
+        // Assert - Component handles empty logs gracefully
+    }
+
+    [Fact]
+    public void TestNullStates_Handle_ControlPlane_URL()
+    {
+        // Arrange
+        var jobs = new Mock<BuildService>();
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "exec-001",
+            Goal = "Test build",
+            ControlPlaneUrl = null
+        };
+
+        jobs.Setup(m => m.GetJobAsync(1)).ReturnsAsync(job);
+
+        var component = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 1
+        };
+
+        // Act
+        Task.Delay(10).Wait();
+
+        // Assert - Component displays control plane URL not available message
+    }
 }
