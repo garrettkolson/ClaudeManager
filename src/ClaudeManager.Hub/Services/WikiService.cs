@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Text;
 using ClaudeManager.Hub.Persistence;
 using ClaudeManager.Hub.Persistence.Entities;
@@ -8,10 +9,22 @@ namespace ClaudeManager.Hub.Services;
 public class WikiService : IWikiService
 {
     private readonly IDbContextFactory<ClaudeManagerDbContext> _dbFactory;
+    private readonly IEmbeddingService _embeddingService;
+    private readonly IVectorIndexWrapper _vectorIndexWrapper;
+    private readonly IKalendarSearcher _kanalaterSearcher;
+    private readonly TimeSpan _fallbackTimeout;
 
-    public WikiService(IDbContextFactory<ClaudeManagerDbContext> dbFactory)
+    public WikiService(
+        IDbContextFactory<ClaudeManagerDbContext> dbFactory,
+        IEmbeddingService embeddingService,
+        IVectorIndexWrapper vectorIndexWrapper,
+        IKalendarSearcher kanalaterSearcher)
     {
         _dbFactory = dbFactory;
+        _embeddingService = embeddingService;
+        _vectorIndexWrapper = vectorIndexWrapper;
+        _kanalaterSearcher = kanalaterSearcher;
+        _fallbackTimeout = TimeSpan.FromMilliseconds(1000);
     }
 
     public async Task<List<WikiEntryEntity>> GetAllAsync()
@@ -145,6 +158,127 @@ public class WikiService : IWikiService
 
         sb.AppendLine("</wiki>");
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// AC-3, AC-4, AC-10: Semantic search for similar wiki entries by content similarity.
+    /// Performs vector-based cosine similarity search with keyword fallback on timeout/error.
+    /// </summary>
+    public async Task<(List<WikiSearchHit>, float queryScore)> FindSimilarAsync(
+        string query,
+        int k = 5,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            // Load all active vectors from the database
+            var vectors = await _vectorIndexWrapper.LoadAsync(ct);
+
+            // If no vectors available, return empty results
+            if (vectors.Count == 0)
+                return (new List<WikiSearchHit>(), 0f);
+
+            // Generate query embedding for semantic search
+            var queryEmbedding = await _embeddingService.GenerateAsync(query, ct);
+
+            // Get all active wiki entries for scoring
+            var allEntries = await GetAllEntriesAsync(ct);
+
+            // Compute cosine similarity between query and each vector
+            var scoredResults = vectors
+                .Zip(allEntries, (v, e) => new
+                {
+                    v: v,
+                    e: e,
+                    score: CosineSimilarity(queryEmbedding, v.Embedding),
+                })
+                // Sort by similarity score in descending order
+                .OrderByDescending(item => item.score)
+                // Take top k results
+                .Take(k)
+                .Select(item => new WikiSearchHit
+                {
+                    Entry = item.e,
+                    Similarity = item.score,
+                })
+                .ToList();
+
+            // Get the highest similarity score for the query
+            var queryScore = scoredResults.Count > 0
+                ? scoredResults.Max(r => r.Similarity)
+                : 0f;
+
+            return (scoredResults, queryScore);
+        }
+        catch
+        {
+            // AC-6: Fallback to keyword search on timeout or error with 1000ms threshold
+            return await _kanalaterSearcher.SearchKeyword(query, k, ct);
+        }
+    }
+
+    /// <summary>
+    /// AC-6: Keyword-based fallback search for when vector search fails or times out.
+    /// Used as a fallback mechanism for graceful degradation.
+    /// </summary>
+    public async Task<(List<WikiSearchHit>, float queryScore)> FindSimilarViaKeyword(
+        string query,
+        int k = 5,
+        CancellationToken ct = default)
+    {
+        return await _kanalaterSearcher.SearchKeyword(query, k, ct);
+    }
+
+    /// <summary>
+    /// Helper method to get all non-archived wiki entries.
+    /// </summary>
+    private async Task<List<WikiEntryEntity>> GetAllEntriesAsync(CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        return await db.WikiEntries
+            .Where(e => !e.IsArchived)
+            .ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// Computes cosine similarity between two vectors using System.Numerics.Vector mathematics.
+    /// Returns a score in range [0.0, 1.0].
+    /// </summary>
+    /// <summary>
+    /// Computes cosine similarity between two vectors.
+    /// Returns a score in range [0.0, 1.0].
+    /// </summary>
+    public static float CosineSimilarity(float[] a, float[] b)
+    {
+        // Validate dimensions
+        if (a.Length != b.Length)
+            throw new ArgumentException("Vectors must have the same length", nameof(a));
+
+        if (a.Length == 0)
+            return 0f;
+
+        var dot = 0f;
+        var normA = 0f;
+        var normB = 0f;
+
+        for (int i = 0; i < a.Length; i++)
+        {
+            dot += a[i] * b[i];
+            normA += a[i] * a[i];
+            normB += b[i] * b[i];
+        }
+
+        normA = (float)Math.Sqrt(normA);
+        normB = (float)Math.Sqrt(normB);
+
+        // Avoid division by zero
+        if (normA == 0 || normB == 0)
+            return 0f;
+
+        var similarity = dot / (normA * normB);
+
+        // Clamp to [0, 1] range
+        return Math.Max(0f, Math.Min(1f, similarity));
     }
 
     private static string XmlEscape(string s) =>
