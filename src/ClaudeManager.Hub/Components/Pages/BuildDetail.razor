@@ -15,7 +15,7 @@
     {
         <div class="loading">@(_loading ? "Loading..." : "Build not found.")</div>
     }
-    @else if (_job is not null)
+    else if (_job is not null)
     {
         <!-- Tab Navigation -->
         <div class="build-detail-tabs">
@@ -142,9 +142,9 @@
                                     <button class="btn-secondary-sm" @onclick="RefreshLogs" disabled="@_detailLoading">
                                         Refresh
                                     </button>
-                                    <button class="btn-secondary-sm" @onclick="CopyLogs" disabled="@_detailLoading">
-                                        Copy
-                                    </button>
+                                    @* <button class="btn-secondary-sm" @onclick="CopyLogs" disabled="@_detailLoading"> *@
+                                    @*     Copy *@
+                                    @* </button> *@
                                     <button class="btn-secondary-sm" @onclick="DownloadLogs" disabled="@_detailLoading">
                                         Download
                                     </button>
@@ -201,12 +201,12 @@
             </div>
         }
 
-        @{
+        {
             // Tab 2: AgentField
-            @if (_activeTab == 2)
+            if (_activeTab == 2)
             {
                 <div class="tab-content">
-                    @if (_detail is null && !_detailLoading)
+                    @if (_job is null && !_detailLoading)
                     {
                         <div class="build-detail-fetch-error ">AgentField control plane URL not available for this job.</div>
                     }
@@ -395,6 +395,7 @@
     private async Task RefreshLogs()
     {
         if (_job is null) return;
+        if (string.IsNullOrEmpty(_job.ExternalJobId)) return;
 
         _detailLoading = true;
         _logsLoading = true;
@@ -420,6 +421,7 @@
         finally
         {
             _logsLoading = false;
+            _detailLoading = false;
         }
     }
 
@@ -446,6 +448,14 @@
             _containerLogsLoading = false;
         }
     }
+
+    // private async Task CopyLogs()
+    // {
+    //     if (_job.Logs is null || string.IsNullOrEmpty(_job.Logs))
+    //         return;
+    //
+    //     await Clipboard.SetDataAsync(_job.Logs);
+    // }
 
     private async Task DownloadLogs()
     {
