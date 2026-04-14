@@ -1,5 +1,8 @@
+using System.Linq;
 using ClaudeManager.Hub.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Microsoft.EntityFrameworkCore.Query;
 
 namespace ClaudeManager.Hub.Persistence;
 
@@ -15,12 +18,15 @@ public class ClaudeManagerDbContext : DbContext
     public DbSet<GpuHostEntity>        GpuHosts       { get; set; } = default!;
     public DbSet<HubSecretEntity>      HubSecrets     { get; set; } = default!;
     public DbSet<LlmDeploymentEntity>  LlmDeployments { get; set; } = default!;
+    public DbSet<ViaVectorIndex>       ViaVectorIndices { get; set; } = default!;
 
     public ClaudeManagerDbContext(DbContextOptions<ClaudeManagerDbContext> options)
         : base(options) { }
 
     protected override void OnModelCreating(ModelBuilder mb)
     {
+        mb.ApplyConfiguration(new ViaVectorIndexConfiguration());
+
         mb.Entity<MachineAgentEntity>()
             .HasMany(a => a.Sessions)
             .WithOne(s => s.Machine)

@@ -90,6 +90,19 @@ builder.Services.AddHostedService<SweAfRecoveryService>();
 builder.Services.AddSingleton<NotificationService>();
 builder.Services.AddSingleton<ILogParser, LogParser>();
 
+// Vector DB Semantic Search Services (vector embedding support)
+builder.Services.AddSingleton<IVectorIndexWrapper, VectorIndexWrapper>();
+builder.Services.AddHostedService<VectorIndexInitializer>();
+builder.Services.AddSingleton<IWikiService>(sp => sp.GetRequiredService<WikiService>());
+
+// Embedding startup service - initialization on application startup
+builder.Services.AddSingleton<EmbeddingServiceOptions>(new EmbeddingServiceOptions
+{
+    ConnectionTimeout = 1000,
+    IndexInitTimeout = 30000
+});
+builder.Services.AddHostedService<EmbeddingStartupService>();
+
 // ── SignalR ───────────────────────────────────────────────────────────────────
 
 builder.Services.AddSignalR(opts =>
@@ -129,6 +142,43 @@ app.MapGet("/api/wiki", async (WikiService wiki) =>
     return Results.Ok(entries
         .Where(e => !e.IsArchived)
         .Select(e => new { e.Id, e.Title, e.Category, e.Tags }));
+}).AddEndpointFilter(AgentSecretFilter(agentSecret));
+
+app.MapGet("/api/wiki/search", async (IWikiService wikiService, HttpContext httpContext) =>
+{
+    var query = httpContext.Request.Query["q"].FirstOrDefault();
+    var kParam = httpContext.Request.Query["k"].FirstOrDefault();
+
+    if (string.IsNullOrWhiteSpace(query))
+    {
+        return Results.BadRequest("Query parameter 'q' is required");
+    }
+
+    int? kValue = null;
+    if (!string.IsNullOrEmpty(kParam) && int.TryParse(kParam, out int val))
+    {
+        kValue = val;
+    }
+
+    int kDefault = kValue ?? 5;
+
+    var (results, queryScore) = await wikiService.FindSimilarAsync(query, kDefault, CancellationToken.None);
+
+    return Results.Ok(new
+    {
+        Results = results.Select(r => new
+        {
+            r.Entry.Id,
+            r.Entry.Title,
+            r.Entry.Category,
+            r.Entry.Content,
+            r.Entry.Tags,
+            r.Entry.UpdatedAt,
+            r.Entry.CreatedAt,
+            Similarity = r.Similarity
+        }),
+        QueryScore = queryScore
+    });
 }).AddEndpointFilter(AgentSecretFilter(agentSecret));
 
 app.MapPost("/api/wiki/save", async (WikiService wiki, WikiSaveRequest req) =>
