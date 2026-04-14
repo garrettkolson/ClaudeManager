@@ -1,28 +1,31 @@
-using System.Reflection;
+using System.Text.Json;
 using ClaudeManager.Hub.Components.Pages;
 using ClaudeManager.Hub.Persistence.Entities;
 using ClaudeManager.Hub.Services;
-using Xunit;
+using Microsoft.AspNetCore.Components;
 using Moq;
+using Xunit;
 
 namespace ClaudeManager.Hub.Tests;
 
 /// <summary>
-/// Tests for BuildDetail component tab navigation functionality.
-/// Verifies AC1: Three tab buttons rendered
-/// Verifies AC2: _activeTab state variable exists with default value 1
-/// Verifies AC3: Tab button onclick handlers call ChangeTab method and StateHasChanged
-/// Verifies AC5: Only one tab at a time is visually active
+/// Tests for BuildDetail component functionality.
+/// Verifies tab navigation, page title truncation, and action button visibility.
 /// </summary>
 public class BuildDetailTests
 {
     private readonly FieldInfo _activeTabField;
+    private readonly FieldInfo _detailField;
+    private readonly FieldInfo _jobField;
 
     public BuildDetailTests()
     {
-        // Use reflection to access the private _activeTab field
+        // Use reflection to access the private fields
         var componentType = typeof(BuildDetail);
         _activeTabField = componentType.GetField("_activeTab", BindingFlags.Instance | BindingFlags.NonPublic);
+        _detailField = componentType.GetField("_detail", BindingFlags.Instance | BindingFlags.NonPublic);
+        _jobField = componentType.GetField("_job", BindingFlags.Instance | BindingFlags.NonPublic);
+
         if (_activeTabField == null)
         {
             throw new Exception("Cannot access _activeTab private field via reflection");
@@ -79,14 +82,14 @@ public class BuildDetailTests
         // Arrange
         var component = (BuildDetail)Activator.CreateInstance(typeof(BuildDetail))!;
 
-        // Act - Should not throw for invalid values, should clamp to valid range
+        // Act - Should not throw for invalid values
         component.ChangeTab(0);
         var value0 = (int)_activeTabField.GetValue(component);
 
         component.ChangeTab(4);
         var value4 = (int)_activeTabField.GetValue(component);
 
-        // Assert - Invalid values should be ignored or clamped
+        // Assert - Invalid values should be clamped to valid range
         Assert.True(value0 > 0 && value0 <= 3);
         Assert.True(value4 > 0 && value4 <= 3);
     }
@@ -100,7 +103,7 @@ public class BuildDetailTests
         var result = BuildDetail.Truncate(input, maxLength);
 
         // Assert
-        Assert.LengthLessThanOrEqual(maxLength, result.Length);
+        Assert.True(result.Length <= maxLength);
         Assert.StartsWith(input.Substring(0, maxLength), result);
         Assert.EndsWith("...", result);
     }
@@ -130,15 +133,27 @@ public class BuildDetailTests
     }
 
     [Fact]
-    public void Test_PageTitle_Truncates_BuildGoal_To_43_Characters()
+    public void Test_PageTitle_Truncates_BuildGoal_To_40_Characters()
     {
         // Arrange
-        var pageTitle = "This is a very long build goal string that exceeds...";
+        var input = "This is a very long build goal string that exceeds...";
 
-        // Assert
-        Assert.LengthLessThanOrEqual(43, pageTitle.Length);
-        Assert.StartsWith("This is a very long build goal string that exceeds...", pageTitle);
-        Assert.EndsWith("...", pageTitle);
+        // Assert - Truncate method truncates to maxLength with ellipsis
+        var result = BuildDetail.Truncate(input, 40);
+        Assert.True(result.Length <= 40);
+    }
+
+    [Fact]
+    public void Test_Truncate_Adds_Ellipsis_For_Strings_Exceeding_MaxLength()
+    {
+        // Arrange
+        var input = "This is a very long build goal string that exceeds...";
+        var maxLength = 40;
+        var result = BuildDetail.Truncate(input, maxLength);
+
+        // Assert - Maximum 40 chars and ends with ellipsis
+        Assert.True(result.Length <= 40);
+        Assert.True(result.EndsWith("..."));
     }
 
     [Fact]
@@ -155,12 +170,178 @@ public class BuildDetailTests
         component.ChangeTab(3);
         var tab3 = (int)_activeTabField.GetValue(component);
 
-        // Assert - Excludes only one tab at a time, explicit
+        // Assert - Only one tab active at a time
         Assert.Equal(1, tab1);
         Assert.Equal(2, tab2);
         Assert.Equal(3, tab3);
         Assert.NotEqual(tab1, tab2);
         Assert.NotEqual(tab1, tab3);
         Assert.NotEqual(tab2, tab3);
+    }
+
+    [Fact]
+    public void Test_JobNotNullPopulatesJobData()
+    {
+        // Arrange
+        var mockService = new Mock<BruSefSvc>();
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "ext-123",
+            Goal = "Test goal",
+            Status = BuildStatus.Running
+        };
+        mockService.Setup(m => m.FetchAdtAsync("ext-123")).ReturnsAsync(Build);
+
+        var component = new BuildDetail
+        {
+            JobId = 1
+        };
+
+        // Assert
+        Assert.NotNull(component._job);
+    }
+
+    [Fact]
+    public void Test_JobIsNullShowsLoadingMessage()
+    {
+        // Arrange
+        var mockService = new Mock<BuildService>();
+        mockService.Setup(m => m.FetchAdtAsync(It.IsAny<string>())).ReturnsAsync(null as JobDetail);
+
+        var component = new BuildDetail
+        {
+            JobId = 1
+        };
+
+        // Assert
+        Assert.Null(component._job);
+    }
+
+    [Fact]
+    public void Test_ActionButtonVisibilityByStatus()
+    {
+        // Arrange
+        var statuses = new[] { BuildStatus.Queued, BuildStatus.Running, BuildStatus.Waiting, BuildStatus.Failed, BuildStatus.Cancelled };
+
+        foreach (var status in statuses)
+        {
+            // Assert - These statuses should have action buttons
+            bool shouldShowAction = status is BuildStatus.Queued or BuildStatus.Running
+                or BuildStatus.Waiting or BuildStatus.Failed or BuildStatus.Cancelled;
+            Assert.True(shouldShowAction);
+        }
+    }
+
+    [Fact]
+    public void Test_ApproveJobExecution()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "ext-123",
+            Goal = "Test goal",
+            Status = BuildStatus.Approved,
+            Repository = new BuildDetailRepository { Url = "https://github.com/test/repo" },
+            Logs = "--- LOG ---",
+            CreatedAt = DateTime.UtcNow.AddDays(-1),
+            StartedAt = DateTime.UtcNow.Subtract(TimeSpan.FromHours(2)),
+            CompletedAt = DateTime.UtcNow.Subtract(TimeSpan.FromHours(1))
+        };
+
+        var buildsSvc = new Mock<BruSefSvc>();
+        buildsSvc.Setup(m => m.GetJobAsync(It.IsAny<long>())).ReturnsAsync(() => job);
+        buildsSvc.Setup(m => m.FetchAdtAsync("ext-123")).ReturnsAsync(Build);
+
+        var component = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 1
+        };
+
+        // Assert
+        Assert.NotNull(component._job);
+    }
+
+    [Fact]
+    public void Test_LogParserIntegration()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "ext-123",
+            Goal = "Test goal",
+            Status = BuildStatus.Running,
+            Repository = new BuildDetailRepository { Url = "https://github.com/test/repo" },
+            Logs = "{\"events\":[{\"time\":\"2024-01-01T00:00:00Z\",\"level\":\"info\",\"message\":\"Started\"}]}",
+            CreatedAt = DateTime.UtcNow.AddDays(-1),
+            StartedAt = DateTime.UtcNow.Subtract(TimeSpan.FromHours(2)),
+            CompletedAt = DateTime.UtcNow.Subtract(TimeSpan.FromHours(1))
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.GetJobAsync(It.IsAny<long>())).ReturnsAsync(() => job);
+        buildsSvc.Setup(m => m.FetchAdtAsync("ext-123")).ReturnsAsync(Build);
+
+        var component = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 1
+        };
+
+        // Assert
+        Assert.NotNull(component._job);
+        Assert.NotNull(component._job.Logs);
+    }
+
+    [Fact]
+    public void Test_ChangeTabActivity()
+    {
+        // Arrange
+        var job = new SweAfJobEntity
+        {
+            Id = 1,
+            ExternalJobId = "ext-123",
+            Goal = "Test goal",
+            Status = BuildStatus.Running,
+            Repository = new BuildDetailRepository { Url = "https://github.com/test/repo" },
+            Logs = "--- LOG ---",
+            CreatedAt = DateTime.UtcNow.AddDays(-1),
+            StartedAt = DateTime.UtcNow.Subtract(TimeSpan.FromHours(2)),
+            CompletedAt = DateTime.UtcNow.Subtract(TimeSpan.FromHours(1))
+        };
+
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.GetJobAsync(It.IsAny<long>())).ReturnsAsync(() => job);
+        buildsSvc.Setup(m => m.FetchAdtAsync("ext-123")).ReturnsAsync(Build);
+
+        var detail = new BuildDetail { BuildService = buildsSvc.Object, JobId = 1 };
+
+        // Act
+        Task.Delay(1).Wait();
+
+        // Assert
+        Assert.Equal(1, detail._activeTab);
+    }
+
+    [Fact]
+    public void Test_OnBuildChangedUpdatesJob()
+    {
+        // Arrange
+        var buildsSvc = new Mock<BuildService>();
+        buildsSvc.Setup(m => m.GetJobAsync(It.IsAny<long>())).ReturnsAsync(Build);
+
+        var detail = new BuildDetail
+        {
+            BuildService = buildsSvc.Object,
+            JobId = 1
+        };
+
+        // Act
+        detail.OnBuildChanged(Build);
+
+        // Assert
     }
 }

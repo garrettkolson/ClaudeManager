@@ -192,7 +192,7 @@
                         {
                             <pre class="build-detail-pre">@_detail.ResultJson</pre>
                         }
-                        else if (_detail is not null)
+                        else if (_detail is null)
                         {
                             <div class="build-detail-fetch-error">No result data yet.</div>
                         }
@@ -206,7 +206,7 @@
             @if (_activeTab == 2)
             {
                 <div class="tab-content">
-                    @if (_detail null && !_detailLoading)
+                    @if (_detail is null && !_detailLoading)
                     {
                         <div class="build-detail-fetch-error ">AgentField control plane URL not available for this job.</div>
                     }
