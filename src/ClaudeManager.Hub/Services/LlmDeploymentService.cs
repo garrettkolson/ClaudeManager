@@ -190,7 +190,7 @@ public class LlmDeploymentService
             {
                 var msg = $"Container exited immediately after start (status: {containerStatus?.ToString() ?? "not found"})";
                 _logger.LogWarning("Deployment {Id}: {Message}", deployment.Id, msg);
-                await SetStatusAsync(deployment, LlmDeploymentStatus.Error, containerId: null, error: msg, ct);
+                await SetStatusAsync(deployment, LlmDeploymentStatus.Error, containerId, error: msg, ct);
                 return msg;
             }
 
@@ -322,7 +322,7 @@ public class LlmDeploymentService
         if (deployment is null) return (null, "Deployment not found.");
 
         if (deployment.ContainerId is null)
-            return (null, "No container is associated with this deployment (never started).");
+            return (null, "No container is associated with this deployment.");
 
         var host = await _gpuHosts.GetByHostIdAsync(deployment.HostId);
         if (host is null) return (null, $"GPU host '{deployment.HostId}' not found.");
