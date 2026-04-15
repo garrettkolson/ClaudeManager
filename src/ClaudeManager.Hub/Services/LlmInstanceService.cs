@@ -298,7 +298,7 @@ public class LlmInstanceService(
     internal DockerCommand BuildDockerRunCommand(LlmDeploymentEntity deployment, ExecutionHost host, string? hfToken)
     {
         var builder = new LlmDeploymentCommandBuilder()
-            .WithContainerName($"vllm-{deployment.ModelId.Replace("/", "-").Replace(".", "-")}-{Guid.CreateVersion7()}")
+            .WithContainerName($"vllm-{deployment.ModelId.Replace("/", "-").Replace(".", "-").Replace(":", "-")}-{Guid.CreateVersion7()}")
             .WithImageTag(string.IsNullOrWhiteSpace(deployment.ImageTag) ? "latest" : deployment.ImageTag)
             .WithGpus(deployment.GpuIndices ?? "0")
             .WithNvidiaRuntime()
