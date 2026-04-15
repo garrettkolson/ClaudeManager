@@ -1,9 +1,10 @@
 namespace ClaudeManager.Hub.Services.Docker;
 
 /// <summary>
-/// Configuration for vLLM deployment.
+/// Configuration for LLM deployment (vLLM or llama.cpp).
 /// </summary>
 public record LlmDeploymentConfig(
+    DeploymentType DeploymentType,
     string ImageTag,
     string ModelId,
     int HostPort,
@@ -15,12 +16,13 @@ public record LlmDeploymentConfig(
     string? HfToken = null,
     string? ServedModelName = null,
     double? GpuMemoryUtilization = null,
+    int? NggpuLayers = null,
     bool UseHostNetwork = false
 );
 
 /// <summary>
-/// Builder for vLLM container Docker commands.
-/// Specialized builder that extends DockerCommandBuilder with vLLM-specific flags.
+/// Builder for LLM server container Docker commands.
+/// Supports both vLLM and llama.cpp/llama-server deployment types.
 /// </summary>
 public class LlmDeploymentCommandBuilder
 {
@@ -135,18 +137,52 @@ public class LlmDeploymentCommandBuilder
     /// <summary>
     /// Sets the vLLM image tag.
     /// </summary>
+    /// <summary>
+    /// Sets the deployment type (vLLM or llama.cpp).
+    /// </summary>
+    public LlmDeploymentCommandBuilder WithDeploymentType(DeploymentType type)
+    {
+        _config = (_config ?? new LlmDeploymentConfig(
+            DeploymentType: type,
+            ImageTag: string.Empty,
+            ModelId: string.Empty,
+            HostPort: 0)) with
+        {
+            DeploymentType = type,
+        };
+        return this;
+    }
+
     public LlmDeploymentCommandBuilder WithImageTag(string tag)
     {
-        _baseBuilder.WithImage($"vllm/vllm-openai:{tag}");
+        var imagePrefix = _config?.DeploymentType == DeploymentType.Llamacpp
+            ? "ghcr.io/ggerganov/llama-server"
+            : "vllm/vllm-openai";
+        _baseBuilder.WithImage($"{imagePrefix}:{tag}");
         return this;
     }
 
     /// <summary>
-    /// Configures vLLM model parameters.
+    /// Configures llama.cpp GPU layer count (--n-gpu-layers).
+    /// </summary>
+    public LlmDeploymentCommandBuilder WithNggpuLayers(int? layers)
+    {
+        _config ??= new LlmDeploymentConfig(
+            DeploymentType: DeploymentType.Vllm,
+            ImageTag: string.Empty,
+            ModelId: string.Empty,
+            HostPort: 0);
+        _config = _config with { NggpuLayers = layers };
+        return this;
+    }
+
+    /// <summary>
+    /// Configures model parameters for the deployment.
     /// </summary>
     public LlmDeploymentCommandBuilder WithModel(string modelId, string? quantization = null, int? maxModelLen = null)
     {
         _config = (_config ?? new LlmDeploymentConfig(
+            DeploymentType: DeploymentType.Vllm,
             ImageTag: string.Empty,
             ModelId: modelId,
             HostPort: 0)) with
@@ -161,19 +197,32 @@ public class LlmDeploymentCommandBuilder
     /// <summary>
     /// Sets the served model name for the OpenAI-compatible API (--served-model-name).
     /// </summary>
+    /// <summary>
+    /// Sets the served model name for the OpenAI-compatible API (--served-model-name).
+    /// vLLM only; llama.cpp uses --model alias.
+    /// </summary>
     public LlmDeploymentCommandBuilder WithServedModelName(string name)
     {
-        _config ??= new LlmDeploymentConfig(ImageTag: string.Empty, ModelId: string.Empty, HostPort: 0);
+        _config ??= new LlmDeploymentConfig(
+            DeploymentType: DeploymentType.Vllm,
+            ImageTag: string.Empty,
+            ModelId: string.Empty,
+            HostPort: 0);
         _config = _config with { ServedModelName = name };
         return this;
     }
 
     /// <summary>
     /// Sets the GPU memory utilization fraction (--gpu-memory-utilization), e.g. 0.88.
+    /// vLLM only; llama.cpp uses --n-gpu-layers.
     /// </summary>
     public LlmDeploymentCommandBuilder WithGpuMemoryUtilization(double utilization)
     {
-        _config ??= new LlmDeploymentConfig(ImageTag: string.Empty, ModelId: string.Empty, HostPort: 0);
+        _config ??= new LlmDeploymentConfig(
+            DeploymentType: DeploymentType.Vllm,
+            ImageTag: string.Empty,
+            ModelId: string.Empty,
+            HostPort: 0);
         _config = _config with { GpuMemoryUtilization = utilization };
         return this;
     }
@@ -190,10 +239,12 @@ public class LlmDeploymentCommandBuilder
 
     /// <summary>
     /// Sets the tensor parallel size for multi-GPU deployment.
+    /// vLLM only; llama.cpp does not support tensor parallelism.
     /// </summary>
     public LlmDeploymentCommandBuilder WithTensorParallelSize(int size)
     {
         _config ??= new LlmDeploymentConfig(
+            DeploymentType: DeploymentType.Vllm,
             ImageTag: string.Empty,
             ModelId: string.Empty,
             HostPort: 0,
@@ -209,11 +260,13 @@ public class LlmDeploymentCommandBuilder
     }
 
     /// <summary>
-    /// Adds extra vLLM command arguments.
+    /// Adds extra deployment command arguments.
+    /// Arguments are passed directly to the underlying server (vLLM or llama-server).
     /// </summary>
     public LlmDeploymentCommandBuilder WithExtraArgs(string extraArgs)
     {
         _config ??= new LlmDeploymentConfig(
+            DeploymentType: DeploymentType.Vllm,
             ImageTag: string.Empty,
             ModelId: string.Empty,
             HostPort: 0,
@@ -238,7 +291,8 @@ public class LlmDeploymentCommandBuilder
     }
 
     /// <summary>
-    /// Builds the DockerCommand for the vLLM deployment.
+    /// Builds the DockerCommand for the LLM deployment.
+    /// Generates type-specific arguments for vLLM or llama.cpp.
     /// </summary>
     public DockerCommand Build()
     {
@@ -247,7 +301,7 @@ public class LlmDeploymentCommandBuilder
             throw new InvalidOperationException("Model configuration must be set before building.");
         }
 
-        var args = BuildVllmCommandArgs(_config);
+        var args = BuildCommandArgs(_config);
         var baseCommand = _baseBuilder
             .WithInteractiveDetached()
             .WithCommand(args)
@@ -260,48 +314,64 @@ public class LlmDeploymentCommandBuilder
         };
     }
 
-    private string[] BuildVllmCommandArgs(LlmDeploymentConfig config)
+    private string[] BuildCommandArgs(LlmDeploymentConfig config)
     {
         var args = new List<string>();
 
         args.Add("--host");
         args.Add("0.0.0.0");
         args.Add("--port");
-        // With host networking the user configures the actual host port directly; otherwise always 8000.
         args.Add(config.UseHostNetwork && config.HostPort > 0 ? config.HostPort.ToString() : "8000");
+
+        // llama.cpp uses --model for the GGUF file path
+        // vLLM uses --model for the model ID
         args.Add("--model");
         args.Add(config.ModelId);
 
-        if (config.TensorParallelSize.HasValue)
+        // llama.cpp specific
+        if (config.DeploymentType == DeploymentType.Llamacpp)
         {
-            args.Add("--tensor-parallel-size");
-            args.Add(config.TensorParallelSize.Value.ToString());
+            if (config.NggpuLayers.HasValue)
+            {
+                args.Add("--n-gpu-layers");
+                args.Add(config.NggpuLayers.Value.ToString());
+            }
+        }
+        else
+        {
+            // vLLM specific
+            if (config.TensorParallelSize.HasValue)
+            {
+                args.Add("--tensor-parallel-size");
+                args.Add(config.TensorParallelSize.Value.ToString());
+            }
+
+            if (!string.IsNullOrEmpty(config.Quantization) && config.Quantization != "none")
+            {
+                args.Add("--quantization");
+                args.Add(config.Quantization);
+            }
+
+            if (config.MaxModelLen.HasValue)
+            {
+                args.Add("--max-model-len");
+                args.Add(config.MaxModelLen.Value.ToString());
+            }
+
+            if (config.GpuMemoryUtilization.HasValue)
+            {
+                args.Add("--gpu-memory-utilization");
+                args.Add(config.GpuMemoryUtilization.Value.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            if (!string.IsNullOrEmpty(config.ServedModelName))
+            {
+                args.Add("--served-model-name");
+                args.Add(config.ServedModelName);
+            }
         }
 
-        if (!string.IsNullOrEmpty(config.Quantization))
-        {
-            args.Add("--quantization");
-            args.Add(config.Quantization);
-        }
-
-        if (config.MaxModelLen.HasValue)
-        {
-            args.Add("--max-model-len");
-            args.Add(config.MaxModelLen.Value.ToString());
-        }
-
-        if (config.GpuMemoryUtilization.HasValue)
-        {
-            args.Add("--gpu-memory-utilization");
-            args.Add(config.GpuMemoryUtilization.Value.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
-        }
-
-        if (!string.IsNullOrEmpty(config.ServedModelName))
-        {
-            args.Add("--served-model-name");
-            args.Add(config.ServedModelName);
-        }
-
+        // Extra args for both types
         if (!string.IsNullOrEmpty(config.ExtraArgs))
         {
             var extra = config.ExtraArgs.Split(' ', StringSplitOptions.RemoveEmptyEntries);

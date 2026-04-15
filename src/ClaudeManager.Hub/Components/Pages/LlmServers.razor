@@ -203,7 +203,7 @@
                                 <td colspan="6">
                                     @if (detected.Count == 0)
                                     {
-                                        <div class="llm-hint">No vLLM containers found on this host.</div>
+                                        <div class="llm-hint">No LLM containers (vLLM or llama.cpp) found on this host.</div>
                                     }
                                     else
                                     {
@@ -357,7 +357,13 @@
                     <input class="llm-input" @bind="_deployForm.HostPort" type="number"
                            placeholder="8000" />
 
-                    <label class="llm-label">vLLM Image</label>
+                    <label class="llm-label">Deployment Type</label>
+                    <select class="llm-input" @bind="_deployForm.DeploymentType">
+                        <option value="Vllm">vLLM (CUDA, tensor parallelism, AWQ/GPTQ)</option>
+                        <option value="Llamacpp">llama.cpp (GGUF, --n-gpu-layers)</option>
+                    </select>
+
+                    <label class="llm-label">Image</label>
                     <select class="llm-input" @bind="_deployForm.ImageTag">
                         <option value="latest">latest (stable)</option>
                         <option value="nightly">nightly (cutting edge)</option>
@@ -369,12 +375,22 @@
                                placeholder="e.g. gemma4" />
                     }
 
-                    <label class="llm-label">Quantization</label>
-                    <select class="llm-input" @bind="_deployForm.Quantization">
-                        <option value="none">none (fp16)</option>
-                        <option value="awq">AWQ (~4-bit)</option>
-                        <option value="gptq">GPTQ (~4-bit)</option>
-                    </select>
+                    @if (_deployForm.DeploymentType == "Vllm")
+                    {
+                        <label class="llm-label">Quantization (vLLM only)</label>
+                        <select class="llm-input" @bind="_deployForm.Quantization">
+                            <option value="none">none (fp16)</option>
+                            <option value="awq">AWQ (~4-bit)</option>
+                            <option value="gptq">GPTQ (~4-bit)</option>
+                        </select>
+                    }
+                    @if (_deployForm.DeploymentType == "Llamacpp")
+                    {
+                        <label class="llm-label">GPU Layers (llama.cpp only)</label>
+                        <input class="llm-input" @bind="_deployForm.NggpuLayers" type="number"
+                               placeholder="e.g. 35 (use all GPUs)" />
+                        <span class="llm-hint">Number of model layers to offload to GPU</span>
+                    }
 
                     <label class="llm-label">Parameters (B)</label>
                     <div class="llm-input-row">
@@ -613,7 +629,13 @@
                 <label class="llm-label">Port *</label>
                 <input class="llm-input" @bind="_deployEditForm.HostPort" type="number" />
 
-                <label class="llm-label">vLLM Image</label>
+                <label class="llm-label">Deployment Type</label>
+                <select class="llm-input" @bind="_deployEditForm.DeploymentType">
+                    <option value="Vllm">vLLM (CUDA, tensor parallelism, AWQ/GPTQ)</option>
+                    <option value="Llamacpp">llama.cpp (GGUF, --n-gpu-layers)</option>
+                </select>
+
+                <label class="llm-label">Image</label>
                 <select class="llm-input" @bind="_deployEditForm.ImageTag">
                     <option value="latest">latest (stable)</option>
                     <option value="nightly">nightly (cutting edge)</option>
@@ -625,12 +647,22 @@
                            placeholder="e.g. gemma4" />
                 }
 
-                <label class="llm-label">Quantization</label>
-                <select class="llm-input" @bind="_deployEditForm.Quantization">
-                    <option value="none">none (fp16)</option>
-                    <option value="awq">AWQ (~4-bit)</option>
-                    <option value="gptq">GPTQ (~4-bit)</option>
-                </select>
+                @if (_deployEditForm.DeploymentType == "Vllm")
+                {
+                    <label class="llm-label">Quantization (vLLM only)</label>
+                    <select class="llm-input" @bind="_deployEditForm.Quantization">
+                        <option value="none">none (fp16)</option>
+                        <option value="awq">AWQ (~4-bit)</option>
+                        <option value="gptq">GPTQ (~4-bit)</option>
+                    </select>
+                }
+                @if (_deployEditForm.DeploymentType == "Llamacpp")
+                {
+                    <label class="llm-label">GPU Layers (llama.cpp only)</label>
+                    <input class="llm-input" @bind="_deployEditForm.NggpuLayers" type="number"
+                           placeholder="e.g. 35 (use all GPUs)" />
+                    <span class="llm-hint">Number of model layers to offload to GPU</span>
+                }
 
                 <label class="llm-label">Max Context</label>
                 <input class="llm-input" @bind="_deployEditForm.MaxModelLen" type="number"
@@ -1006,10 +1038,16 @@
                 ? _deployForm.CustomImageTag?.Trim()
                 : _deployForm.ImageTag;
 
+            // Parse deployment type from string
+            var deploymentType = Enum.TryParse<DeploymentType>(_deployForm.DeploymentType, out var dt)
+                ? dt
+                : DeploymentType.Vllm;
+
             var d = await DeploymentSvc.CreateAsync(
                 hostId:               _deployForm.HostId,
                 modelId:              _deployForm.ModelId,
                 gpuIndices:           gpuIndices,
+                deploymentType:       deploymentType,
                 hostPort:             _deployForm.HostPort,
                 quantization:         _deployForm.Quantization,
                 imageTag:             resolvedTag ?? "latest",
@@ -1019,7 +1057,8 @@
                 useHostNetwork:       _deployForm.UseHostNetwork,
                 shmSize:              _deployForm.ShmSize,
                 servedModelName:      _deployForm.ServedModelName,
-                gpuMemoryUtilization: _deployForm.GpuMemoryUtilization);
+                gpuMemoryUtilization: _deployForm.GpuMemoryUtilization,
+                nggpuLayers:          _deployForm.NggpuLayers);
 
             _deployments ??= [];
             _deployments.Add(d);
@@ -1068,9 +1107,11 @@
         {
             GpuIndices           = dep.GpuIndices,
             HostPort             = dep.HostPort,
+            DeploymentType       = dep.DeploymentType.ToString(),
             ImageTag             = knownTags.Contains(dep.ImageTag) ? dep.ImageTag : "__custom",
             CustomImageTag       = knownTags.Contains(dep.ImageTag) ? null : dep.ImageTag,
             Quantization         = dep.Quantization,
+            NggpuLayers          = dep.NggpuLayers,
             MaxModelLen          = dep.MaxModelLen,
             UseHostNetwork       = dep.UseHostNetwork,
             ShmSize              = dep.ShmSize,
@@ -1350,9 +1391,11 @@
     {
         public string  GpuIndices            { get; set; } = "";
         public int     HostPort              { get; set; } = 8000;
+        public string  DeploymentType        { get; set; } = "Vllm";
         public string  ImageTag              { get; set; } = "latest";
         public string? CustomImageTag        { get; set; }
         public string  Quantization          { get; set; } = "none";
+        public int?    NggpuLayers           { get; set; }
         public int?    MaxModelLen           { get; set; }
         public bool    UseHostNetwork        { get; set; }
         public string? ShmSize              { get; set; }
@@ -1369,9 +1412,11 @@
         public string  GpuIndicesText        { get; set; } = "";
         public List<int> SelectedGpuIndices  { get; set; } = [];
         public int     HostPort              { get; set; } = 8000;
+        public string  DeploymentType        { get; set; } = "Vllm";
         public string  ImageTag              { get; set; } = "latest";
         public string? CustomImageTag        { get; set; }
         public string  Quantization          { get; set; } = "none";
+        public int?    NggpuLayers           { get; set; }
         public double? ParamsBillions        { get; set; }
         public int?    MaxModelLen           { get; set; }
         public bool    UseHostNetwork        { get; set; }

@@ -6,7 +6,7 @@ using ClaudeManager.Hub.Services.Docker;
 namespace ClaudeManager.Hub.Services;
 
 /// <summary>
-/// Manages a per-host nginx Docker container that reverse-proxies vLLM instances.
+/// Manages a per-host nginx Docker container that reverse-proxies LLM instances (vLLM or llama.cpp).
 /// One upstream block is generated per distinct model ID; instances of the same model
 /// are load-balanced within that upstream.
 /// </summary>
@@ -15,8 +15,8 @@ public class NginxProxyService(ILogger<NginxProxyService> logger, IDockerExecuto
     private readonly ConcurrentDictionary<string, (NginxProxyStatus Status, string? Error, DateTimeOffset UpdatedAt)>
         _statusCache = new();
 
-    private const string ContainerName  = "vllm-nginx-proxy";
-    private const string ConfigSubDir   = ".vllm-proxy";
+    private const string ContainerName  = "llm-nginx-proxy";
+    private const string ConfigSubDir   = ".llm-proxy";
     private const string ConfigFile     = "nginx.conf";
 
     // ── Config generation ─────────────────────────────────────────────────────

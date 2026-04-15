@@ -30,9 +30,15 @@ public class LlmDeploymentEntity
     /// <summary>Port exposed on the GPU host (mapped to container port 8000).</summary>
     public int HostPort { get; set; }
 
-    /// <summary>Quantization mode: "none", "awq", or "gptq".</summary>
+    /// <summary>Type of LLM server deployment.</summary>
+    public DeploymentType DeploymentType { get; set; } = DeploymentType.Vllm;
+
+    /// <summary>Quantization mode: "none", "awq", or "gptq" (vLLM only).</summary>
     [MaxLength(50)]
     public string Quantization { get; set; } = "none";
+
+    /// <summary>llama.cpp: number of GPU layers to offload. Null = auto-detect. vLLM: unused.</summary>
+    public int? NggpuLayers { get; set; }
 
     /// <summary>Docker image tag: "latest" (stable) or "nightly" (cutting edge).</summary>
     [MaxLength(50)]

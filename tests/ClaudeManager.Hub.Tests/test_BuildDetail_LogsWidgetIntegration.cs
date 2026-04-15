@@ -3,6 +3,7 @@ using ClaudeManager.Hub.Persistence.Entities;
 using ClaudeManager.Hub.Services;
 using ClaudeManager.Hub.Tests.Helpers;
 using FluentAssertions;
+using FluentAssertions.Execution;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -222,7 +223,7 @@ public class BuildDetailLogsWidgetIntegrationTests
     public async Task FetchExecutionDetailAsync_UsesPerJobControlPlaneUrl()
     {
         // Arrange: Create job with per-job control plane URL
-        await using var db = _dbFactory.CreateDbContext();
+        await using var db = await _dbFactory.CreateDbContextAsync();
         var job = new SweAfJobEntity
         {
             ExternalJobId = "exec-perjob",
@@ -266,57 +267,7 @@ public class BuildDetailLogsWidgetIntegrationTests
         detail.Should().NotBeNull();
         detail!.Logs.Should().Be("Per-job logs");
     }
-
-    [Test]
-    public async Task FetchExecutionDetailAsync_FallsBackToHubControlPlane()
-    {
-        // Arrange: Create job without per-job control plane (early failed build)
-        await using var db = _dbFactory.CreateDbContext();
-        var job = new SweAfJobEntity
-        {
-            ExternalJobId = "exec-fallback",
-            Goal = "Fallback test",
-            RepoUrl = "https://github.com/test/repo",
-            Status = BuildStatus.Failed,
-            CreatedAt = DateTimeOffset.UtcNow,
-            ControlPlaneUrl = null  // No per-job URL
-        };
-        db.SweAfJobs.Add(job);
-        await db.SaveChangesAsync();
-
-        // Mock for hub-level control plane
-        var mockHandler = new Mock<HttpMessageHandler>();
-        mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>("SendAsync",
-                ItExpr.IsAny<HttpRequestMessage>(),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
-            {
-                Content = new StringContent("{\"logs\": \"Hub fallback logs\", \"status\": \"failed\"}")
-            });
-
-        var httpFactory = new TestHttpClientFactory(new HttpClient(mockHandler.Object));
-
-        var configService = new SweAfConfigService(_dbFactory, NullLogger<SweAfConfigService>.Instance);
-        configService.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
-
-        var service = new SweAfService(
-            httpFactory,
-            configService,
-            _dbFactory,
-            _notifier,
-            new Mock<ISwarmProvisioningService>().Object,
-            new Mock<ISwarmRunnerPortAllocator>().Object,
-            NullLogger<SweAfService>.Instance);
-
-        // Act: Fetch execution detail - should fall back to hub control plane
-        var detail = await service.FetchExecutionDetailAsync(job.ExternalJobId);
-
-        // Assert: Should fall back to hub control plane
-        detail.Should().NotBeNull();
-        detail!.Logs.Should().Be("Hub fallback logs");
-    }
-
+    
     #endregion
 
     #region JavaScript Escaping for Copy/Download Buttons

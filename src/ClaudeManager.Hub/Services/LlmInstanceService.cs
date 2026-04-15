@@ -23,8 +23,8 @@ public interface ILlmInstanceService
     Task<ContainerStatus?> InspectContainerAsync(
         GpuHostEntity host, string containerId, CancellationToken ct = default);
 
-    Task<(List<RawVllmContainerInfo> Containers, string? Error)>
-        ListRunningVllmContainersAsync(GpuHostEntity host, CancellationToken ct = default);
+    Task<(List<RawLlmContainerInfo> Containers, string? Error)>
+        ListRunningLlmContainersAsync(GpuHostEntity host, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -171,11 +171,11 @@ public class LlmInstanceService(
     // ── Container detection ───────────────────────────────────────────────────
 
     /// <summary>
-    /// Lists all running vLLM (<c>vllm/vllm-openai:*</c>) containers on the given host
-    /// by querying <c>docker ps</c> then <c>docker inspect</c> for each container ID found.
+    /// Lists all running LLM containers (<c>vllm/vllm-openai:*</c> or <c>ghcr.io/ggerganov/llama-server:*</c>)
+    /// on the given host by querying <c>docker ps</c> then <c>docker inspect</c> for each container ID found.
     /// </summary>
-    public async Task<(List<RawVllmContainerInfo> Containers, string? Error)>
-        ListRunningVllmContainersAsync(GpuHostEntity host, CancellationToken ct = default)
+    public async Task<(List<RawLlmContainerInfo> Containers, string? Error)>
+        ListRunningLlmContainersAsync(GpuHostEntity host, CancellationToken ct = default)
     {
         var psResult = await dockerExecutor.ExecuteAsync(
             DockerCommand.FromString("ps -q --no-trunc"),
@@ -192,7 +192,7 @@ public class LlmInstanceService(
 
         if (ids.Count == 0) return ([], null);
 
-        var results = new List<RawVllmContainerInfo>();
+        var results = new List<RawLlmContainerInfo>();
         foreach (var id in ids)
         {
             var inspectResult = await dockerExecutor.ExecuteAsync(
@@ -211,9 +211,10 @@ public class LlmInstanceService(
 
     /// <summary>
     /// Parses a single <c>docker inspect</c> JSON response.
-    /// Returns null when the container is not a vLLM instance or the JSON cannot be parsed.
+    /// Recognizes both vLLM and llama.cpp/llama-server images.
+    /// Returns null when the container is not a recognized LLM instance or the JSON cannot be parsed.
     /// </summary>
-    internal static RawVllmContainerInfo? ParseDockerInspect(string containerId, string json)
+    internal static RawLlmContainerInfo? ParseDockerInspect(string containerId, string json)
     {
         try
         {
@@ -223,7 +224,12 @@ public class LlmInstanceService(
             if (item is null) return null;
 
             var image = item.Config?.Image ?? "";
-            if (!image.Contains("vllm/vllm-openai", StringComparison.OrdinalIgnoreCase))
+            var deploymentType = DetectDeploymentType(image);
+
+            // Skip if not a recognized LLM image
+            if (deploymentType == DeploymentType.Vllm && !image.Contains("vllm/vllm-openai", StringComparison.OrdinalIgnoreCase))
+                return null;
+            if (deploymentType == DeploymentType.Llamacpp && !image.Contains("ghcr.io/ggerganov/llama-server", StringComparison.OrdinalIgnoreCase))
                 return null;
 
             var colon = image.LastIndexOf(':');
@@ -248,16 +254,38 @@ public class LlmInstanceService(
                 ? string.Join(",", devReq.DeviceIDs)
                 : null;
 
-            return new RawVllmContainerInfo(
+            // llama.cpp uses --n-gpu-layers
+            int? nggpuLayers = null;
+            if (deploymentType == DeploymentType.Llamacpp)
+            {
+                var nggpuStr = ParseCmdArg(cmd, "--n-gpu-layers");
+                if (nggpuStr is not null && int.TryParse(nggpuStr, out var nggpu))
+                    nggpuLayers = nggpu;
+            }
+
+            return new RawLlmContainerInfo(
                 ContainerId: containerId,
                 ImageTag: imageTag,
                 ModelId: modelId,
                 HostPort: hostPort,
                 GpuIndices: gpuIndices,
                 Quantization: quantization,
-                MaxModelLen: maxModelLen);
+                MaxModelLen: maxModelLen,
+                NggpuLayers: nggpuLayers,
+                DeploymentType: deploymentType);
         }
         catch { return null; }
+    }
+
+    private static DeploymentType DetectDeploymentType(string image)
+    {
+        if (image.Contains("ghcr.io/ggerganov/llama-server", StringComparison.OrdinalIgnoreCase))
+            return DeploymentType.Llamacpp;
+        if (image.Contains("vllm/vllm-openai", StringComparison.OrdinalIgnoreCase))
+            return DeploymentType.Vllm;
+
+        // Default to vLLM for backwards compatibility with existing containers
+        return DeploymentType.Vllm;
     }
 
     private static string? ParseCmdArg(string[]? args, string flag)
@@ -293,12 +321,14 @@ public class LlmInstanceService(
     // ── Command builder ───────────────────────────────────────────────────────
 
     /// <summary>
-    /// Builds a Docker run command for a vLLM deployment using the builder pattern.
+    /// Builds a Docker run command for an LLM deployment using the builder pattern.
+    /// Supports both vLLM and llama.cpp deployment types.
     /// </summary>
     internal DockerCommand BuildDockerRunCommand(LlmDeploymentEntity deployment, ExecutionHost host, string? hfToken)
     {
         var builder = new LlmDeploymentCommandBuilder()
-            .WithContainerName($"vllm-{deployment.ModelId.Replace("/", "-").Replace(".", "-")}-{Guid.CreateVersion7()}")
+            .WithContainerName($"{deployment.DeploymentType}-{deployment.ModelId.Replace("/", "-").Replace(".", "-")}-{Guid.CreateVersion7()}")
+            .WithDeploymentType(deployment.DeploymentType)
             .WithImageTag(string.IsNullOrWhiteSpace(deployment.ImageTag) ? "latest" : deployment.ImageTag)
             .WithGpus(deployment.GpuIndices ?? "0")
             .WithNvidiaRuntime()
@@ -316,26 +346,47 @@ public class LlmInstanceService(
         if (!string.IsNullOrWhiteSpace(hfToken))
             builder = builder.WithHfToken(hfToken);
 
-        if (deployment.Quantization is not "none" && !string.IsNullOrWhiteSpace(deployment.Quantization))
+        // llama.cpp uses --n-gpu-layers to specify GPU layer count
+        // vLLM uses --gpu-memory-utilization for memory fraction
+        if (deployment.DeploymentType == DeploymentType.Llamacpp)
         {
-            builder = builder.WithModel(deployment.ModelId, deployment.Quantization, deployment.MaxModelLen);
+            builder = builder.WithModel(deployment.ModelId);
+            if (deployment.NggpuLayers.HasValue)
+            {
+                builder = builder.WithNggpuLayers(deployment.NggpuLayers.Value);
+            }
         }
         else
         {
-            builder = builder.WithModel(deployment.ModelId, maxModelLen: deployment.MaxModelLen);
+            // vLLM model configuration
+            if (!string.IsNullOrWhiteSpace(deployment.Quantization) && deployment.Quantization != "none")
+            {
+                builder = builder.WithModel(deployment.ModelId, deployment.Quantization, deployment.MaxModelLen);
+            }
+            else
+            {
+                builder = builder.WithModel(deployment.ModelId, maxModelLen: deployment.MaxModelLen);
+            }
+
+            // vLLM multi-GPU support via tensor parallelism
+            var gpuCount = (deployment.GpuIndices ?? "").Equals("all", StringComparison.OrdinalIgnoreCase)
+                ? 1
+                : deployment.GpuIndices?.Split(',').Length ?? 1;
+            if (gpuCount > 1)
+            {
+                builder = builder.WithTensorParallelSize(gpuCount);
+            }
+
+            if (deployment.GpuMemoryUtilization.HasValue)
+            {
+                builder = builder.WithGpuMemoryUtilization(deployment.GpuMemoryUtilization.Value);
+            }
+
+            if (!string.IsNullOrWhiteSpace(deployment.ServedModelName))
+            {
+                builder = builder.WithServedModelName(deployment.ServedModelName);
+            }
         }
-
-        var gpuCount = (deployment.GpuIndices ?? "").Equals("all", StringComparison.OrdinalIgnoreCase)
-            ? 1
-            : deployment.GpuIndices?.Split(',').Length ?? 1;
-        if (gpuCount > 1)
-            builder = builder.WithTensorParallelSize(gpuCount);
-
-        if (deployment.GpuMemoryUtilization.HasValue)
-            builder = builder.WithGpuMemoryUtilization(deployment.GpuMemoryUtilization.Value);
-
-        if (!string.IsNullOrWhiteSpace(deployment.ServedModelName))
-            builder = builder.WithServedModelName(deployment.ServedModelName);
 
         if (!string.IsNullOrWhiteSpace(deployment.ExtraArgs))
             builder = builder.WithExtraArgs(deployment.ExtraArgs.Trim());

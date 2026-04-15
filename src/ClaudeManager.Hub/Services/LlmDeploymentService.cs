@@ -61,11 +61,12 @@ public class LlmDeploymentService
 
     public async Task<LlmDeploymentEntity> CreateAsync(
         string hostId, string modelId, string gpuIndices, int hostPort,
+        DeploymentType deploymentType = DeploymentType.Vllm,
         string quantization = "none", string imageTag = "latest",
         string? extraArgs = null, string? hfTokenOverride = null,
         int? maxModelLen = null, bool useHostNetwork = false,
         string? shmSize = null, string? servedModelName = null,
-        double? gpuMemoryUtilization = null)
+        double? gpuMemoryUtilization = null, int? nggpuLayers = null)
     {
         var entity = new LlmDeploymentEntity
         {
@@ -73,6 +74,7 @@ public class LlmDeploymentService
             HostId               = hostId,
             ModelId              = modelId.Trim(),
             GpuIndices           = gpuIndices.Trim(),
+            DeploymentType       = deploymentType,
             HostPort             = hostPort,
             Quantization         = quantization,
             ImageTag             = string.IsNullOrWhiteSpace(imageTag) ? "latest" : imageTag.Trim(),
@@ -83,6 +85,7 @@ public class LlmDeploymentService
             ShmSize              = string.IsNullOrWhiteSpace(shmSize) ? null : shmSize.Trim(),
             ServedModelName      = string.IsNullOrWhiteSpace(servedModelName) ? null : servedModelName.Trim(),
             GpuMemoryUtilization = gpuMemoryUtilization,
+            NggpuLayers          = nggpuLayers,
             Status               = LlmDeploymentStatus.Stopped,
             CreatedAt            = DateTimeOffset.UtcNow,
         };
@@ -237,13 +240,13 @@ public class LlmDeploymentService
     // ── Container detection ───────────────────────────────────────────────────
 
     /// <summary>
-    /// Scans the given host for running vLLM containers and correlates them with
+    /// Scans the given host for running LLM containers (vLLM or llama.cpp) and correlates them with
     /// deployments already tracked in the database.
     /// </summary>
-    public async Task<(List<DetectedVllmContainer> Containers, string? Error)> DetectContainersAsync(
+    public async Task<(List<DetectedLlmContainer> Containers, string? Error)> DetectContainersAsync(
         GpuHostEntity host, CancellationToken ct = default)
     {
-        var (rawList, error) = await _instance.ListRunningVllmContainersAsync(host, ct);
+        var (rawList, error) = await _instance.ListRunningLlmContainersAsync(host, ct);
         if (error is not null) return ([], error);
 
         await using var db = _dbFactory.CreateDbContext();
@@ -254,7 +257,7 @@ public class LlmDeploymentService
         var results = rawList.Select(raw =>
         {
             var match = existing.FirstOrDefault(d => d.ContainerId == raw.ContainerId);
-            return new DetectedVllmContainer(
+            return new DetectedLlmContainer(
                 ContainerId:            raw.ContainerId,
                 ImageTag:               raw.ImageTag,
                 ModelId:                raw.ModelId,
@@ -262,6 +265,8 @@ public class LlmDeploymentService
                 GpuIndices:             raw.GpuIndices,
                 Quantization:           raw.Quantization,
                 MaxModelLen:            raw.MaxModelLen,
+                NggpuLayers:            raw.NggpuLayers,
+                DeploymentType:         raw.DeploymentType,
                 AlreadyTracked:         match is not null,
                 ExistingDeploymentDbId: match?.Id,
                 ExistingDeploymentId:   match?.DeploymentId);
@@ -291,18 +296,20 @@ public class LlmDeploymentService
 
         var entity = new LlmDeploymentEntity
         {
-            DeploymentId  = deployId,
-            HostId        = hostId,
-            ModelId       = detected.ModelId ?? "(unknown)",
-            GpuIndices    = detected.GpuIndices ?? "0",
-            HostPort      = detected.HostPort ?? 8000,
-            Quantization  = detected.Quantization ?? "none",
-            ImageTag      = detected.ImageTag,
-            MaxModelLen   = detected.MaxModelLen,
-            ContainerId   = detected.ContainerId,
-            Status        = LlmDeploymentStatus.Running,
-            StartedAt     = DateTimeOffset.UtcNow,
-            CreatedAt     = DateTimeOffset.UtcNow,
+            DeploymentId   = deployId,
+            HostId         = hostId,
+            ModelId        = detected.ModelId ?? "(unknown)",
+            GpuIndices     = detected.GpuIndices ?? "0",
+            DeploymentType = detected.DeploymentType ?? DeploymentType.Vllm,
+            HostPort       = detected.HostPort ?? 8000,
+            Quantization   = detected.Quantization ?? "none",
+            ImageTag       = detected.ImageTag,
+            MaxModelLen    = detected.MaxModelLen,
+            NggpuLayers    = detected.NggpuLayers,
+            ContainerId    = detected.ContainerId,
+            Status         = LlmDeploymentStatus.Running,
+            StartedAt      = DateTimeOffset.UtcNow,
+            CreatedAt      = DateTimeOffset.UtcNow,
         };
 
         await using var db = _dbFactory.CreateDbContext();
