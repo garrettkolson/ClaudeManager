@@ -8,40 +8,41 @@ Fetch Jira issues on-demand from the Jira Cloud REST API, display them as a Kanb
 
 ## Phase 1 — Configuration & HTTP Client
 
-**New file:** `Services/JiraConfig.cs`
+**New file:** `Persistence/Entities/JiraConfigEntity.cs`
+
+Single-row DB table (same pattern as `SweAfConfigEntity`):
 ```
-JiraBaseUrl          // https://yourco.atlassian.net
-JiraEmail            // for Basic auth
-JiraApiToken         // Atlassian API token
-DefaultProjectKey    // e.g. "PROJ"
-DefaultJql           // e.g. "project = PROJ AND sprint in openSprints() ORDER BY rank ASC"
-DefaultRepoUrl       // pre-filled repo URL when pushing to a build (overridable at trigger time)
-OnDeckStatusName     // name of the inbound trigger column, e.g. "On Deck"
-ReviewStatusName     // name of the outbound target column, e.g. "Review"
-PollingIntervalSecs  // how often to poll for new On Deck issues (default: 60)
-WebhookSecret        // optional shared secret for validating inbound Jira webhooks
-IsConfigured         // computed: BaseUrl + Email + ApiToken all set
+Id (long, PK, identity)
+BaseUrl          [MaxLength(500)]   // https://yourco.atlassian.net
+Email            [MaxLength(500)]   // for Basic auth
+ApiToken         [MaxLength(500)]   // Atlassian API token
+DefaultProjectKey [MaxLength(50)]
+DefaultJql       [MaxLength(1000)]  // default: "project = {key} AND statusCategory != Done ORDER BY rank ASC"
+DefaultRepoUrl   [MaxLength(1000)]
+OnDeckStatusName [MaxLength(100)]   // default: "On Deck"
+ReviewStatusName [MaxLength(100)]   // default: "Review"
+PollingIntervalSecs (int)           // default: 60
+WebhookSecret    [MaxLength(500)]
+[NotMapped] IsConfigured            // computed: BaseUrl + Email + ApiToken all set
 ```
+
+**New file:** `Services/JiraConfigService.cs` (implements `IHostedService`)
+
+Follows `SweAfConfigService` exactly:
+- Loads the single `JiraConfigEntity` row at startup and caches it
+- `GetConfig()` — sync, returns cached entity
+- `GetConfigAsync()` — async, bypasses cache (for settings UI load)
+- `SaveAsync(entity)` — upserts the single row, refreshes cache
+- `IsConfigured` — sync property from cache
+
+**Modify:** `Persistence/ClaudeManagerDbContext.cs`
+- Add `DbSet<JiraConfigEntity> JiraConfigs`
+
+**New migration:** `AddJiraConfig`
 
 **Modify:** `Program.cs`
-- Bind `Jira` section → `JiraConfig` singleton
-- Register named `HttpClient` for Jira with `Authorization: Basic base64(email:token)` and `Accept: application/json` default headers
-
-**Modify:** `appsettings.json`
-```json
-"Jira": {
-  "BaseUrl": "",
-  "Email": "",
-  "ApiToken": "",
-  "DefaultProjectKey": "",
-  "DefaultJql": "project = {key} AND statusCategory != Done ORDER BY rank ASC",
-  "DefaultRepoUrl": "",
-  "OnDeckStatusName": "On Deck",
-  "ReviewStatusName": "Review",
-  "PollingIntervalSecs": 60,
-  "WebhookSecret": ""
-}
-```
+- Register `JiraConfigService` as both singleton and hosted service (same pattern as `SweAfConfigService`)
+- Register named `HttpClient` for Jira — headers are set per-request from `JiraConfigService.GetConfig()` rather than at registration time, since credentials can change without restart
 
 ---
 
@@ -72,7 +73,7 @@ TransitionToReviewAsync(issueKey)     → calls TransitionIssueAsync with Review
 FormatAsPrompt(issue)                 → combines key + summary + description into agent/build goal string
 ```
 
-Follows the `SweAfService` pattern: constructor-injected `HttpClient` + config + `IDbContextFactory` + `ILogger`.
+Follows the `SweAfService` pattern: constructor-injected `HttpClient` + `JiraConfigService` + `IDbContextFactory` + `ILogger`.
 
 `TransitionIssueAsync` resolves the target transition by name at call time (one extra GET per transition) rather than caching IDs, since transition IDs are project-specific and can change.
 
@@ -179,6 +180,12 @@ ReviewTransitionedAt (DateTimeOffset?)  // set when Hub moves issue to Review
 
 The component subscribes to `JiraNotifier.OnDeckIssueAdded` to update the board in real-time without manual refresh.
 
+**Settings panel** (collapsible section at the top of the page, same pattern as Foundry's config panel):
+- Loads via `JiraConfigService.GetConfigAsync()` on first expand
+- Fields: Base URL, Email, API Token (password input), Default Project Key, Default JQL, Default Repo URL, On Deck Status Name, Review Status Name, Polling Interval (seconds), Webhook Secret (password input)
+- Save calls `JiraConfigService.SaveAsync(entity)` and re-initializes the Jira `HttpClient` credentials
+- Shows an "unconfigured" banner on the board when `JiraConfigService.IsConfigured` is false, with a link to expand the settings panel
+
 **State:**
 ```
 _issues              List<JiraIssue>?
@@ -201,9 +208,9 @@ When work is approved in Claude Manager, the linked Jira issue is automatically 
 
 ### SWE-AF Builds
 
-**Modify:** `Services/SweAfService.cs` — `ApproveJobAsync`
+**Modify:** `Services/SweAfService.cs` — `ApplyEventAsync`
 
-After setting the job status to `Succeeded` (approval = true), look up any `JiraIssueLinkEntity` with `SweAfJobId = jobId`. If found, call `JiraService.TransitionToReviewAsync(issueKey)` and set `ReviewTransitionedAt`. Errors are logged but do not fail the approval — the user can manually transition in Jira if needed.
+`ApproveJobAsync` no longer sets local status — it only POSTs an approval response to the AgentField control plane. The actual `Succeeded` transition happens inside `ApplyEventAsync` when an `execution_completed` webhook arrives. Hook the Jira transition there: after `job.Status = BuildStatus.Succeeded` and `db.SaveChangesAsync()`, look up any `JiraIssueLinkEntity` with `SweAfJobId = job.Id`. If found, call `JiraService.TransitionToReviewAsync(issueKey)` and set `ReviewTransitionedAt`. Errors are logged but do not fail the webhook — the user can manually transition in Jira if needed.
 
 ### Agent Sessions
 
@@ -218,7 +225,7 @@ When a session has a linked `JiraIssueLinkEntity`, show a "Mark Complete & Move 
 ## Phase 7 — Navigation
 
 **Modify:** `Components/Layout/NavMenu.razor`
-- Add `<a href="/jira" class="nav-link">Jira</a>` after the Builds link
+- Add `<a href="/jira" class="nav-link">Jira</a>` after the Foundry link (SWE-AF/builds were consolidated into `/foundry` — there is no separate Builds link)
 - Optionally show a badge with count of unlinked "On Deck" issues (nice-to-have)
 
 ---
@@ -241,7 +248,8 @@ The "Push to Agent" action needs to start a Claude session on a selected connect
 
 | File | Action |
 |------|--------|
-| `Services/JiraConfig.cs` | Create |
+| `Persistence/Entities/JiraConfigEntity.cs` | Create |
+| `Services/JiraConfigService.cs` | Create |
 | `Services/JiraDtos.cs` | Create |
 | `Services/JiraService.cs` | Create |
 | `Services/JiraIssueCache.cs` | Create |
@@ -249,20 +257,20 @@ The "Push to Agent" action needs to start a Claude session on a selected connect
 | `Services/JiraPollingService.cs` | Create |
 | `Persistence/Entities/JiraIssueLinkEntity.cs` | Create |
 | `Persistence/ClaudeManagerDbContext.cs` | Modify |
+| `Persistence/Migrations/AddJiraConfig` | Generate |
 | `Persistence/Migrations/AddJiraIssueLinks` | Generate |
 | `Components/Pages/Issues.razor` | Create |
 | `Components/Pages/SessionDetail.razor` | Modify |
 | `Components/Layout/NavMenu.razor` | Modify |
 | `Services/SweAfService.cs` | Modify |
 | `Program.cs` | Modify |
-| `appsettings.json` | Modify |
 
 ---
 
 ## Implementation Order
 
-1. **Phase 1 + 2 + 3** — Config, DTOs, and `JiraService`. Verify Jira API connection and data shape before building anything else.
-2. **Phase 4** — DB entity and migration for link tracking.
+1. **Phase 1 + 2 + 3** — `JiraConfigEntity` + `JiraConfigService` + DTOs + `JiraService`. Run the `AddJiraConfig` migration and verify Jira API connection via the settings panel before building anything else.
+2. **Phase 4** — DB entity and migration for link tracking (`AddJiraIssueLinks`).
 3. **Phase 1b (polling)** — `JiraPollingService` + `JiraIssueCache` + `JiraNotifier`. Verify "On Deck" issues appear automatically.
 4. **Phase 5 + 7** — Kanban board UI and nav link.
 5. **Phase 6** — Outbound "Review" transition, hooked into `ApproveJobAsync` and `SessionDetail`.
