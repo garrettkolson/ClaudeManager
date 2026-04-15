@@ -116,9 +116,7 @@ public class DockerExecutor : IDockerExecutor
     {
         try
         {
-            var commandText = OperatingSystem.IsWindows()
-                ? $"docker {dockerArgs}"
-                : $"docker {dockerArgs}";
+            var commandText = $"docker {dockerArgs}";
 
             var psi = OperatingSystem.IsWindows()
                 ? new ProcessStartInfo("cmd.exe", $"/C {commandText}")
@@ -142,7 +140,7 @@ public class DockerExecutor : IDockerExecutor
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Local Docker command failed: {Command}", dockerArgs);
+            _logger?.LogError(ex, "Local Docker command failed: {Command}", dockerArgs);
             return new DockerExecutionResult(null, ex.Message, 1, false);
         }
     }
@@ -212,7 +210,7 @@ public class DockerExecutor : IDockerExecutor
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "SSH Docker command failed on {Host}: {Command}", remoteHost, command.Args);
+            _logger?.LogError(ex, "SSH Docker command failed on {Host}: {Command}", remoteHost, command.Args);
             return new DockerExecutionResult(null, ex.Message, 1, false);
         }
     }
@@ -329,7 +327,7 @@ public class DockerExecutor : IDockerExecutor
     private async Task<(string Stdout, string Stderr, int ExitCode)> ExecuteWithSudoAsync(
         SshClient client, string command, string sudoPassword, CancellationToken ct)
     {
-        _logger.LogInformation("Executing sudo Docker command on remote host: {Command}", command);
+        _logger?.LogInformation("Executing sudo Docker command on remote host: {Command}", command);
 
         try
         {
