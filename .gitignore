@@ -997,3 +997,7 @@ tmp/
 # VSVC update
 **/*.vsupup
 **/*.vsupup
+
+# Worktrees (parallel branch isolation)
+.worktrees/
+
