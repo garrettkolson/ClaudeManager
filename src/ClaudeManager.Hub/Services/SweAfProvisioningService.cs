@@ -495,6 +495,7 @@ public class SweAfProvisioningService(
             lines.Add($"AGENTFIELD_PORT={port.Value}");
         if (!string.IsNullOrWhiteSpace(config.ControlPlaneImageTag))
             lines.Add($"AGENTFIELD_IMAGE_TAG={config.ControlPlaneImageTag}");
+        lines.Add($"CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000");
 
         var quoted = string.Join(" ", lines.Select(l => "'" + l.Replace("'", "'\\''") + "'"));
         return $"printf '%s\\n' {quoted} > {repoPath}/.env";

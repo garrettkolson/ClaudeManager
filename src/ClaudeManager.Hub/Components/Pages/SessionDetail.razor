@@ -4,8 +4,10 @@
 @inject SessionStore Store
 @inject AgentCommandService Commands
 @inject IDbContextFactory<ClaudeManagerDbContext> DbFactory
+@inject ClaudeManager.Hub.Services.Jira.JiraService JiraSvc
 @inject IJSRuntime JS
 @using ClaudeManager.Hub.Persistence
+@using ClaudeManager.Hub.Persistence.Entities
 @using Microsoft.EntityFrameworkCore
 @using System.Text
 
@@ -30,6 +32,18 @@
                 @if (_lines.Count > 0)
                 {
                     <button class="btn-secondary" @onclick="DownloadTranscript">Download</button>
+                }
+                @if (_jiraLink is not null && _jiraLink.ReviewTransitionedAt is null)
+                {
+                    <button class="btn-approve-sm"
+                            @onclick="MarkCompleteAndMoveToReview"
+                            disabled="@_jiraTransitioning">
+                        @(_jiraTransitioning ? "Moving to Review…" : $"Mark Complete & Move {_jiraLink.IssueKey} to Review")
+                    </button>
+                }
+                @if (_jiraLink?.ReviewTransitionedAt is not null)
+                {
+                    <span class="history-badge">Moved to Review in Jira</span>
                 }
             }
         </div>
@@ -90,6 +104,8 @@
     private bool _loading = true;
     private string _prompt = string.Empty;
     private ElementReference _outputRef;
+    private JiraIssueLinkEntity? _jiraLink;
+    private bool _jiraTransitioning;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -108,9 +124,42 @@
 
         _loading = false;
 
+        await LoadJiraLinkAsync();
+
         Notifier.LineStreamed          += OnLineStreamed;
         Notifier.SessionStatusChanged  += OnSessionStatusChanged;
         Notifier.SessionEnded          += OnSessionEnded;
+    }
+
+    private async Task LoadJiraLinkAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _jiraLink = await db.JiraIssueLinks
+            .AsNoTracking()
+            .FirstOrDefaultAsync(l => l.SessionId == SessionId);
+    }
+
+    private async Task MarkCompleteAndMoveToReview()
+    {
+        if (_jiraLink is null) return;
+        _jiraTransitioning = true;
+        StateHasChanged();
+
+        var ok = await JiraSvc.TransitionToReviewAsync(_jiraLink.IssueKey);
+        if (ok)
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var link = await db.JiraIssueLinks.FindAsync(_jiraLink.Id);
+            if (link is not null)
+            {
+                link.ReviewTransitionedAt = DateTimeOffset.UtcNow;
+                await db.SaveChangesAsync();
+                _jiraLink = link;
+            }
+        }
+
+        _jiraTransitioning = false;
+        StateHasChanged();
     }
 
     private async Task LoadFromDbAsync()

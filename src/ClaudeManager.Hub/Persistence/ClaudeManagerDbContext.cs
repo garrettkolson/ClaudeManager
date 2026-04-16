@@ -15,6 +15,7 @@ public class ClaudeManagerDbContext : DbContext
     public DbSet<GpuHostEntity>        GpuHosts       { get; set; } = default!;
     public DbSet<HubSecretEntity>      HubSecrets     { get; set; } = default!;
     public DbSet<LlmDeploymentEntity>  LlmDeployments { get; set; } = default!;
+    public DbSet<JiraConfigEntity>     JiraConfigs    { get; set; } = default!;
     public DbSet<JiraIssueLinkEntity>  JiraIssueLinks { get; set; } = default!;
 
     public ClaudeManagerDbContext(DbContextOptions<ClaudeManagerDbContext> options)

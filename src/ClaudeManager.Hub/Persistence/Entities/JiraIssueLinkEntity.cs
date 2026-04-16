@@ -21,7 +21,6 @@ public class JiraIssueLinkEntity
     public long Id { get; set; }
 
     [MaxLength(50)]
-    [Index]
     public string IssueKey { get; set; } = "";
 
     [MaxLength(4000)]

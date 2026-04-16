@@ -1,3 +1,5 @@
+using ClaudeManager.Hub.Services.Jira;
+
 namespace ClaudeManager.Hub.Services;
 
 /// <summary>Notifies of On Deck issue events.</summary>

@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -23,7 +24,7 @@ public class JiraIssue
         Key = Key,
         Summary = Summary,
         Description = Description,
-        Status = Status is not null ? JsonSerializer.SerializeToElement(Status, _jsonOptions) : null,
+        Status = Status is not null ? JsonSerializer.SerializeToElement(Status) : null,
         Issuetype = Issuetype,
         Priority = Priority,
         Assignee = Assignee,

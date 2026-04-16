@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using ClaudeManager.Hub.Persistence;
 using ClaudeManager.Hub.Persistence.Entities;
+using ClaudeManager.Hub.Services.Jira;
 using Microsoft.EntityFrameworkCore;
 
 namespace ClaudeManager.Hub.Services;
@@ -19,6 +20,7 @@ public class SweAfService
     private readonly ISwarmRunnerPortAllocator _portAllocator;
     private readonly ILogger<SweAfService> _logger;
     private readonly TimeSpan _healthCheckTimeout;
+    private JiraService? _jiraSvc;
 
     /// <summary>
     /// Thread synchronization lock for protecting static collections.
@@ -168,6 +170,9 @@ public class SweAfService
         _logger             = logger;
         _healthCheckTimeout = healthCheckTimeout ?? TimeSpan.FromSeconds(300);
     }
+
+    // Called by Program.cs after both singletons are resolved, avoiding a circular dependency.
+    public void SetJiraService(JiraService jiraSvc) => _jiraSvc = jiraSvc;
 
     // ── HTTP helpers ──────────────────────────────────────────────────────────
 
@@ -850,6 +855,7 @@ public class SweAfService
                 job.Status      = BuildStatus.Succeeded;
                 job.CompletedAt = now;
                 job.PrUrls      = ExtractPrUrls(data);
+                await TryTransitionJiraToReviewAsync(db, job.Id);
                 break;
 
             case "execution_failed":
@@ -1055,5 +1061,35 @@ public class SweAfService
             }
         }
         return null;
+    }
+
+    private async Task TryTransitionJiraToReviewAsync(ClaudeManagerDbContext db, long jobId)
+    {
+        if (_jiraSvc is null || !_jiraSvc.IsConfigured) return;
+
+        try
+        {
+            var link = await db.JiraIssueLinks
+                .FirstOrDefaultAsync(l => l.SweAfJobId == jobId && l.ReviewTransitionedAt == null);
+            if (link is null) return;
+
+            var ok = await _jiraSvc.TransitionToReviewAsync(link.IssueKey);
+            if (ok)
+            {
+                link.ReviewTransitionedAt = DateTimeOffset.UtcNow;
+                // SaveChanges will be called by the caller after the switch block
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Jira transition to Review failed for {IssueKey} (job {JobId}); manual transition required",
+                    link.IssueKey, jobId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "TryTransitionJiraToReviewAsync failed for job {JobId}; Jira transition skipped", jobId);
+        }
     }
 }

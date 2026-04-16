@@ -1,0 +1,631 @@
+@page "/jira"
+@implements IDisposable
+@inject ClaudeManager.Hub.Services.Jira.JiraService JiraSvc
+@inject ClaudeManager.Hub.Services.JiraConfigService ConfigSvc
+@inject ClaudeManager.Hub.Services.JiraNotifier Notifier
+@inject ClaudeManager.Hub.Services.Jira.JiraIssueCache IssueCache
+@inject ClaudeManager.Hub.Services.SweAfService BuildsSvc
+@inject ClaudeManager.Hub.Services.AgentCommandService Commands
+@inject ClaudeManager.Hub.Services.SessionStore Store
+@inject IDbContextFactory<ClaudeManager.Hub.Persistence.ClaudeManagerDbContext> DbFactory
+@using ClaudeManager.Hub.Persistence.Entities
+@using ClaudeManager.Hub.Services.Jira
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Jira Issues — Claude Manager</PageTitle>
+
+<div class="issues-page">
+
+    @* ── Settings panel ─────────────────────────────────────────────────── *@
+
+    <div class="issues-settings-panel @(_showSettings ? "open" : "")">
+        <button class="issues-settings-toggle" @onclick="ToggleSettings">
+            @(_showSettings ? "▲ Settings" : "▼ Settings")
+        </button>
+
+        @if (_showSettings)
+        {
+            <div class="issues-settings-form">
+                @if (_settingsLoading)
+                {
+                    <div class="loading">Loading…</div>
+                }
+                else
+                {
+                    <div class="issues-settings-grid">
+                        <label>Base URL</label>
+                        <input @bind="_cfg.BaseUrl" placeholder="https://yourco.atlassian.net" />
+
+                        <label>Email</label>
+                        <input @bind="_cfg.Email" placeholder="you@company.com" />
+
+                        <label>API Token</label>
+                        <input @bind="_cfg.ApiToken" type="password" placeholder="Atlassian API token" />
+
+                        <label>Default Project Key</label>
+                        <input @bind="_cfg.DefaultProjectKey" placeholder="PROJ" />
+
+                        <label>Default JQL</label>
+                        <input @bind="_cfg.DefaultJql" placeholder="project = PROJ AND statusCategory != Done ORDER BY rank ASC" />
+
+                        <label>Default Repo URL</label>
+                        <input @bind="_cfg.DefaultRepoUrl" placeholder="https://github.com/org/repo" />
+
+                        <label>On Deck Status Name</label>
+                        <input @bind="_cfg.OnDeckStatusName" />
+
+                        <label>Review Status Name</label>
+                        <input @bind="_cfg.ReviewStatusName" />
+
+                        <label>Polling Interval (secs)</label>
+                        <input @bind="_cfg.PollingIntervalSecs" type="number" min="10" />
+
+                        <label>Webhook Secret</label>
+                        <input @bind="_cfg.WebhookSecret" type="password" placeholder="Optional HMAC secret" />
+                    </div>
+
+                    @if (_settingsError is not null)
+                    {
+                        <div class="error-msg">@_settingsError</div>
+                    }
+                    @if (_settingsSaved)
+                    {
+                        <div class="webhook-success">Settings saved.</div>
+                    }
+                    <div class="issues-settings-actions">
+                        <button class="btn-primary" @onclick="SaveSettings" disabled="@_settingsSaving">
+                            @(_settingsSaving ? "Saving…" : "Save")
+                        </button>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    @* ── Header ─────────────────────────────────────────────────────────── *@
+
+    <div class="issues-header">
+        <h1>Jira Issues</h1>
+        <div class="issues-toolbar">
+            <input class="issues-jql" @bind="_jql" @bind:event="oninput"
+                   placeholder="JQL filter…"
+                   @onkeydown="OnJqlKeyDown" />
+            <button class="btn-primary" @onclick="RefreshIssues" disabled="@_loading">
+                @(_loading ? "Loading…" : "Refresh")
+            </button>
+        </div>
+    </div>
+
+    @if (!JiraSvc.IsConfigured)
+    {
+        <div class="builds-unconfigured">
+            Jira is not configured.
+            <a href="" @onclick:preventDefault @onclick="() => { _showSettings = true; _ = LoadSettingsAsync(); }">
+                Open Settings
+            </a> to add your Atlassian base URL, email, and API token.
+        </div>
+    }
+    else
+    {
+        @* ── Kanban board ───────────────────────────────────────────────── *@
+
+        @if (_error is not null)
+        {
+            <div class="error-msg">@_error</div>
+        }
+
+        <div class="kanban-board">
+
+            @* On Deck column — always shown, fed from JiraIssueCache *@
+            <div class="kanban-column on-deck">
+                <div class="kanban-column-header">
+                    <span class="kanban-column-title">@ConfigSvc.GetConfig().OnDeckStatusName</span>
+                    <span class="kanban-column-count">@_onDeckIssues.Count</span>
+                </div>
+                <div class="kanban-cards">
+                    @foreach (var issue in _onDeckIssues)
+                    {
+                        <div class="kanban-card">
+                            @IssueCardContent(issue)
+                        </div>
+                    }
+                    @if (_onDeckIssues.Count == 0)
+                    {
+                        <div class="kanban-empty">No issues on deck</div>
+                    }
+                </div>
+            </div>
+
+            @* Columns derived from fetched issues *@
+            @foreach (var col in _columns)
+            {
+                var isDone = col.Category == "Done";
+                <div class="kanban-column @(isDone ? "done" : "") @(isDone && _doneClosed ? "collapsed" : "")">
+                    <div class="kanban-column-header" @onclick="() => { if (isDone) _doneClosed = !_doneClosed; }">
+                        <span class="kanban-column-title">@col.Name</span>
+                        <span class="kanban-column-count">@col.Issues.Count</span>
+                        @if (isDone)
+                        {
+                            <span class="kanban-column-toggle">@(_doneClosed ? "▼" : "▲")</span>
+                        }
+                    </div>
+                    @if (!isDone || !_doneClosed)
+                    {
+                        <div class="kanban-cards">
+                            @foreach (var issue in col.Issues)
+                            {
+                                <div class="kanban-card">
+                                    @IssueCardContent(issue)
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+
+    @* ── Issue Detail modal ──────────────────────────────────────────────── *@
+
+    @if (_showDetailModal && _selectedIssue is not null)
+    {
+        <div class="modal-overlay" @onclick="CloseModals">
+            <div class="modal issues-detail-modal" @onclick:stopPropagation>
+                <div class="modal-header">
+                    <h3>
+                        <a href="@_selectedIssue.Url" target="_blank">@_selectedIssue.Key</a>
+                        — @_selectedIssue.Summary
+                    </h3>
+                    <button class="btn-close" @onclick="CloseModals">✕</button>
+                </div>
+                <div class="issues-detail-body">
+                    @if (!string.IsNullOrWhiteSpace(GetDescription(_selectedIssue)))
+                    {
+                        <pre class="issues-description">@GetDescription(_selectedIssue)</pre>
+                    }
+                    @if (_detailLinks.Count > 0)
+                    {
+                        <h4>Linked Work</h4>
+                        <ul class="issues-links-list">
+                            @foreach (var link in _detailLinks)
+                            {
+                                <li>
+                                    @if (link.LinkType == LinkType.SweAfBuild)
+                                    {
+                                        <a href="/builds/@link.SweAfJobId">Build #@link.SweAfJobId</a>
+                                    }
+                                    else
+                                    {
+                                        <a href="/session/@link.SessionId/@link.SessionId">Session @link.SessionId?[..8]</a>
+                                    }
+                                    — linked @link.LinkedAt.LocalDateTime.ToString("MM/dd HH:mm")
+                                    @if (link.ReviewTransitionedAt is not null)
+                                    {
+                                        <span class="history-badge">moved to Review</span>
+                                    }
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+                <div class="modal-actions">
+                    <button class="btn-secondary" @onclick="CloseModals">Close</button>
+                    <button class="btn-primary" @onclick="() => OpenBuildModal(_selectedIssue)">Push to Build</button>
+                    <button class="btn-primary" @onclick="() => OpenAgentModal(_selectedIssue)">Push to Agent</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @* ── Push to Build modal ─────────────────────────────────────────────── *@
+
+    @if (_showBuildModal && _selectedIssue is not null)
+    {
+        <div class="modal-overlay" @onclick="CloseModals">
+            <div class="modal" @onclick:stopPropagation>
+                <h3>Push to Build — @_selectedIssue.Key</h3>
+
+                <label>Goal</label>
+                <textarea @bind="_buildGoal" rows="5" />
+
+                <label>Repository URL</label>
+                <input @bind="_buildRepoUrl" placeholder="https://github.com/org/repo" />
+
+                @if (_modalError is not null)
+                {
+                    <div class="error-msg">@_modalError</div>
+                }
+                @if (_triggerStatus is not null)
+                {
+                    <div class="trigger-status">@_triggerStatus</div>
+                }
+                <div class="modal-actions">
+                    <button class="btn-secondary" @onclick="CloseModals" disabled="@_triggering">Cancel</button>
+                    <button class="btn-primary" @onclick="TriggerBuild"
+                            disabled="@(_triggering || string.IsNullOrWhiteSpace(_buildGoal) || string.IsNullOrWhiteSpace(_buildRepoUrl))">
+                        @(_triggering ? "Starting…" : "Start Build")
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @* ── Push to Agent modal ─────────────────────────────────────────────── *@
+
+    @if (_showAgentModal && _selectedIssue is not null)
+    {
+        <div class="modal-overlay" @onclick="CloseModals">
+            <div class="modal" @onclick:stopPropagation>
+                <h3>Push to Agent — @_selectedIssue.Key</h3>
+
+                <label>Machine</label>
+                <select @bind="_agentMachineId">
+                    <option value="">— select machine —</option>
+                    @foreach (var machine in _machines)
+                    {
+                        <option value="@machine.MachineId">@machine.DisplayName</option>
+                    }
+                </select>
+
+                <label>Working Directory</label>
+                <input @bind="_agentWorkingDir" placeholder="/path/to/repo" />
+
+                <label>Prompt</label>
+                <textarea @bind="_agentPrompt" rows="5" />
+
+                @if (_modalError is not null)
+                {
+                    <div class="error-msg">@_modalError</div>
+                }
+                @if (_triggerStatus is not null)
+                {
+                    <div class="trigger-status">@_triggerStatus</div>
+                }
+                <div class="modal-actions">
+                    <button class="btn-secondary" @onclick="CloseModals" disabled="@_triggering">Cancel</button>
+                    <button class="btn-primary" @onclick="TriggerAgent"
+                            disabled="@(_triggering || string.IsNullOrWhiteSpace(_agentMachineId) || string.IsNullOrWhiteSpace(_agentPrompt))">
+                        @(_triggering ? "Starting…" : "Start Session")
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    // ── State ──────────────────────────────────────────────────────────────────
+
+    private List<JiraIssue> _onDeckIssues = [];
+    private List<KanbanColumn> _columns = [];
+    private bool _loading;
+    private string? _error;
+    private string _jql = "";
+    private bool _doneClosed = true;
+
+    private JiraIssue? _selectedIssue;
+    private bool _showDetailModal;
+    private bool _showBuildModal;
+    private bool _showAgentModal;
+    private List<JiraIssueLinkEntity> _detailLinks = [];
+
+    private string _buildGoal = "";
+    private string _buildRepoUrl = "";
+    private string _agentMachineId = "";
+    private string _agentWorkingDir = "";
+    private string _agentPrompt = "";
+    private bool _triggering;
+    private string? _modalError;
+    private string? _triggerStatus;
+
+    private bool _showSettings;
+    private bool _settingsLoading;
+    private bool _settingsSaving;
+    private bool _settingsSaved;
+    private string? _settingsError;
+    private JiraConfigEntity _cfg = new();
+
+    private List<ClaudeManager.Hub.Models.MachineAgent> _machines = [];
+
+    // ── Lifecycle ──────────────────────────────────────────────────────────────
+
+    protected override async Task OnInitializedAsync()
+    {
+        _jql          = ConfigSvc.GetConfig().DefaultJql ?? "";
+        _onDeckIssues = IssueCache.GetAllIssues();
+        _machines     = Store.GetAllMachines().ToList();
+
+        Notifier.OnDeckIssueAdded += OnDeckIssueAdded;
+        Notifier.IssueRemoved     += OnIssueRemoved;
+
+        if (JiraSvc.IsConfigured)
+            await RefreshIssues();
+    }
+
+    private void OnDeckIssueAdded(JiraIssue issue)
+    {
+        _onDeckIssues = IssueCache.GetAllIssues();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnIssueRemoved(string issueKey)
+    {
+        _onDeckIssues = IssueCache.GetAllIssues();
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Notifier.OnDeckIssueAdded -= OnDeckIssueAdded;
+        Notifier.IssueRemoved     -= OnIssueRemoved;
+    }
+
+    // ── Issue loading ──────────────────────────────────────────────────────────
+
+    private async Task RefreshIssues()
+    {
+        _loading = true;
+        _error   = null;
+        StateHasChanged();
+
+        var issues = await JiraSvc.GetIssuesAsync(_jql.Trim().Length > 0 ? _jql.Trim() : null);
+        _columns   = BuildColumns(issues);
+        _loading   = false;
+        StateHasChanged();
+    }
+
+    private async Task OnJqlKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await RefreshIssues();
+    }
+
+    private static List<KanbanColumn> BuildColumns(List<JiraIssue> issues)
+    {
+        var onDeckName = "On Deck"; // excluded — shown separately from cache
+        var grouped = issues
+            .Where(i => GetStatusName(i) != onDeckName)
+            .GroupBy(i => GetStatusName(i))
+            .Select(g =>
+            {
+                var category = GetStatusCategory(g.First());
+                return new KanbanColumn(g.Key, category, g.ToList());
+            })
+            .OrderBy(c => c.Category switch
+            {
+                "To Do"       => 0,
+                "In Progress" => 1,
+                "Done"        => 3,
+                _             => 2,
+            })
+            .ToList();
+        return grouped;
+    }
+
+    // ── Modals ─────────────────────────────────────────────────────────────────
+
+    private async Task OpenDetailModal(JiraIssue issue)
+    {
+        _selectedIssue  = issue;
+        _showDetailModal = true;
+        _detailLinks    = await LoadLinksAsync(issue.Key);
+        _modalError     = null;
+        _triggerStatus  = null;
+        StateHasChanged();
+    }
+
+    private void OpenBuildModal(JiraIssue issue)
+    {
+        _selectedIssue  = issue;
+        _showDetailModal = false;
+        _showBuildModal  = true;
+        _buildGoal      = JiraSvc.FormatAsPrompt(issue);
+        _buildRepoUrl   = ConfigSvc.GetConfig().DefaultRepoUrl ?? "";
+        _modalError     = null;
+        _triggerStatus  = null;
+    }
+
+    private void OpenAgentModal(JiraIssue issue)
+    {
+        _selectedIssue  = issue;
+        _showDetailModal = false;
+        _showAgentModal  = true;
+        _agentPrompt    = JiraSvc.FormatAsPrompt(issue);
+        _agentMachineId = _machines.FirstOrDefault()?.MachineId ?? "";
+        _agentWorkingDir = "";
+        _modalError     = null;
+        _triggerStatus  = null;
+    }
+
+    private void CloseModals()
+    {
+        _showDetailModal = false;
+        _showBuildModal  = false;
+        _showAgentModal  = false;
+        _triggering      = false;
+        _modalError      = null;
+        _triggerStatus   = null;
+    }
+
+    // ── Trigger actions ────────────────────────────────────────────────────────
+
+    private async Task TriggerBuild()
+    {
+        if (_selectedIssue is null) return;
+        _triggering    = true;
+        _modalError    = null;
+        _triggerStatus = "Starting build…";
+        StateHasChanged();
+
+        try
+        {
+            var job = await BuildsSvc.TriggerBuildAsync(_buildGoal.Trim(), _buildRepoUrl.Trim());
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            db.JiraIssueLinks.Add(new JiraIssueLinkEntity
+            {
+                IssueKey     = _selectedIssue.Key,
+                IssueSummary = _selectedIssue.Summary[..Math.Min(_selectedIssue.Summary.Length, 4000)],
+                LinkType     = LinkType.SweAfBuild,
+                SweAfJobId   = job.Id,
+                LinkedAt     = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+
+            _triggerStatus = $"Build #{job.Id} started.";
+        }
+        catch (Exception ex)
+        {
+            _modalError = ex.Message;
+        }
+        finally
+        {
+            _triggering = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task TriggerAgent()
+    {
+        if (_selectedIssue is null) return;
+        _triggering    = true;
+        _modalError    = null;
+        _triggerStatus = "Starting session…";
+        StateHasChanged();
+
+        try
+        {
+            var req = new ClaudeManager.Shared.Dto.StartSessionRequest(
+                _agentMachineId,
+                _agentWorkingDir.Trim(),
+                _agentPrompt.Trim(),
+                null);
+
+            var ok = await Commands.StartSessionAsync(req);
+            if (!ok)
+            {
+                _modalError = "Failed to start session. Is the machine online?";
+                return;
+            }
+
+            // Retrieve the new session so we can record its ID
+            var machine = Store.GetMachine(_agentMachineId);
+            var session = machine?.Sessions.Values
+                .OrderByDescending(s => s.StartedAt)
+                .FirstOrDefault();
+
+            if (session is not null)
+            {
+                await using var db = await DbFactory.CreateDbContextAsync();
+                db.JiraIssueLinks.Add(new JiraIssueLinkEntity
+                {
+                    IssueKey     = _selectedIssue.Key,
+                    IssueSummary = _selectedIssue.Summary[..Math.Min(_selectedIssue.Summary.Length, 4000)],
+                    LinkType     = LinkType.AgentSession,
+                    SessionId    = session.SessionId,
+                    LinkedAt     = DateTimeOffset.UtcNow,
+                });
+                await db.SaveChangesAsync();
+            }
+
+            _triggerStatus = "Session started.";
+        }
+        catch (Exception ex)
+        {
+            _modalError = ex.Message;
+        }
+        finally
+        {
+            _triggering = false;
+            StateHasChanged();
+        }
+    }
+
+    // ── Settings ───────────────────────────────────────────────────────────────
+
+    private async Task ToggleSettings()
+    {
+        _showSettings = !_showSettings;
+        if (_showSettings) await LoadSettingsAsync();
+    }
+
+    private async Task LoadSettingsAsync()
+    {
+        _settingsLoading = true;
+        StateHasChanged();
+        _cfg = await ConfigSvc.GetConfigAsync();
+        _settingsLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task SaveSettings()
+    {
+        _settingsSaving = true;
+        _settingsError  = null;
+        _settingsSaved  = false;
+        StateHasChanged();
+        try
+        {
+            await ConfigSvc.SaveAsync(_cfg);
+            _settingsSaved = true;
+        }
+        catch (Exception ex)
+        {
+            _settingsError = ex.Message;
+        }
+        finally
+        {
+            _settingsSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+
+    private async Task<List<JiraIssueLinkEntity>> LoadLinksAsync(string issueKey)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        return await db.JiraIssueLinks
+            .AsNoTracking()
+            .Where(l => l.IssueKey == issueKey)
+            .OrderByDescending(l => l.LinkedAt)
+            .ToListAsync();
+    }
+
+    private static string GetStatusName(JiraIssue issue) =>
+        issue.Status is JiraStatus s ? s.Name : issue.Status?.ToString() ?? "";
+
+    private static string GetStatusCategory(JiraIssue issue) =>
+        issue.Status is JiraStatus s ? s.StatusCategory : "";
+
+    private static string GetDescription(JiraIssue issue) =>
+        JiraDtosHelpers.ToPlainText(issue.Description);
+
+    private RenderFragment IssueCardContent(JiraIssue issue) => __builder =>
+    {
+        <div class="kanban-card-key">
+            <a href="@issue.Url" target="_blank">@issue.Key</a>
+        </div>
+        <div class="kanban-card-summary" title="@issue.Summary">@issue.Summary</div>
+        <div class="kanban-card-meta">
+            @if (!string.IsNullOrEmpty(issue.Priority))
+            {
+                <span class="kanban-priority @issue.Priority.ToLower()">@issue.Priority</span>
+            }
+            @if (!string.IsNullOrEmpty(issue.Assignee))
+            {
+                <span class="kanban-assignee" title="@issue.Assignee">@issue.Assignee[..Math.Min(issue.Assignee.Length, 12)]</span>
+            }
+            @if (issue.StoryPoints.HasValue)
+            {
+                <span class="kanban-points">@issue.StoryPoints sp</span>
+            }
+        </div>
+        <div class="kanban-card-actions">
+            <button class="btn-secondary-sm" @onclick="() => OpenDetailModal(issue)">Detail</button>
+            <button class="btn-secondary-sm" @onclick="() => OpenBuildModal(issue)">Build</button>
+            <button class="btn-secondary-sm" @onclick="() => OpenAgentModal(issue)">Agent</button>
+        </div>
+    };
+
+    private record KanbanColumn(string Name, string Category, List<JiraIssue> Issues);
+}

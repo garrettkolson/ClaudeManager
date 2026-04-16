@@ -6,6 +6,7 @@ using ClaudeManager.Hub.Models;
 using ClaudeManager.Hub.Persistence;
 using ClaudeManager.Hub.Services;
 using ClaudeManager.Hub.Services.Docker;
+using ClaudeManager.Hub.Services.Jira;
 using Microsoft.EntityFrameworkCore;
 
 // Wire SessionStore → PersistenceQueue after both are built
@@ -90,6 +91,17 @@ builder.Services.AddHostedService<SweAfRecoveryService>();
 builder.Services.AddSingleton<NotificationService>();
 builder.Services.AddSingleton<ILogParser, LogParser>();
 
+// ── Jira ──────────────────────────────────────────────────────────────────────
+// JiraConfigService must start before JiraPollingService so IsConfigured is ready.
+
+builder.Services.AddSingleton<JiraConfigService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<JiraConfigService>());
+builder.Services.AddHttpClient("jira");
+builder.Services.AddSingleton<JiraNotifier>();
+builder.Services.AddSingleton(JiraIssueCache.Instance);
+builder.Services.AddSingleton<JiraService>();
+builder.Services.AddHostedService<JiraPollingService>();
+
 // ── SignalR ───────────────────────────────────────────────────────────────────
 
 builder.Services.AddSignalR(opts =>
@@ -111,6 +123,10 @@ if (!app.Environment.IsDevelopment())
 // Link SessionStore to PersistenceQueue now that both singletons are resolved
 app.Services.GetRequiredService<SessionStore>()
    .SetPersistenceQueue(app.Services.GetRequiredService<IPersistenceQueue>());
+
+// Wire JiraService into SweAfService for outbound "Review" transitions
+app.Services.GetRequiredService<SweAfService>()
+   .SetJiraService(app.Services.GetRequiredService<JiraService>());
 
 app.UseMiddleware<AgentSecretMiddleware>();
 app.UseHttpsRedirection();
@@ -178,6 +194,90 @@ app.MapPost("/api/webhooks/agentfield", async (HttpRequest req, SweAfService svc
         try   { await svc.ProcessWebhookBatchAsync(batch); }
         catch (Exception ex) { logger.LogError(ex, "Webhook batch processing failed for batch {BatchId}", batch.BatchId); }
     });
+
+    return Results.Ok();
+});
+
+// ── Jira webhook (issue_updated → On Deck sync) ───────────────────────────────
+
+app.MapPost("/api/webhooks/jira", async (HttpRequest req, JiraConfigService cfgSvc, JiraIssueCache cache, JiraNotifier notifier, ILoggerFactory logFac) =>
+{
+    var cfg = cfgSvc.GetConfig();
+
+    // Verify HMAC signature if a secret is configured
+    if (!string.IsNullOrWhiteSpace(cfg.WebhookSecret))
+    {
+        var signature = req.Headers["X-Hub-Signature"].FirstOrDefault() ?? "";
+        using var ms  = new MemoryStream();
+        await req.Body.CopyToAsync(ms);
+        var body = ms.ToArray();
+
+        using var hmac = new System.Security.Cryptography.HMACSHA256(
+            System.Text.Encoding.UTF8.GetBytes(cfg.WebhookSecret));
+        var expected = "sha256=" + Convert.ToHexString(hmac.ComputeHash(body)).ToLowerInvariant();
+        if (!signature.Equals(expected, StringComparison.OrdinalIgnoreCase))
+            return Results.Unauthorized();
+
+        req.HttpContext.Items["jira_body"] = body;
+    }
+
+    JsonElement payload;
+    try
+    {
+        string json;
+        if (req.HttpContext.Items.TryGetValue("jira_body", out var cached) && cached is byte[] bytes)
+            json = System.Text.Encoding.UTF8.GetString(bytes);
+        else
+        {
+            using var sr = new StreamReader(req.Body);
+            json = await sr.ReadToEndAsync();
+        }
+        payload = JsonSerializer.Deserialize<JsonElement>(json,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+    }
+    catch
+    {
+        return Results.BadRequest("Invalid payload");
+    }
+
+    // Only handle issue_updated events where status changed to On Deck
+    if (!payload.TryGetProperty("webhookEvent", out var evt) ||
+        evt.GetString() != "jira:issue_updated")
+        return Results.Ok();
+
+    // Check changelog for a status transition to OnDeckStatusName
+    var onDeckName = cfg.OnDeckStatusName;
+    if (payload.TryGetProperty("changelog", out var changelog) &&
+        changelog.TryGetProperty("items", out var items))
+    {
+        foreach (var item in items.EnumerateArray())
+        {
+            if (item.TryGetProperty("field",    out var field)  && field.GetString() == "status" &&
+                item.TryGetProperty("toString", out var toStr)  && toStr.GetString()?.Equals(onDeckName, StringComparison.OrdinalIgnoreCase) == true)
+            {
+                // Parse the issue and add to cache
+                if (payload.TryGetProperty("issue", out var issueEl))
+                {
+                    var key     = issueEl.TryGetProperty("key", out var k) ? k.GetString() ?? "" : "";
+                    var fields  = issueEl.TryGetProperty("fields", out var f) ? f : default;
+                    var summary = fields.ValueKind != JsonValueKind.Undefined && fields.TryGetProperty("summary", out var s) ? s.GetString() ?? "" : "";
+                    if (!string.IsNullOrEmpty(key))
+                    {
+                        var issue = new JiraIssue
+                        {
+                            Key     = key,
+                            Summary = summary,
+                            Url     = $"{cfg.BaseUrl.TrimEnd('/')}/browse/{key}",
+                            Status  = new JiraStatus { Name = onDeckName },
+                        };
+                        if (cache.TryAdd(issue))
+                            notifier.NotifyDeckIssueAdded(issue);
+                    }
+                }
+                break;
+            }
+        }
+    }
 
     return Results.Ok();
 });
