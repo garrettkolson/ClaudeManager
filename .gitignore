@@ -1001,3 +1001,7 @@ tmp/
 # Worktrees (parallel branch isolation)
 .worktrees/
 
+
+# macOS system files
+.DS_Store
+
