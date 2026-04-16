@@ -546,6 +546,56 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                     b.ToTable("WikiEntries");
                 });
 
+            modelBuilder.Entity("ClaudeManager.Hub.Persistence.Entities.JiraIssueLinkEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("LinkedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("ReviewTransitionedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IssueKey")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IssueSummary")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("LinkType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SessionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("SweAfJobId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IssueKey");
+
+                    b.HasOne("ClaudeManager.Hub.Persistence.Entities.ClaudeSessionEntity", "ClaudeSession")
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired(false);
+
+                    b.HasOne("ClaudeManager.Hub.Persistence.Entities.SweAfJobEntity", "SweAfJob")
+                        .WithMany()
+                        .HasForeignKey("SweAfJobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired(false);
+
+                    b.ToTable("JiraIssueLinks");
+                });
+
             modelBuilder.Entity("ClaudeManager.Hub.Persistence.Entities.ClaudeSessionEntity", b =>
                 {
                     b.HasOne("ClaudeManager.Hub.Persistence.Entities.MachineAgentEntity", "Machine")
