@@ -386,6 +386,49 @@ html, body { height: 100%; font-family: 'Consolas', 'Courier New', monospace; ba
 .llm-context-estimate-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .llm-maxlen-input { max-width: 180px; }
 .error-text { color: #e05555; font-style: italic; font-size: 12px; }
+/* ── Jira Issues page ── */
+.issues-page { display: flex; flex-direction: column; gap: 16px; }
+.issues-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.issues-header h1 { margin: 0; }
+.issues-toolbar { display: flex; align-items: center; gap: 8px; }
+.issues-jql { background: #0f1722; border: 1px solid #2a3a55; border-radius: 4px; color: #cdd6f4; font-size: 13px; padding: 6px 10px; width: 320px; }
+.issues-jql:focus { outline: none; border-color: #5a8aff; }
+/* Kanban board */
+.kanban-board { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 12px; align-items: flex-start; }
+.kanban-column { background: #1a2233; border: 1px solid #2a3a55; border-radius: 6px; min-width: 260px; width: 260px; flex-shrink: 0; display: flex; flex-direction: column; }
+.kanban-column.on-deck { border-color: #3a5a88; }
+.kanban-column.done { opacity: 0.75; }
+.kanban-column.done.collapsed .kanban-cards { display: none; }
+.kanban-column-header { display: flex; align-items: center; gap: 6px; padding: 10px 12px; border-bottom: 1px solid #2a3a55; cursor: default; }
+.kanban-column.done .kanban-column-header { cursor: pointer; }
+.kanban-column-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #8899bb; flex: 1; }
+.kanban-column.on-deck .kanban-column-title { color: #7cb8ff; }
+.kanban-column-count { background: #0f1722; color: #5a6a88; font-size: 11px; font-weight: bold; padding: 1px 7px; border-radius: 10px; }
+.kanban-column-toggle { color: #5a6a88; font-size: 11px; }
+.kanban-cards { display: flex; flex-direction: column; gap: 8px; padding: 10px; min-height: 40px; }
+.kanban-empty { color: #3a4a66; font-size: 12px; font-style: italic; padding: 8px 0; text-align: center; }
+.kanban-card { background: #0f1722; border: 1px solid #2a3a55; border-radius: 5px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.kanban-card:hover { border-color: #3a5a88; }
+.kanban-card-key a { color: #5a8aff; font-size: 11px; font-weight: 600; font-family: monospace; text-decoration: none; }
+.kanban-card-key a:hover { text-decoration: underline; }
+.kanban-card-summary { color: #cdd6f4; font-size: 12px; line-height: 1.4; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.kanban-card-meta { display: flex; flex-wrap: wrap; gap: 4px; }
+.kanban-priority { font-size: 10px; font-weight: bold; text-transform: uppercase; padding: 1px 6px; border-radius: 3px; }
+.kanban-priority.highest, .kanban-priority.critical { background: #3a1a1a; color: #cf6679; }
+.kanban-priority.high    { background: #2a1a0a; color: #e5a050; }
+.kanban-priority.medium  { background: #2a2a0a; color: #cfcf50; }
+.kanban-priority.low     { background: #1a2a1a; color: #6fcf6f; }
+.kanban-priority.lowest  { background: #1a2233; color: #5a6a88; }
+.kanban-assignee { background: #1a2a3a; color: #7cb8ff; font-size: 10px; padding: 1px 6px; border-radius: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100px; }
+.kanban-points { background: #2a2a3a; color: #9a8adf; font-size: 10px; padding: 1px 6px; border-radius: 10px; }
+.kanban-card-actions { display: flex; gap: 4px; margin-top: 2px; }
+/* Issue detail modal */
+.issues-detail-modal { max-width: 680px; }
+.issues-detail-body { padding: 12px 0; max-height: 420px; overflow-y: auto; }
+.issues-description { background: #0a1020; border: 1px solid #2a3a55; border-radius: 4px; padding: 12px; font-size: 12px; color: #aabbcc; white-space: pre-wrap; word-break: break-word; margin: 0 0 12px; font-family: monospace; }
+.issues-links-list { margin: 0; padding: 0 0 0 18px; display: flex; flex-direction: column; gap: 4px; }
+.issues-links-list li { font-size: 13px; color: #8899bb; }
+.issues-links-list a { color: #5a8aff; }
 /* Foundry tabs */
 .foundry-page { max-width: 1100px; }
 .foundry-tabs { display: flex; border-bottom: 1px solid #444; margin-bottom: 24px; }
