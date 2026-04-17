@@ -1,6 +1,6 @@
 using ClaudeManager.Hub.Services.Jira;
 
-namespace ClaudeManager.Hub.Services;
+namespace ClaudeManager.Hub.Services.Jira;
 
 /// <summary>Notifies of On Deck issue events.</summary>
 public class JiraNotifier

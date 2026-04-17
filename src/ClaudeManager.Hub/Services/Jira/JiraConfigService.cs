@@ -2,7 +2,7 @@ using ClaudeManager.Hub.Persistence;
 using ClaudeManager.Hub.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace ClaudeManager.Hub.Services;
+namespace ClaudeManager.Hub.Services.Jira;
 
 public class JiraConfigService : IHostedService
 {
