@@ -2,11 +2,14 @@ using System.Text.Json;
 using ClaudeManager.Agent;
 using ClaudeManager.Agent.Models;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 var host = Host.CreateDefaultBuilder(args)
+    //.ConfigureHostConfiguration(config => config.AddJsonFile("appsettings.json").Build())
     .ConfigureServices((ctx, services) =>
     {
         var config = ctx.Configuration.GetSection("Agent").Get<AgentConfig>()

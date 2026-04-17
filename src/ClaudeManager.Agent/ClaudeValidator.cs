@@ -50,14 +50,31 @@ public class ClaudeValidator
         if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured))
             return configured;
 
-        var binary = OperatingSystem.IsWindows() ? "claude.exe" : "claude";
-        var paths  = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [];
+        var candidates = OperatingSystem.IsWindows()
+            ? new[] { "claude.cmd", "claude.exe" }
+            : new[] { "claude" };
+
+        var paths = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [];
         foreach (var dir in paths)
-        {
-            var candidate = Path.Combine(dir, binary);
-            if (File.Exists(candidate)) return candidate;
-        }
+            foreach (var name in candidates)
+            {
+                var candidate = Path.Combine(dir, name);
+                if (File.Exists(candidate)) return candidate;
+            }
 
         return null;
+    }
+
+    /// <summary>
+    /// Returns the correct (FileName, Arguments) for Process.Start with UseShellExecute=false.
+    /// On Windows, .cmd files must be invoked via cmd.exe /c.
+    /// </summary>
+    public static (string FileName, string Arguments) GetLaunchInfo(string binary, string arguments)
+    {
+        if (OperatingSystem.IsWindows() &&
+            binary.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase))
+            return ("cmd.exe", $"/c \"\"{binary}\" {arguments}\"");
+
+        return (binary, arguments);
     }
 }

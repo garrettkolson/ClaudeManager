@@ -10,10 +10,11 @@ public class ProcessRunner : IProcessRunner
     public async Task<ProcessResult> RunAsync(string binary, string arguments, TimeSpan timeout, CancellationToken ct)
     {
         using var proc = new Process();
+        var (fileName, launchArgs) = ClaudeValidator.GetLaunchInfo(binary, arguments);
         proc.StartInfo = new ProcessStartInfo
         {
-            FileName               = binary,
-            Arguments              = arguments,
+            FileName               = fileName,
+            Arguments              = launchArgs,
             RedirectStandardOutput = true,
             RedirectStandardError  = true,
             UseShellExecute        = false,

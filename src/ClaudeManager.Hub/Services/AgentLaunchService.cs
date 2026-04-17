@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 using ClaudeManager.Hub.Models;
 using Renci.SshNet;
 
@@ -45,8 +46,25 @@ public class AgentLaunchService
 
     // ── Local launch ──────────────────────────────────────────────────────────
 
-    private static bool IsLocalHost(string host) =>
-        host is "localhost" or "127.0.0.1" or "::1";
+    private static bool IsLocalHost(string host)
+    {
+        if (host is "localhost" or "127.0.0.1" or "::1")
+            return true;
+
+        if (string.Equals(host, Environment.MachineName, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        try
+        {
+            var localAddrs = Dns.GetHostAddresses(Dns.GetHostName());
+            var hostAddrs  = Dns.GetHostAddresses(host);
+            return hostAddrs.Any(ha => localAddrs.Any(la => la.Equals(ha)));
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     private (bool, string?) LaunchLocal(KnownMachineConfig config)
     {
@@ -55,7 +73,7 @@ public class AgentLaunchService
             ProcessStartInfo psi;
             if (OperatingSystem.IsWindows())
             {
-                psi = new ProcessStartInfo("cmd.exe", $"/C {config.AgentCommand}")
+                psi = new ProcessStartInfo("cmd.exe", $"/c \"\"{config.AgentCommand}\"\"")
                 {
                     UseShellExecute = false,
                     CreateNoWindow  = true,

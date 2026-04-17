@@ -50,14 +50,15 @@ public sealed class ClaudeProcess : IClaudeProcess
     public Task StartAsync(CancellationToken ct)
     {
         var args = BuildArguments();
-        _logger.LogInformation("Launching claude: {Args} in {Dir}", args, _workingDirectory);
+        var (fileName, launchArgs) = ClaudeValidator.GetLaunchInfo(_binary, args);
+        _logger.LogInformation("Launching claude: {Args} in {Dir}", launchArgs, _workingDirectory);
 
         _process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName               = _binary,
-                Arguments              = args,
+                FileName               = fileName,
+                Arguments              = launchArgs,
                 WorkingDirectory       = _workingDirectory,
                 RedirectStandardOutput = true,
                 RedirectStandardError  = true,
