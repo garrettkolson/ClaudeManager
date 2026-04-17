@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace ClaudeManager.Hub.Services.Jira;
 
@@ -14,23 +13,23 @@ public class JiraIssue
     public object? Status { get; set; }       // JiraStatus or string
     public string Issuetype { get; set; } = "";
     public string Priority { get; set; } = "";
-    public string? Assignee { get; set; }     // display name or email
+    public string? Assignee { get; set; }
     public List<string> Labels { get; set; } = [];
     public double? StoryPoints { get; set; }
     public string Url { get; set; } = "";
 
     public JiraIssue Clone() => new()
     {
-        Key = Key,
-        Summary = Summary,
+        Key         = Key,
+        Summary     = Summary,
         Description = Description,
-        Status = Status is not null ? JsonSerializer.SerializeToElement(Status) : null,
-        Issuetype = Issuetype,
-        Priority = Priority,
-        Assignee = Assignee,
-        Labels = Labels.ToList(),
+        Status      = Status is not null ? JsonSerializer.SerializeToElement(Status) : null,
+        Issuetype   = Issuetype,
+        Priority    = Priority,
+        Assignee    = Assignee,
+        Labels      = Labels.ToList(),
         StoryPoints = StoryPoints,
-        Url = Url
+        Url         = Url,
     };
 }
 
@@ -62,96 +61,105 @@ public class JiraSearchResult
     public List<JiraIssue> Issues { get; set; } = [];
 }
 
-// ── Helper: ADF to Plain Text ───────────────────────────────────────────────
+// ── Helper: ADF → plain text ────────────────────────────────────────────────
 
-/// <summary>
-/// Converts Atlassian Document Format (ADF) JSON to plain text.
-/// Handles both plain strings and ADF arrays with block/inline nodes.
-/// </summary>
 public static class JiraDtosHelpers
 {
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
-        PropertyNameCaseInsensitive = true
+        PropertyNameCaseInsensitive = true,
     };
 
     public static string ToPlainText(object? atlassianDoc)
     {
         if (atlassianDoc is null) return "";
-        if (atlassianDoc is string s) return s;
-        if (atlassianDoc is JsonElement element)
+
+        string json;
+        if (atlassianDoc is string s)
         {
-            var json = element.GetRawText();
-            return TryParseAdf(json);
+            s = s.Trim();
+            if (!s.StartsWith('{') && !s.StartsWith('[')) return s;
+            json = s;
+        }
+        else if (atlassianDoc is JsonElement el)
+        {
+            json = el.GetRawText();
+        }
+        else
+        {
+            json = atlassianDoc.ToString() ?? "";
         }
 
-        // Try parsing as ADF JSON string
-        var str = atlassianDoc.ToString() ?? "";
         try
         {
-            var element2 = JsonSerializer.Deserialize<JsonElement>(str);
-            return TryParseAdf(str);
+            var root = JsonSerializer.Deserialize<JsonElement>(json, _jsonOptions);
+            return RenderNode(root).TrimEnd();
         }
         catch
         {
-            // Fallback: return original
-            return str;
-        }
-    }
-
-    private static string TryParseAdf(string json)
-    {
-        try
-        {
-            var doc = JsonSerializer.Deserialize<List<AdfBlock>>(json, _jsonOptions);
-            if (doc is null) return json;
-
-            var sb = new StringBuilder();
-            foreach (var block in doc)
-            {
-                if (block.Text is not null) sb.AppendLine(block.Text);
-                else if (block.Content is not null)
-                {
-                    foreach (var inline in block.Content)
-                    {
-                        if (inline.Text is not null) sb.Append(inline.Text);
-                    }
-                }
-                else if (block.ContentMap?.Text is not null)
-                {
-                    foreach (var inline in block.ContentMap.Text)
-                    {
-                        if (inline.Text is not null) sb.Append(inline.Text);
-                    }
-                }
-            }
-            return sb.ToString().TrimEnd();
-        }
-        catch
-        {
-            // Fallback: return original
             return json;
         }
     }
-}
 
-// ── ADF Internal Classes ──────────────────────────────────────────────────────
+    private static string RenderNode(JsonElement node)
+    {
+        if (node.ValueKind != JsonValueKind.Object) return "";
 
-public class AdfBlock
-{
-    public string? Type { get; set; }
-    public string? Text { get; set; }
-    public List<AdfInline>? Content { get; set; }
-    public AdfContentMap? ContentMap { get; set; }
-}
+        var type = node.TryGetProperty("type", out var t) ? t.GetString() : null;
 
-public class AdfInline
-{
-    public string? Type { get; set; }
-    public string? Text { get; set; }
-}
+        return type switch
+        {
+            "doc"         => RenderChildren(node),
+            "paragraph"   => RenderChildren(node) + "\n",
+            "heading"     => RenderChildren(node) + "\n",
+            "blockquote"  => RenderChildren(node),
+            "codeBlock"   => RenderChildren(node) + "\n",
+            "bulletList"  => RenderList(node, "• "),
+            "orderedList" => RenderOrderedList(node),
+            "listItem"    => RenderChildren(node),
+            "rule"        => "---\n",
+            "hardBreak"   => "\n",
+            "text"        => node.TryGetProperty("text", out var text) ? text.GetString() ?? "" : "",
+            "mention"     => node.TryGetProperty("attrs", out var ma) && ma.TryGetProperty("text",  out var mt) ? mt.GetString() ?? "" : "@mention",
+            "emoji"       => node.TryGetProperty("attrs", out var ea) && ea.TryGetProperty("text",  out var et) ? et.GetString() ?? "" : "",
+            "inlineCard"  => node.TryGetProperty("attrs", out var ca) && ca.TryGetProperty("url",   out var cu) ? cu.GetString() ?? "" : "",
+            _             => RenderChildren(node),
+        };
+    }
 
-public class AdfContentMap
-{
-    public List<AdfInline>? Text { get; set; }
+    private static string RenderChildren(JsonElement node)
+    {
+        if (!node.TryGetProperty("content", out var content)) return "";
+        var sb = new StringBuilder();
+        foreach (var child in content.EnumerateArray())
+            sb.Append(RenderNode(child));
+        return sb.ToString();
+    }
+
+    private static string RenderList(JsonElement node, string bullet)
+    {
+        if (!node.TryGetProperty("content", out var items)) return "";
+        var sb = new StringBuilder();
+        foreach (var item in items.EnumerateArray())
+        {
+            sb.Append(bullet);
+            sb.Append(RenderNode(item).TrimEnd('\n', ' '));
+            sb.Append('\n');
+        }
+        return sb.ToString();
+    }
+
+    private static string RenderOrderedList(JsonElement node)
+    {
+        if (!node.TryGetProperty("content", out var items)) return "";
+        var sb = new StringBuilder();
+        var i = 1;
+        foreach (var item in items.EnumerateArray())
+        {
+            sb.Append($"{i++}. ");
+            sb.Append(RenderNode(item).TrimEnd('\n', ' '));
+            sb.Append('\n');
+        }
+        return sb.ToString();
+    }
 }

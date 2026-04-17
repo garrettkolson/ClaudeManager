@@ -18,69 +18,70 @@
 
     @* ── Settings panel ─────────────────────────────────────────────────── *@
 
-    <div class="issues-settings-panel @(_showSettings ? "open" : "")">
-        <button class="issues-settings-toggle" @onclick="ToggleSettings">
-            @(_showSettings ? "▲ Settings" : "▼ Settings")
-        </button>
+    <section class="llm-section">
+        <div class="llm-section-header">
+            <h2>Jira Settings</h2>
+            <button class="btn-primary" @onclick="ToggleSettings">
+                @(_showSettings ? "▲ Hide" : "▼ Configure")
+            </button>
+        </div>
 
         @if (_showSettings)
         {
-            <div class="issues-settings-form">
-                @if (_settingsLoading)
+            @if (_settingsLoading)
+            {
+                <div class="loading">Loading…</div>
+            }
+            else
+            {
+                <div class="llm-form-grid">
+                    <label class="llm-label">Base URL</label>
+                    <input class="llm-input" @bind="_cfg.BaseUrl" placeholder="https://yourco.atlassian.net" />
+
+                    <label class="llm-label">Email</label>
+                    <input class="llm-input" @bind="_cfg.Email" placeholder="you@company.com" />
+
+                    <label class="llm-label">API Token</label>
+                    <input class="llm-input" @bind="_cfg.ApiToken" type="password" placeholder="Atlassian API token" />
+
+                    <label class="llm-label">Default Project Key</label>
+                    <input class="llm-input" @bind="_cfg.DefaultProjectKey" placeholder="PROJ" />
+
+                    <label class="llm-label">Default JQL</label>
+                    <input class="llm-input" @bind="_cfg.DefaultJql" placeholder="project = PROJ AND statusCategory != Done ORDER BY rank ASC" />
+
+                    <label class="llm-label">Default Repo URL</label>
+                    <input class="llm-input" @bind="_cfg.DefaultRepoUrl" placeholder="https://github.com/org/repo" />
+
+                    <label class="llm-label">On Deck Status Name</label>
+                    <input class="llm-input" @bind="_cfg.OnDeckStatusName" />
+
+                    <label class="llm-label">Review Status Name</label>
+                    <input class="llm-input" @bind="_cfg.ReviewStatusName" />
+
+                    <label class="llm-label">Polling Interval (secs)</label>
+                    <input class="llm-input" @bind="_cfg.PollingIntervalSecs" type="number" min="10" />
+
+                    <label class="llm-label">Webhook Secret</label>
+                    <input class="llm-input" @bind="_cfg.WebhookSecret" type="password" placeholder="Optional HMAC secret" />
+                </div>
+
+                @if (_settingsError is not null)
                 {
-                    <div class="loading">Loading…</div>
+                    <div class="error-msg">@_settingsError</div>
                 }
-                else
+                @if (_settingsSaved)
                 {
-                    <div class="issues-settings-grid">
-                        <label>Base URL</label>
-                        <input @bind="_cfg.BaseUrl" placeholder="https://yourco.atlassian.net" />
-
-                        <label>Email</label>
-                        <input @bind="_cfg.Email" placeholder="you@company.com" />
-
-                        <label>API Token</label>
-                        <input @bind="_cfg.ApiToken" type="password" placeholder="Atlassian API token" />
-
-                        <label>Default Project Key</label>
-                        <input @bind="_cfg.DefaultProjectKey" placeholder="PROJ" />
-
-                        <label>Default JQL</label>
-                        <input @bind="_cfg.DefaultJql" placeholder="project = PROJ AND statusCategory != Done ORDER BY rank ASC" />
-
-                        <label>Default Repo URL</label>
-                        <input @bind="_cfg.DefaultRepoUrl" placeholder="https://github.com/org/repo" />
-
-                        <label>On Deck Status Name</label>
-                        <input @bind="_cfg.OnDeckStatusName" />
-
-                        <label>Review Status Name</label>
-                        <input @bind="_cfg.ReviewStatusName" />
-
-                        <label>Polling Interval (secs)</label>
-                        <input @bind="_cfg.PollingIntervalSecs" type="number" min="10" />
-
-                        <label>Webhook Secret</label>
-                        <input @bind="_cfg.WebhookSecret" type="password" placeholder="Optional HMAC secret" />
-                    </div>
-
-                    @if (_settingsError is not null)
-                    {
-                        <div class="error-msg">@_settingsError</div>
-                    }
-                    @if (_settingsSaved)
-                    {
-                        <div class="webhook-success">Settings saved.</div>
-                    }
-                    <div class="issues-settings-actions">
-                        <button class="btn-primary" @onclick="SaveSettings" disabled="@_settingsSaving">
-                            @(_settingsSaving ? "Saving…" : "Save")
-                        </button>
-                    </div>
+                    <div class="llm-success">Settings saved.</div>
                 }
-            </div>
+                <div class="llm-form-actions">
+                    <button class="btn-primary" @onclick="SaveSettings" disabled="@_settingsSaving">
+                        @(_settingsSaving ? "Saving…" : "Save")
+                    </button>
+                </div>
+            }
         }
-    </div>
+    </section>
 
     @* ── Header ─────────────────────────────────────────────────────────── *@
 
@@ -584,11 +585,11 @@
     private async Task<List<JiraIssueLinkEntity>> LoadLinksAsync(string issueKey)
     {
         await using var db = await DbFactory.CreateDbContextAsync();
-        return await db.JiraIssueLinks
+        var links = await db.JiraIssueLinks
             .AsNoTracking()
             .Where(l => l.IssueKey == issueKey)
-            .OrderByDescending(l => l.LinkedAt)
             .ToListAsync();
+        return links.OrderByDescending(l => l.LinkedAt).ToList();
     }
 
     private static string GetStatusName(JiraIssue issue) =>

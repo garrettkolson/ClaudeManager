@@ -129,6 +129,105 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                     b.ToTable("HubSecrets");
                 });
 
+            modelBuilder.Entity("ClaudeManager.Hub.Persistence.Entities.JiraConfigEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ApiToken")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BaseUrl")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DefaultJql")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DefaultProjectKey")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DefaultRepoUrl")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OnDeckStatusName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("PollingIntervalSecs")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ReviewStatusName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("WebhookSecret")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("JiraConfigs");
+                });
+
+            modelBuilder.Entity("ClaudeManager.Hub.Persistence.Entities.JiraIssueLinkEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ClaudeSessionSessionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IssueKey")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IssueSummary")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("LinkType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("LinkedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("ReviewTransitionedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SessionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("SweAfJobId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ClaudeSessionSessionId");
+
+                    b.HasIndex("IssueKey");
+
+                    b.HasIndex("SweAfJobId");
+
+                    b.ToTable("JiraIssueLinks");
+                });
+
             modelBuilder.Entity("ClaudeManager.Hub.Persistence.Entities.LlmDeploymentEntity", b =>
                 {
                     b.Property<long>("Id")
@@ -155,13 +254,13 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("TEXT");
 
-                    b.Property<double?>("GpuMemoryUtilization")
-                        .HasColumnType("REAL");
-
                     b.Property<string>("GpuIndices")
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("TEXT");
+
+                    b.Property<double?>("GpuMemoryUtilization")
+                        .HasColumnType("REAL");
 
                     b.Property<string>("HfTokenOverride")
                         .HasMaxLength(500)
@@ -293,16 +392,16 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("AnthropicApiKey")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("ApiKey")
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("BaseUrl")
                         .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("AnthropicApiKey")
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
@@ -546,110 +645,6 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                     b.ToTable("WikiEntries");
                 });
 
-            modelBuilder.Entity("ClaudeManager.Hub.Persistence.Entities.JiraConfigEntity", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("BaseUrl")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Email")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ApiToken")
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("DefaultProjectKey")
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("DefaultJql")
-                        .HasMaxLength(1000)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("DefaultRepoUrl")
-                        .HasMaxLength(1000)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("OnDeckStatusName")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ReviewStatusName")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("PollingIntervalSecs")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("WebhookSecret")
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("JiraConfigs");
-                });
-
-            modelBuilder.Entity("ClaudeManager.Hub.Persistence.Entities.JiraIssueLinkEntity", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTimeOffset>("LinkedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset?>("ReviewTransitionedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("IssueKey")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("IssueSummary")
-                        .IsRequired()
-                        .HasMaxLength(4000)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("LinkType")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("SessionId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<long?>("SweAfJobId")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IssueKey");
-
-                    b.HasOne("ClaudeManager.Hub.Persistence.Entities.ClaudeSessionEntity", "ClaudeSession")
-                        .WithMany()
-                        .HasForeignKey("SessionId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired(false);
-
-                    b.HasOne("ClaudeManager.Hub.Persistence.Entities.SweAfJobEntity", "SweAfJob")
-                        .WithMany()
-                        .HasForeignKey("SweAfJobId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired(false);
-
-                    b.ToTable("JiraIssueLinks");
-                });
-
             modelBuilder.Entity("ClaudeManager.Hub.Persistence.Entities.ClaudeSessionEntity", b =>
                 {
                     b.HasOne("ClaudeManager.Hub.Persistence.Entities.MachineAgentEntity", "Machine")
@@ -659,6 +654,21 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Machine");
+                });
+
+            modelBuilder.Entity("ClaudeManager.Hub.Persistence.Entities.JiraIssueLinkEntity", b =>
+                {
+                    b.HasOne("ClaudeManager.Hub.Persistence.Entities.ClaudeSessionEntity", "ClaudeSession")
+                        .WithMany()
+                        .HasForeignKey("ClaudeSessionSessionId");
+
+                    b.HasOne("ClaudeManager.Hub.Persistence.Entities.SweAfJobEntity", "SweAfJob")
+                        .WithMany()
+                        .HasForeignKey("SweAfJobId");
+
+                    b.Navigation("ClaudeSession");
+
+                    b.Navigation("SweAfJob");
                 });
 
             modelBuilder.Entity("ClaudeManager.Hub.Persistence.Entities.StreamedLineEntity", b =>

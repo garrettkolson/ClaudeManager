@@ -47,14 +47,18 @@ public class JiraService
                 ? $"project = {cfg.DefaultProjectKey} AND statusCategory != Done ORDER BY rank ASC"
                 : "ORDER BY rank ASC");
 
-        var url = $"{cfg.BaseUrl.TrimEnd('/')}/rest/api/3/search" +
-                  $"?jql={Uri.EscapeDataString(effectiveJql)}" +
-                  $"&maxResults={maxResults}" +
-                  "&fields=summary,description,status,issuetype,priority,assignee,labels,customfield_10016";
+        var url = $"{cfg.BaseUrl.TrimEnd('/')}/rest/api/3/search/jql";
+        var payload = JsonSerializer.Serialize(new
+        {
+            jql        = effectiveJql,
+            maxResults,
+            fields     = new[] { "summary", "description", "status", "issuetype", "priority", "assignee", "labels", "customfield_10016" },
+        });
 
         try
         {
-            var resp = await CreateClient().GetAsync(url, ct);
+            var resp = await CreateClient().PostAsync(
+                url, new StringContent(payload, Encoding.UTF8, "application/json"), ct);
             if (!resp.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Jira search returned {Status}", resp.StatusCode);
