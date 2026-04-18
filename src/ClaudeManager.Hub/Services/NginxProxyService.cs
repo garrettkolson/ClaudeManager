@@ -64,6 +64,12 @@ public class NginxProxyService(ILogger<NginxProxyService> logger, IDockerExecuto
             sb.AppendLine($"        listen {proxyPort};");
             sb.AppendLine($"        client_max_body_size 0;");
             sb.AppendLine();
+            sb.AppendLine($"        location /api/event_logging/ {{");
+            sb.AppendLine($"            return 200 '{{}}';");
+            sb.AppendLine($"            add_header Content-Type application/json;");
+            sb.AppendLine($"            access_log off;");
+            sb.AppendLine($"        }}");
+            sb.AppendLine();
             sb.AppendLine($"        location / {{");
             sb.AppendLine($"            proxy_pass http://vllm_pool;");
             sb.AppendLine($"            proxy_http_version 1.1;");
