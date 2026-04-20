@@ -196,7 +196,19 @@ public class NginxProxyServiceTests
         var config = NginxProxyService.GenerateConfig(deployments, proxyPort: 8080);
 
         var locationCount = System.Text.RegularExpressions.Regex.Matches(config, @"^\s+location ", System.Text.RegularExpressions.RegexOptions.Multiline).Count;
-        locationCount.Should().Be(1);
+        locationCount.Should().Be(2);
+    }
+
+    [Test]
+    public void GenerateConfig_ContainsEventLoggingLocationBlock()
+    {
+        var deployments = new[] { MakeDeployment("model/m", 8001) };
+
+        var config = NginxProxyService.GenerateConfig(deployments, proxyPort: 8080);
+
+        config.Should().Contain("location /api/event_logging/");
+        config.Should().Contain("return 200");
+        config.Should().Contain("add_header Content-Type application/json");
     }
 
     // ── GenerateConfig — multiple models ─────────────────────────────────────
@@ -229,9 +241,9 @@ public class NginxProxyServiceTests
 
         var config = NginxProxyService.GenerateConfig(deployments, proxyPort: 8080);
 
-        // All deployments share a single location block
+        // Includes the event_logging location + one proxy location
         var locationCount = System.Text.RegularExpressions.Regex.Matches(config, @"^\s+location ", System.Text.RegularExpressions.RegexOptions.Multiline).Count;
-        locationCount.Should().Be(1);
+        locationCount.Should().Be(2);
     }
 
     [Test]
