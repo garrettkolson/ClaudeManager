@@ -88,6 +88,13 @@
     <div class="issues-header">
         <h1>Jira Issues</h1>
         <div class="issues-toolbar">
+            <select class="issues-assignee" @bind="_selectedAssignee" @bind:event="onchange" disabled="@(_assignees.Count == 0)">
+                <option value="">— All Assignees —</option>
+                @foreach (var user in _assignees)
+                {
+                    <option value="@user.Username">@user.Name</option>
+                }
+            </select>
             <input class="issues-jql" @bind="_jql" @bind:event="oninput"
                    placeholder="JQL filter…"
                    @onkeydown="OnJqlKeyDown" />
@@ -303,6 +310,8 @@
     private string? _error;
     private string _jql = "";
     private bool _doneClosed = true;
+    private string _selectedAssignee = "";
+    private List<JiraUser> _assignees = [];
 
     private JiraIssue? _selectedIssue;
     private bool _showDetailModal;
@@ -340,7 +349,15 @@
         Notifier.IssueRemoved     += OnIssueRemoved;
 
         if (JiraSvc.IsConfigured)
+        {
+            await LoadAssigneesAsync();
             await RefreshIssues();
+        }
+    }
+
+    private async Task LoadAssigneesAsync()
+    {
+        _assignees = await JiraSvc.GetAssignableUsersAsync(ConfigSvc.GetConfig().DefaultProjectKey);
     }
 
     private void OnDeckIssueAdded(JiraIssue issue)
@@ -369,7 +386,15 @@
         _error   = null;
         StateHasChanged();
 
-        var issues = await JiraSvc.GetIssuesAsync(_jql.Trim().Length > 0 ? _jql.Trim() : null);
+        var jql = _jql.Trim();
+        if (!string.IsNullOrWhiteSpace(_selectedAssignee))
+        {
+            var assignee = _selectedAssignee;
+            var suffix = string.IsNullOrWhiteSpace(jql) ? "ORDER BY rank ASC" : jql;
+            jql = $"assignee = {assignee} AND {suffix}";
+        }
+
+        var issues = await JiraSvc.GetIssuesAsync(string.IsNullOrWhiteSpace(jql) ? null : jql);
         _columns   = BuildColumns(issues);
         _loading   = false;
         StateHasChanged();

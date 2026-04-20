@@ -96,6 +96,33 @@ public class JiraService
         }
     }
 
+    public async Task<List<JiraUser>> GetAssignableUsersAsync(
+        string? projectKey = null, CancellationToken ct = default)
+    {
+        var cfg = _configSvc.GetConfig();
+        var url = $"{cfg.BaseUrl.TrimEnd('/')}/rest/api/3/user/assignable/search"
+            + (projectKey is not null ? $"?project={projectKey}" : "");
+
+        try
+        {
+            var resp = await CreateClient().GetAsync(url, ct);
+            if (!resp.IsSuccessStatusCode) return [];
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            var arr = JsonSerializer.Deserialize<JsonElement>(body, _jsonOpts);
+            return arr.EnumerateArray()
+                .Select(u => new JiraUser(
+                    u.TryGetProperty("displayName", out var n) ? n.GetString() ?? "" : "",
+                    u.TryGetProperty("name", out var nm) ? nm.GetString() ?? "" : ""))
+                .DistinctBy(u => u.Username)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "GetAssignableUsersAsync failed");
+            return [];
+        }
+    }
+
     public async Task<List<JiraTransition>> GetTransitionsAsync(string issueKey, CancellationToken ct = default)
     {
         var cfg = _configSvc.GetConfig();

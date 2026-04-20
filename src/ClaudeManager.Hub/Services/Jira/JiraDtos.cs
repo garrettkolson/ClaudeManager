@@ -51,6 +51,10 @@ public class JiraTransition
     public JiraStatus To { get; set; } = null!;
 }
 
+// ── User DTO ────────────────────────────────────────────────────────────────
+
+public record JiraUser(string Name, string Username);
+
 // ── Search Result DTO ───────────────────────────────────────────────────────
 
 public class JiraSearchResult
