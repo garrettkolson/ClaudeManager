@@ -479,14 +479,34 @@ public class SweAfProvisioningService(
     /// using single-quoted heredoc so values are never shell-expanded.
     /// When port is provided, writes AGENTFIELD_PORT so the compose file can map the correct host port.
     /// </summary>
-    private static string BuildWriteEnvCommand(
+    internal static string BuildWriteEnvCommand(
         SweAfConfigEntity config, string repoPath, string? anthropicBaseUrl, int? port = null)
     {
         var lines = new List<string>();
-        if (!string.IsNullOrWhiteSpace(anthropicBaseUrl))
-            lines.Add($"ANTHROPIC_BASE_URL={anthropicBaseUrl}");
-        if (!string.IsNullOrWhiteSpace(config.AnthropicApiKey))
-            lines.Add($"ANTHROPIC_API_KEY={config.AnthropicApiKey}");
+
+        // Runtime-specific API key and base URL
+        if (config.Runtime == "openrouter")
+        {
+            if (!string.IsNullOrWhiteSpace(config.OpenRouterEndpointUrl))
+                lines.Add($"ANTHROPIC_BASE_URL={config.OpenRouterEndpointUrl}");
+            if (!string.IsNullOrWhiteSpace(config.OpenRouterApiKey))
+                lines.Add($"ANTHROPIC_API_KEY={config.OpenRouterApiKey}");
+        }
+        else if (config.Runtime == "claude_code")
+        {
+            if (!string.IsNullOrWhiteSpace(anthropicBaseUrl))
+                lines.Add($"ANTHROPIC_BASE_URL={anthropicBaseUrl}");
+            if (!string.IsNullOrWhiteSpace(config.AnthropicApiKey))
+                lines.Add($"ANTHROPIC_API_KEY={config.AnthropicApiKey}");
+        }
+        // open_code runtime: no API key injected; base URL comes from LlmDeployment (already in anthropicBaseUrl)
+        else
+        {
+            if (!string.IsNullOrWhiteSpace(anthropicBaseUrl))
+                lines.Add($"ANTHROPIC_BASE_URL={anthropicBaseUrl}");
+        }
+
+        // Always-injected fields
         if (!string.IsNullOrWhiteSpace(config.RepositoryApiToken))
             lines.Add($"GH_TOKEN={config.RepositoryApiToken}");
         if (!string.IsNullOrWhiteSpace(config.ApiKey))

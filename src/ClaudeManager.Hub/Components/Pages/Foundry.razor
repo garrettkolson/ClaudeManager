@@ -396,6 +396,7 @@
                         <select class="llm-input" @bind="_cfgForm.Runtime">
                             <option value="claude_code">claude_code (Claude Code backend)</option>
                             <option value="open_code">open_code (open-source models)</option>
+                            <option value="openrouter">openrouter (OpenRouter API)</option>
                         </select>
 
                         <label class="llm-label">Default Model</label>
@@ -427,6 +428,14 @@
                         <label class="llm-label">Anthropic API Key</label>
                         <input class="llm-input" type="password" @bind="_cfgForm.NewAnthropicApiKey"
                                placeholder="sk-ant-… (injected as ANTHROPIC_API_KEY into agent container)" />
+
+                        <label class="llm-label">OpenRouter API Key</label>
+                        <input class="llm-input" type="password" @bind="_cfgForm.NewOpenRouterApiKey"
+                               placeholder="sk-or-v1-… (injected as ANTHROPIC_API_KEY when Runtime is openrouter)" />
+
+                        <label class="llm-label">OpenRouter Endpoint URL</label>
+                        <input class="llm-input" @bind="_cfgForm.OpenRouterEndpointUrl"
+                               placeholder="https://openrouter.ai/api/v1" />
 
                         <label class="llm-label">LLM Deployment (Base URL)</label>
                         <select class="llm-input" @bind="_cfgForm.LlmDeploymentId">
@@ -895,6 +904,8 @@
                 DefaultRepoUrl     = NullIfBlank(_cfgForm.DefaultRepoUrl),
                 RepositoryApiToken = NullIfBlank(_cfgForm.NewRepositoryApiToken) ?? _cfgForm.RepositoryApiToken,
                 AnthropicApiKey      = NullIfBlank(_cfgForm.NewAnthropicApiKey) ?? _cfgForm.AnthropicApiKey,
+                OpenRouterApiKey     = NullIfBlank(_cfgForm.NewOpenRouterApiKey) ?? _cfgForm.OpenRouterApiKey,
+                OpenRouterEndpointUrl = NullIfBlank(_cfgForm.OpenRouterEndpointUrl) ?? _cfgForm.OpenRouterEndpointUrl,
                 SweAfRepoPath        = NullIfBlank(_cfgForm.SweAfRepoPath),
                 LlmDeploymentId      = NullIfBlank(_cfgForm.LlmDeploymentId),
                 ComposeOverride      = NullIfBlank(_cfgForm.ComposeOverride),
@@ -1098,6 +1109,8 @@
         public string  NewWebhookSecret      = "";
         public string  NewRepositoryApiToken = "";
         public string  NewAnthropicApiKey    = "";
+        public string  NewOpenRouterApiKey   = "";
+        public string  OpenRouterEndpointUrl = "https://openrouter.ai/api/v1";
         public string  HubPublicUrl          = "";
         public string  Runtime               = "claude_code";
         public string  ModelDefault          = "";
@@ -1111,6 +1124,7 @@
         public string  WebhookSecret         = "";
         public string  RepositoryApiToken    = "";
         public string  AnthropicApiKey       = "";
+        public string  OpenRouterApiKey      = "";
         public int     PortRangeStart        = 8100;
         public int     PortRangeEnd          = 8199;
         public string  ControlPlaneImageTag  = "";
@@ -1131,6 +1145,8 @@
             WebhookSecret         = e.WebhookSecret,
             RepositoryApiToken    = e.RepositoryApiToken,
             AnthropicApiKey       = e.AnthropicApiKey,
+            OpenRouterApiKey      = e.OpenRouterApiKey,
+            OpenRouterEndpointUrl = e.OpenRouterEndpointUrl ?? "https://openrouter.ai/api/v1",
             PortRangeStart        = e.PortRangeStart,
             PortRangeEnd          = e.PortRangeEnd,
             ControlPlaneImageTag  = e.ControlPlaneImageTag ?? "",

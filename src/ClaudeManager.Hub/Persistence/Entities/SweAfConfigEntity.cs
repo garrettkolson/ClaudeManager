@@ -101,6 +101,20 @@ public class SweAfConfigEntity
     public string? AnthropicApiKey { get; set; }
 
     /// <summary>
+    /// OpenRouter API key injected into the SWE-AF agent container as ANTHROPIC_API_KEY
+    /// when Runtime is "openrouter".
+    /// </summary>
+    [MaxLength(500)]
+    public string? OpenRouterApiKey { get; set; }
+
+    /// <summary>
+    /// OpenRouter endpoint URL injected as ANTHROPIC_BASE_URL when Runtime is "openrouter".
+    /// Typically "https://openrouter.ai/api/v1".
+    /// </summary>
+    [MaxLength(500)]
+    public string? OpenRouterEndpointUrl { get; set; }
+
+    /// <summary>
     /// Path to the cloned SWE-AF repository on the provision host.
     /// Used by provisioning to run docker compose from the correct directory.
     /// Defaults to ~/swe-af when null.
