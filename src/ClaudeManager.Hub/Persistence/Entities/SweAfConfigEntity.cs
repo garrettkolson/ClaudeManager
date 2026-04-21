@@ -148,6 +148,12 @@ public class SweAfConfigEntity
     [MaxLength(100)]
     public string? ControlPlaneImageTag { get; set; }
 
+    /// <summary>
+    /// When true, injects the Caveman skill (SKILL.md + CLAUDE.md) into SWE-AF agent containers.
+    /// Claude Code will respond in ultra-compressed caveman prose style.
+    /// </summary>
+    public bool CavemanEnabled { get; set; }
+
     [NotMapped]
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(ApiKey);

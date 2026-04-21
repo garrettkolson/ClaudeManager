@@ -372,6 +372,11 @@
                         <input class="llm-input" @bind="_cfgForm.ControlPlaneImageTag"
                                placeholder="latest" />
 
+                        <label class="llm-label">
+                            <input type="checkbox" @bind="_cfgForm.CavemanEnabled" />
+                            Enable Caveman skill for agent builds (compressed responses)
+                        </label>
+
                         <p class="llm-hint" style="grid-column: 1 / -1;">
                             Each build gets its own isolated container on a unique port. Max concurrent builds =
                             range size. Ensure these ports are reachable on the provision host.
@@ -912,6 +917,7 @@
                 PortRangeStart       = _cfgForm.PortRangeStart,
                 PortRangeEnd         = _cfgForm.PortRangeEnd,
                 ControlPlaneImageTag = NullIfBlank(_cfgForm.ControlPlaneImageTag),
+                CavemanEnabled       = _cfgForm.CavemanEnabled,
                 ProvisionHost        = _provisionForm.Host.Trim(),
                 SshUser            = _provisionForm.SshUser,
                 SshKeyPath         = _provisionForm.SshKeyPath,
@@ -1128,6 +1134,7 @@
         public int     PortRangeStart        = 8100;
         public int     PortRangeEnd          = 8199;
         public string  ControlPlaneImageTag  = "";
+        public bool    CavemanEnabled        = false;
 
         public static CfgForm From(SweAfConfigEntity e) => new()
         {
@@ -1150,6 +1157,7 @@
             PortRangeStart        = e.PortRangeStart,
             PortRangeEnd          = e.PortRangeEnd,
             ControlPlaneImageTag  = e.ControlPlaneImageTag ?? "",
+            CavemanEnabled        = e.CavemanEnabled,
         };
     }
 

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using ClaudeManager.Hub.Persistence;
 using ClaudeManager.Hub.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -90,6 +91,49 @@ public class SweAfProvisioningService(
             }
         }
 
+        // Step 2.5: Write Caveman skill files if enabled
+        var hasCavemanGlobal = config.CavemanEnabled;
+        if (hasCavemanGlobal)
+        {
+            var writeCavemanCmd = BuildWriteCavemanFilesCommand(repoPath);
+            var (cavemanOut, cavemanErr, cavemanCode) = IsLocalHost(config.ProvisionHost!)
+                ? await ExecLocalShellAsync(writeCavemanCmd, ct)
+                : await ExecSshShellAsync(config, writeCavemanCmd, ct);
+
+            if (cavemanCode != 0)
+            {
+                var errorMsg = (cavemanErr ?? cavemanOut ?? "Failed to download Caveman files").Trim();
+                logger.LogWarning("Caveman files write failed on {Host}: {Error}", config.ProvisionHost, errorMsg);
+                return (false, $"Failed to write Caveman skill files: {errorMsg}", null);
+            }
+
+            var cacheDir = "/tmp/caveman-skills";
+            var cavemanOverridePath = $"{repoPath}/docker-compose.caveman.yml";
+            var cavemanYaml = $"""
+                services:
+                  swe-agent:
+                    volumes:
+                      - {cacheDir}/skills:/root/.claude/skills:ro
+                      - {cacheDir}/CLAUDE.md:/root/.claude/CLAUDE.md:ro
+                  swe-fast:
+                    volumes:
+                      - {cacheDir}/skills:/root/.claude/skills:ro
+                      - {cacheDir}/CLAUDE.md:/root/.claude/CLAUDE.md:ro
+                """;
+            var cavemanB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(cavemanYaml.Trim()));
+            var writeCavemanComposeCmd = $"echo {cavemanB64} | base64 -d > {cavemanOverridePath}";
+            var (cavComposeOut, cavComposeErr, cavComposeCode) = IsLocalHost(config.ProvisionHost!)
+                ? await ExecLocalShellAsync(writeCavemanComposeCmd, ct)
+                : await ExecSshShellAsync(config, writeCavemanComposeCmd, ct);
+
+            if (cavComposeCode != 0)
+            {
+                var errorMsg = (cavComposeErr ?? cavComposeOut ?? "Failed to write docker-compose.caveman.yml").Trim();
+                logger.LogWarning("Caveman compose write failed on {Host}: {Error}", config.ProvisionHost, errorMsg);
+                return (false, $"Failed to write Caveman compose override: {errorMsg}", null);
+            }
+        }
+
         // Step 3: Tear down any existing stack, then bring everything back up
         var downCmd = $"cd {repoPath} && docker compose down";
         var (downStdout, downStderr, _) = IsLocalHost(config.ProvisionHost!)
@@ -98,7 +142,12 @@ public class SweAfProvisioningService(
         logger.LogInformation("docker compose down on {Host}: {Out}", config.ProvisionHost,
             (downStdout ?? downStderr ?? "").Trim());
 
-        var composeCmd = $"cd {repoPath} && docker compose up -d --build";
+        // docker-compose.override.yml is auto-loaded; -f chain is not needed for it.
+        // docker-compose.caveman.yml is NOT auto-loaded (auto-load only finds override.yml),
+        // so it must be explicitly included.
+        var composeCmd = hasCavemanGlobal
+            ? $"cd {repoPath} && docker compose -f docker-compose.yml -f docker-compose.caveman.yml up -d --build"
+            : $"cd {repoPath} && docker compose up -d --build";
         var (compStdout, compStderr, compExitCode) = IsLocalHost(config.ProvisionHost!)
             ? await ExecLocalShellAsync(composeCmd, ct)
             : await ExecSshShellAsync(config, composeCmd, ct);
@@ -191,12 +240,59 @@ public class SweAfProvisioningService(
             }
         }
 
+        // Step 3.5: Write and download Caveman skill files if enabled
+        var hasCaveman = config.CavemanEnabled;
+        var cavemanOverridePath = $"{repoPath}/docker-compose.caveman.yml";
+        if (hasCaveman)
+        {
+            // Download skill files to host cache
+            var writeCavemanCmd = BuildWriteCavemanFilesCommand(repoPath);
+            var (cavemanOut, cavemanErr, cavemanCode) = IsLocalHost(config.ProvisionHost!)
+                ? await ExecLocalShellAsync(writeCavemanCmd, ct)
+                : await ExecSshShellAsync(config, writeCavemanCmd, ct);
+
+            if (cavemanCode != 0)
+            {
+                var err = (cavemanErr ?? cavemanOut ?? "Failed to download Caveman files").Trim();
+                logger.LogWarning("Caveman files write failed on {Host}: {Error}", config.ProvisionHost, err);
+                return (false, $"Failed to write Caveman skill files: {err}", null);
+            }
+
+            // Write docker-compose.caveman.yml with bind mounts
+            var cacheDir = "/tmp/caveman-skills";
+            var cavemanYaml = $"""
+                services:
+                  swe-agent:
+                    volumes:
+                      - {cacheDir}/skills:/root/.claude/skills:ro
+                      - {cacheDir}/CLAUDE.md:/root/.claude/CLAUDE.md:ro
+                  swe-fast:
+                    volumes:
+                      - {cacheDir}/skills:/root/.claude/skills:ro
+                      - {cacheDir}/CLAUDE.md:/root/.claude/CLAUDE.md:ro
+                """;
+            var cavemanB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(cavemanYaml.Trim()));
+            var writeCavemanComposeCmd = $"echo {cavemanB64} | base64 -d > {cavemanOverridePath}";
+            var (cavComposeOut, cavComposeErr, cavComposeCode) = IsLocalHost(config.ProvisionHost!)
+                ? await ExecLocalShellAsync(writeCavemanComposeCmd, ct)
+                : await ExecSshShellAsync(config, writeCavemanComposeCmd, ct);
+
+            if (cavComposeCode != 0)
+            {
+                var err = (cavComposeErr ?? cavComposeOut ?? "Failed to write docker-compose.caveman.yml").Trim();
+                logger.LogWarning("Caveman compose write failed on {Host}: {Error}", config.ProvisionHost, err);
+                return (false, $"Failed to write Caveman compose override: {err}", null);
+            }
+        }
+
         // Step 4: Bring up the stack under the unique project name (no down-first — brand new project).
-        // Explicit -f chain so docker-compose.hub.yml is always included and the auto-loaded
+        // Explicit -f chain so docker-compose.hub.yml is always included. The auto-loaded
         // docker-compose.override.yml is only added when the user has configured one.
-        var composeFiles = hasUserOverride
-            ? "-f docker-compose.yml -f docker-compose.hub.yml -f docker-compose.override.yml"
-            : "-f docker-compose.yml -f docker-compose.hub.yml";
+        // docker-compose.caveman.yml is included when CavemanEnabled is true.
+        var composeFilesParts = new List<string> { "-f docker-compose.yml", "-f docker-compose.hub.yml" };
+        if (hasUserOverride) composeFilesParts.Add("-f docker-compose.override.yml");
+        if (hasCaveman) composeFilesParts.Add("-f docker-compose.caveman.yml");
+        var composeFiles = string.Join(" ", composeFilesParts);
         var upCmd = $"cd {repoPath} && docker compose --project-name {projectName} {composeFiles} up -d --build";
         var (compOut, compErr, compCode) = IsLocalHost(config.ProvisionHost!)
             ? await ExecLocalShellAsync(upCmd, ct)
@@ -220,6 +316,38 @@ public class SweAfProvisioningService(
         logger.LogInformation(
             "Per-job SWE-AF stack started (project={Project}) -> {Url}", projectName, hostUrl);
         return (true, null, hostUrl);
+    }
+
+    /// <summary>
+    /// Downloads Caveman skill files and CLAUDE.md to the provision host.
+    /// Skips download if files already exist (idempotent).
+    /// Returns a shell command that must be executed on the provision host.
+    /// Files are cached at /tmp/caveman-skills on the host and bind-mounted into containers.
+    /// </summary>
+    internal static string BuildWriteCavemanFilesCommand(string repoPath)
+    {
+        var cacheDir = "/tmp/caveman-skills";
+        var skillsUrl = "https://raw.githubusercontent.com/JuliusBrussee/caveman/main/skills";
+
+        // Build the command using simple curl commands — no heredocs, no bash vars,
+        // avoiding C# string interpolation escape issues.
+        var lines = new List<string>();
+        lines.Add("set -e");
+        lines.Add("mkdir -p " + cacheDir + "/skills/caveman " + cacheDir + "/skills/caveman-commit " + cacheDir + "/skills/caveman-review " + cacheDir + "/skills/caveman-help");
+
+        foreach (var skill in new[] { "caveman", "caveman-commit", "caveman-review", "caveman-help" })
+        {
+            lines.Add("[ -s " + cacheDir + "/skills/" + skill + "/SKILL.md ] || curl -fsSL " + skillsUrl + "/" + skill + "/SKILL.md -o " + cacheDir + "/skills/" + skill + "/SKILL.md");
+        }
+
+        // Write CLAUDE.md using a temp file approach with printf
+        var cludeMdContent = "description: \"Caveman mode - ultra-compressed responses\"";
+        lines.Add("mkdir -p " + cacheDir);
+        lines.Add("printf '%s\\n' '---' '" + cludeMdContent + "' '---' '' 'You are operating in Caveman mode. Respond in ultra-compressed style: drop articles (a/an/the), fragments OK, short synonyms. Technical terms exact. Code blocks unchanged. Errors quoted exact. Pattern: [thing] [action] [reason]. [next step]. Never say sure, happy to, let me, simply.' '' 'Load all skills from ~/.claude/skills/.' > " + cacheDir + "/CLAUDE.md");
+
+        var bash = string.Join("\n", lines);
+        var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(bash));
+        return "echo " + b64 + " | base64 -d | bash";
     }
 
     /// <summary>
