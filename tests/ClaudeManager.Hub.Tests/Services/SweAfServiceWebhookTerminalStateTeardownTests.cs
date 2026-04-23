@@ -187,7 +187,7 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
         var teardownCall = new List<string>();
         _swarmProvisioner
             .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string? projectName) =>
+            .ReturnsAsync((string? projectName, CancellationToken _) =>
             {
                 teardownCall.Add(projectName ?? "");
                 return null;
@@ -198,6 +198,9 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
 
         var svc = CreateService(provisioner: _swarmProvisioner.Object);
         await svc.ProcessWebhookBatchAsync(batch);
+
+        // Wait for fire-and-forget teardown Task.Run to complete
+        await Task.Delay(100);
 
         // Assert
         await using var verify = _dbFactory.CreateDbContext();
@@ -245,7 +248,7 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
         var teardownCall = new List<string>();
         _swarmProvisioner
             .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string? projectName) =>
+            .ReturnsAsync((string? projectName, CancellationToken _) =>
             {
                 teardownCall.Add(projectName ?? "");
                 return null;
@@ -256,6 +259,9 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
         // Act
         await svc.ProcessWebhookBatchAsync(MakeBatch("execution_failed", externalJobId,
             extra: new { error = "Build failed with error" }));
+
+        // Wait for fire-and-forget teardown Task.Run to complete
+        await Task.Delay(100);
 
         // Assert
         await using var verify = _dbFactory.CreateDbContext();
@@ -293,7 +299,7 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
         var teardownCall = new List<string>();
         _swarmProvisioner
             .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string? projectName) =>
+            .ReturnsAsync((string? projectName, CancellationToken _) =>
             {
                 teardownCall.Add(projectName ?? "");
                 return null;
@@ -303,6 +309,9 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
 
         // Act
         await svc.ProcessWebhookBatchAsync(MakeBatch("execution_cancelled", externalJobId));
+
+        // Wait for fire-and-forget teardown Task.Run to complete
+        await Task.Delay(100);
 
         // Assert
         await using var verify = _dbFactory.CreateDbContext();
@@ -346,7 +355,7 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
         var teardownLog = new Dictionary<string, int>();
         _swarmProvisioner
             .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string? projectName) =>
+            .ReturnsAsync((string? projectName, CancellationToken _) =>
             {
                 teardownLog[projectName ?? ""] = teardownLog.GetValueOrDefault(projectName ?? "") + 1;
                 return null;
@@ -354,14 +363,16 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
 
         var svc = CreateService(provisioner: _swarmProvisioner.Object);
 
-        // Test: Process multiple terminal events - each should trigger one teardown
-        // (in real code, Task.Run fires and forgets, but we're tracking the setup)
+        // Test: Process multiple terminal events — idempotency ensures only 1 teardown fires
         await svc.ProcessWebhookBatchAsync(MakeBatch("execution_completed", externalJobId));
         await svc.ProcessWebhookBatchAsync(MakeBatch("execution_failed", externalJobId));
         await svc.ProcessWebhookBatchAsync(MakeBatch("execution_cancelled", externalJobId));
 
-        // Assert: For each terminal status, teardown was called exactly once
-        teardownLog.GetValueOrDefault(expectedProjectName).Should().Be(3); // Called 3 times (once per terminal event type)
+        // Wait for fire-and-forget teardown Task.Run to complete
+        await Task.Delay(100);
+
+        // Assert: Idempotency guard allows exactly 1 teardown across all terminal events
+        teardownLog.GetValueOrDefault(expectedProjectName).Should().Be(1);
     }
 
     // ============================================================================
@@ -392,7 +403,7 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
         await db.SaveChangesAsync();
 
         _swarmProvisioner.Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string? projectName) => { return null; });
+            .ReturnsAsync((string? projectName, CancellationToken _) => { return null; });
 
         var svc = CreateService(provisioner: _swarmProvisioner.Object);
 
@@ -487,6 +498,9 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
         // Act: Process one terminal state event
         await svc.ProcessWebhookBatchAsync(MakeBatch("execution_completed", externalJobId));
 
+        // Wait for fire-and-forget teardown Task.Run to complete
+        await Task.Delay(100);
+
         // Assert: Teardown was called exactly once (one Task.Run per terminal transition)
         _swarmProvisioner.Verify(x => x.StopControlPlaneForJobAsync(expectedProjectName, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -503,11 +517,8 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
     public async Task TriggeredJob_CompletesViaWebhook_TeardownTriggeredWithMaterializedProjectName()
     {
         // Arrange: Trigger a build which should create job with ComposeProjectName
-        var externalJobId = "exec-triggered-integration-008";
-        string? expectedProjectName = null;
-
-        var handler = MockHttp(HttpStatusCode.OK);
-        var capturedJobs = new List<SweAfJobEntity>();
+        var handler = MockHttp(HttpStatusCode.OK, new { execution_id = "test-exec-triggered" });
+        var teardownCalled = new List<string>();
 
         _swarmProvisioner
             .Setup(x => x.ProvisionControlPlaneForJobAsync(
@@ -518,46 +529,42 @@ public class SweAfServiceWebhookTerminalStateTeardownTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync((true, null, "http://localhost:8100"));
 
+        _swarmProvisioner
+            .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, CancellationToken>((projectName, _) => { teardownCalled.Add(projectName ?? ""); })
+            .ReturnsAsync((string?)null);
+
         var svc = CreateService(handler, _swarmProvisioner.Object);
 
         // Trigger the build (creates job via TriggerBuildAsync)
         var triggeredJob = await svc.TriggerBuildAsync("Triggered goal", "https://github.com/triggered/repo");
 
-        expectedProjectName = triggeredJob.ComposeProjectName;
-        capturedJobs.Add(triggeredJob);
-
         // Simulate webhook event for completion
         var dict = new Dictionary<string, object?>
         {
             ["target"]       = "swe-planner.build",
-            ["execution_id"] = externalJobId,
+            ["execution_id"] = triggeredJob.ExternalJobId,
             ["result"]       = new { pr_urls = new[] { "https://github.com/triggered/repo/pull/1" } },
         };
         var data = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(dict));
         var evt = new ObservabilityEvent("execution_completed", "test", DateTimeOffset.UtcNow, data);
-        var batch = MakeBatch("execution_completed", externalJobId);
-
-        var teardownCalled = new List<string>();
-        _swarmProvisioner
-            .Setup(x => x.StopControlPlaneForJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string? projectName) =>
-            {
-                teardownCalled.Add(projectName ?? "");
-                return null;
-            });
+        var batch = new ObservabilityBatch("batch-1", 1, new List<ObservabilityEvent> { evt }, DateTimeOffset.UtcNow);
 
         // Act
         await svc.ProcessWebhookBatchAsync(batch);
 
+        // Wait for fire-and-forget teardown Task.Run to complete
+        await Task.Delay(100);
+
         // Assert
         await using var verify = _dbFactory.CreateDbContext();
-        var job = await verify.SweAfJobs.SingleAsync(j => j.ExternalJobId == externalJobId);
+        var job = await verify.SweAfJobs.SingleAsync(j => j.ExternalJobId == triggeredJob.ExternalJobId);
 
         job.Status.Should().Be(BuildStatus.Succeeded);
-        job.ComposeProjectName.Should().Be(expectedProjectName,
+        job.ComposeProjectName.Should().Be(triggeredJob.ComposeProjectName,
             "ComposeProjectName from TriggerBuild should be used for teardown");
         teardownCalled.Should().HaveCount(1);
-        teardownCalled[0].Should().Be(expectedProjectName);
+        teardownCalled[0].Should().Be(triggeredJob.ComposeProjectName);
     }
 }
 

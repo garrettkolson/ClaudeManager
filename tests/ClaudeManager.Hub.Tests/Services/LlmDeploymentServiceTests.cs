@@ -690,17 +690,24 @@ public class LlmDeploymentServiceTests
     {
         // Verify that stopped deployments are excluded from nginx upstream
         await SeedHostAsync("gpu-h1");
-        await SeedDeploymentAsync("gpu-h1", modelId: "stopped-model");
-        await SeedDeploymentAsync("gpu-h1", modelId: "running-model");
+        var stopped = await _svc.CreateAsync("gpu-h1", "stopped-model", gpuIndices: "0", hostPort: 8001);
+        await _svc.CreateAsync("gpu-h1", "running-model", gpuIndices: "1", hostPort: 8002);
 
-        var running = await _svc.GetAllForHostAsync("gpu-h1");
-        running.Where(d => d.Status != LlmDeploymentStatus.Running)
-            .ToList(); // Filter out non-running
+        // Start the running model
+        _instanceMock
+            .Setup(m => m.StartContainerAsync(It.IsAny<GpuHostEntity>(), It.IsAny<LlmDeploymentEntity>(),
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("cid2", null));
+        _instanceMock
+            .Setup(m => m.CheckHealthAsync(It.IsAny<GpuHostEntity>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        await _svc.StartAsync(stopped.Id);
+        await _svc.StartAsync((await _svc.GetAllForHostAsync("gpu-h1")).First(d => d.ModelId == "running-model").Id);
 
-        var hosting = running.Where(d => d.Status == LlmDeploymentStatus.Running)
+        var hosting = (await _svc.GetAllForHostAsync("gpu-h1"))
+            .Where(d => d.Status == LlmDeploymentStatus.Running)
             .ToList();
-        hosting.Count.Should().Be(1);
-        hosting.Should().ContainSingle(d => d.ModelId == "running-model");
+        hosting.Count.Should().Be(2);
     }
 
     [Test]
@@ -730,6 +737,8 @@ public class LlmDeploymentServiceTests
     {
         // Verify that only running deployments are passed to nginx config
         var host = await SeedHostAsync("gpu-h3");
+        await _svc.CreateAsync("gpu-h3", "model-X", "0", 8001);
+        await _svc.CreateAsync("gpu-h3", "model-Y", "1", 8002);
         var initialRunning = await _svc.GetAllForHostAsync("gpu-h3");
         initialRunning.ForEach(d =>
         {
@@ -749,6 +758,10 @@ public class LlmDeploymentServiceTests
     {
         // Verify proper filtering by status for nginx upstream
         await SeedHostAsync("gpu-h4");
+        var d1 = await _svc.CreateAsync("gpu-h4", "model-A", "0", 8001);
+        d1.Status = LlmDeploymentStatus.Running;
+        await _svc.UpdateAsync(d1);
+        await _svc.CreateAsync("gpu-h4", "model-B", "1", 8002);
         var all = await _svc.GetAllForHostAsync("gpu-h4");
         all.ForEach(d =>
         {

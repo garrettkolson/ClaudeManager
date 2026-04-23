@@ -107,6 +107,27 @@ public static class JiraDtosHelpers
 
     private static string RenderNode(JsonElement node)
     {
+        if (node.ValueKind == JsonValueKind.Array)
+        {
+            if (node.GetArrayLength() == 0) return "";
+
+            // Non-ADF array: check if any element has a "type" property
+            bool hasType = false;
+            foreach (var child in node.EnumerateArray())
+            {
+                if (child.ValueKind == JsonValueKind.Object && child.TryGetProperty("type", out _))
+                {
+                    hasType = true;
+                    break;
+                }
+            }
+            if (!hasType) return node.GetRawText();
+
+            var sb = new StringBuilder();
+            foreach (var child in node.EnumerateArray())
+                sb.Append(RenderNode(child));
+            return sb.ToString();
+        }
         if (node.ValueKind != JsonValueKind.Object) return "";
 
         var type = node.TryGetProperty("type", out var t) ? t.GetString() : null;
@@ -114,8 +135,8 @@ public static class JiraDtosHelpers
         return type switch
         {
             "doc"         => RenderChildren(node),
-            "paragraph"   => RenderChildren(node) + "\n",
-            "heading"     => RenderChildren(node) + "\n",
+            "paragraph"   => RenderParagraph(node) + "\n",
+            "heading"     => RenderParagraph(node) + "\n",
             "blockquote"  => RenderChildren(node),
             "codeBlock"   => RenderChildren(node) + "\n",
             "bulletList"  => RenderList(node, "• "),
@@ -133,11 +154,29 @@ public static class JiraDtosHelpers
 
     private static string RenderChildren(JsonElement node)
     {
-        if (!node.TryGetProperty("content", out var content)) return "";
         var sb = new StringBuilder();
-        foreach (var child in content.EnumerateArray())
-            sb.Append(RenderNode(child));
+
+        if (node.TryGetProperty("content", out var content))
+            foreach (var child in content.EnumerateArray())
+                sb.Append(RenderNode(child));
+
+        if (node.TryGetProperty("contentMap", out var contentMap))
+            foreach (var mapValue in contentMap.EnumerateObject())
+            {
+                if (mapValue.Value.ValueKind == JsonValueKind.Array)
+                    foreach (var child in mapValue.Value.EnumerateArray())
+                        sb.Append(RenderNode(child));
+            }
+
         return sb.ToString();
+    }
+
+    private static string RenderParagraph(JsonElement node)
+    {
+        // ADF paragraphs can have direct "text" property or "content" array
+        if (node.TryGetProperty("text", out var directText) && directText.ValueKind == JsonValueKind.String)
+            return directText.GetString() ?? "";
+        return RenderChildren(node);
     }
 
     private static string RenderList(JsonElement node, string bullet)

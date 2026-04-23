@@ -125,7 +125,7 @@ public class SweAfServiceWebhookCreateTests
 
         var handler = MockHttp(HttpStatusCode.OK);
         var svc = CreateService(handler);
-        var batch = MakeBatch("execution_created", externalJobId);
+        var batch = MakeBatch("execution_created", externalJobId, extra: new { goal = "Test goal", repo_url = "https://github.com/org/repo" });
 
         // Act: Process execution_created webhook that will create a new job
         await svc.ProcessWebhookBatchAsync(batch);
@@ -212,7 +212,7 @@ public class SweAfServiceWebhookCreateTests
         };
         var data  = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(dict));
         var evt   = new ObservabilityEvent("execution_completed", "test", DateTimeOffset.UtcNow, data);
-        var batch = MakeBatch("execution_completed", externalJobId);
+        var batch = new ObservabilityBatch("batch-1", 1, new List<ObservabilityEvent> { evt }, DateTimeOffset.UtcNow);
 
         var svc = CreateService(provisioner: provisionerMock.Object);
 

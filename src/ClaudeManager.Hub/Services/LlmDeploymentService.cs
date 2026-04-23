@@ -190,7 +190,7 @@ public class LlmDeploymentService
             {
                 var msg = $"Container exited immediately after start (status: {containerStatus?.ToString() ?? "not found"})";
                 _logger.LogWarning("Deployment {Id}: {Message}", deployment.Id, msg);
-                await SetStatusAsync(deployment, LlmDeploymentStatus.Error, containerId, error: msg, ct);
+                await SetStatusAsync(deployment, LlmDeploymentStatus.Error, containerId: null, error: msg, ct);
                 return msg;
             }
 

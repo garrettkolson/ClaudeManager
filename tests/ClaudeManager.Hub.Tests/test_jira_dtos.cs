@@ -283,9 +283,11 @@ public class JiraDtosTests
         cloned.StoryPoints.Should().Be(5);
         cloned.Url.Should().Be("https://jira.example.com/browse/PROJ-123");
 
-        // Assert - Status should be different object
-        cloned.Status.Should().Be(original.Status);
+        // Assert - Status should be different object but equal content
         cloned.Status.Should().NotBeSameAs(original.Status);
+        var clonedJson = JsonSerializer.Serialize(cloned.Status);
+        var originalJson = JsonSerializer.Serialize(original.Status);
+        clonedJson.Should().Be(originalJson);
     }
 
     [Test]

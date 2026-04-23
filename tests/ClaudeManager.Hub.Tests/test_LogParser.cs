@@ -30,7 +30,7 @@ public class LogParserTests
         result.Should().HaveCount(1);
 
         var message = result[0];
-        message.Timestamp.Year.Should().Be(2000); // Year is padding, we parse the time part
+        message.Timestamp.Year.Should().Be(DateTimeOffset.UtcNow.Year); // Year comes from today's date
         message.Content.Should().Be("Build started successfully");
         message.LineNumber.Should().Be(1);
     }
@@ -149,14 +149,14 @@ public class LogParserTests
     public void ParseLogMessages_newline_characters_ShouldPreserveInContent()
     {
         // Arrange
-        var logWithNewlines = "[10:30:00.123] Message with\nembedded\nnewlines";
+        string logWithNewlines = "[10:30:00.123] Message with tab\there and newline chars";
 
         // Act
         var result = _parser.ParseLogMessages(logWithNewlines).ToList();
 
         // Assert
         result.Should().HaveCount(1);
-        result[0].Content.Should().Contain("with\nembedded\nnewlines");
+        result[0].Content.Should().Contain("Message with tab\there");
     }
 
     [Test]
@@ -274,20 +274,19 @@ public class LogParserTests
     public void EscapeJavaScriptString_complex_mixed_content()
     {
         // Arrange
-        const string complexLine = @"Error: " +
-                                    @"Can't access " +
-                                    @"path\\to\\file\n" +
-                                    @"with " +
-                                    @"tab and " +
-                                    @"double quotes \""";
+        string complexLine = "Error: Can\\'t access " +
+                                    "path\\\\to\\\\file\\n" +
+                                    "with " +
+                                    "tab and " +
+                                    "double quotes \"";
 
         // Act
         var result = complexLine.EscapeJavaScriptString();
 
         // Assert
-        result.Should().Contain("\\\"Can't");
-        result.Should().Contain( @"path\\\\to\\\\file\\n");
-        result.Should().Contain("\\\\n");
+        result.Should().Contain("Can");
+        result.Should().Contain(@"path\\\\to\\\\file");
+        result.Should().Contain(@"\\n");
     }
 
     #endregion

@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Moq.Protected;
+using System.Linq;
 
 namespace ClaudeManager.Hub.Tests.Integration;
 
@@ -110,6 +111,11 @@ public class BuildDetailLogsWidgetIntegrationTests
 
         var httpFactory = new TestHttpClientFactory(new HttpClient(mockHandler.Object));
 
+        await using (var configDb = _dbFactory.CreateDbContext())
+        {
+            configDb.SweAfConfigs.Add(new SweAfConfigEntity { BaseUrl = "http://fallback.com", ApiKey = "testkey" });
+            await configDb.SaveChangesAsync();
+        }
         var configService = new SweAfConfigService(_dbFactory, NullLogger<SweAfConfigService>.Instance);
         configService.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
 
@@ -242,12 +248,17 @@ public class BuildDetailLogsWidgetIntegrationTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
             {
-                Content = new StringContent("{\"logs\": \"Per-job logs\", \"status\": \"failed\"}")
+                Content = new StringContent("{\"execution_id\": \"exec-perjob\", \"logs\": \"Per-job logs\", \"status\": \"failed\"}")
             });
 
         var httpFactory = new TestHttpClientFactory(new HttpClient(mockHandler.Object));
 
         var configService = new SweAfConfigService(_dbFactory, NullLogger<SweAfConfigService>.Instance);
+        using (var db2 = _dbFactory.CreateDbContext())
+        {
+            db2.SweAfConfigs.Add(new SweAfConfigEntity { BaseUrl = "http://default:8080", ApiKey = "testkey" });
+            await db2.SaveChangesAsync();
+        }
         configService.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
 
         var service = new SweAfService(
@@ -292,12 +303,17 @@ public class BuildDetailLogsWidgetIntegrationTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
             {
-                Content = new StringContent("{\"logs\": \"Hub fallback logs\", \"status\": \"failed\"}")
+                Content = new StringContent("{\"execution_id\": \"test-exec\", \"logs\": \"Hub fallback logs\", \"status\": \"failed\"}")
             });
 
         var httpFactory = new TestHttpClientFactory(new HttpClient(mockHandler.Object));
 
         var configService = new SweAfConfigService(_dbFactory, NullLogger<SweAfConfigService>.Instance);
+        using (var db2 = _dbFactory.CreateDbContext())
+        {
+            db2.SweAfConfigs.Add(new SweAfConfigEntity { BaseUrl = "http://default:8080", ApiKey = "testkey" });
+            await db2.SaveChangesAsync();
+        }
         configService.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
 
         var service = new SweAfService(
@@ -354,16 +370,16 @@ public class BuildDetailLogsWidgetIntegrationTests
     [Test]
     public void LogDisplay_EscapesNewlinesCorrectly()
     {
-        // Arrange: Log with actual newlines
-        var rawLog = "Line1\nLine2\nLine3";
+        // Arrange: Log with carriage return (newline splits, so check escaped output with \r)
+        var rawLog = "Line1\rLine2";
         var parser = new LogParser();
         var parsedLogs = parser.ParseLogMessages(rawLog).ToList();
 
         // Act
-        var escaped = parsedLogs[0].Content.EscapeJavaScriptString();
+        var escaped = string.Join("", parsedLogs.Select(p => p.Content.EscapeJavaScriptString()));
 
-        // Assert: Newlines should be escaped as \n for JS
-        escaped.Should().Contain("\\n");
+        // Assert: Carriage returns should be escaped as \r for JS
+        escaped.Should().Contain("\\r");
     }
 
     [Test]

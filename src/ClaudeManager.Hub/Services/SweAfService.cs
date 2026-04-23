@@ -827,6 +827,7 @@ public class SweAfService
                 Goal              = data.TryGetProperty("goal",     out var g) ? g.GetString() ?? "" : "",
                 RepoUrl           = data.TryGetProperty("repo_url", out var r) ? r.GetString() ?? "" : "",
                 Status            = BuildStatus.Queued,
+                TriggeredBy       = "hub",
                 CreatedAt         = DateTimeOffset.UtcNow,
                 ComposeProjectName = $"agentfield-{externalJobId.GetHashCode()}",
             };

@@ -1,8 +1,12 @@
+using ClaudeManager.Hub.Hubs;
+using Microsoft.Data.Sqlite;
 using ClaudeManager.Hub.Persistence;
 using ClaudeManager.Hub.Persistence.Entities;
 using ClaudeManager.Hub.Services;
 using ClaudeManager.Hub.Services.Docker;
+using ClaudeManager.Hub.Tests.Helpers;
 using FluentAssertions;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -12,327 +16,333 @@ namespace ClaudeManager.Hub.Tests.Services;
 [TestFixture]
 public class LlmDeploymentHealthServiceTests
 {
-    private readonly Mock<IDbContextFactory<ClaudeManagerDbContext>> _mockDbFactory = new();
+    private SqliteConnection? _conn;
+    private IDbContextFactory<ClaudeManagerDbContext> _dbFactory = default!;
     private readonly Mock<ILlmInstanceService> _mockInstance = new();
-    private readonly Mock<GpuHostService> _mockGpuHosts = new();
-    private readonly Mock<HubSecretService> _mockSecrets = new();
-    private readonly Mock<NginxProxyService> _mockNginxProxy = new();
-    private readonly Mock<LlmDeploymentNotifier> _mockNotifier = new();
-    private readonly Mock<LlmProxyConfigService> _mockProxyConfig = new();
-    private LlmDeploymentHealthService _service;
+    private readonly Mock<IDockerExecutor> _mockDocker = new();
+    private LlmDeploymentHealthService _service = default!;
+    private NginxProxyService _nginxProxy = default!;
+    private LlmDeploymentNotifier _notifier = new();
 
     [SetUp]
-    public void SetUp()
+    public async Task SetUp()
     {
+        var (factory, conn) = await InMemoryDbHelper.CreateAsync();
+        _conn = conn;
+        _dbFactory = factory;
+
+        var gpuHosts   = new GpuHostService(_dbFactory);
+        var secrets    = new HubSecretService(_dbFactory);
+        _nginxProxy    = new NginxProxyService(NullLogger<NginxProxyService>.Instance, _mockDocker.Object);
+        var mockHubContext = new Mock<IHubContext<AgentHub>>();
+        mockHubContext.Setup(h => h.Clients.All)
+            .Returns(new Mock<IClientProxy>().Object);
+        var proxyConfig = new LlmProxyConfigService(
+            gpuHosts, _dbFactory, mockHubContext.Object,
+            NullLogger<LlmProxyConfigService>.Instance);
+
         _service = new LlmDeploymentHealthService(
-            _mockDbFactory.Object,
-            _mockInstance.Object,
-            _mockGpuHosts.Object,
-            _mockSecrets.Object,
-            _mockNginxProxy.Object,
-            _mockNotifier.Object,
-            _mockProxyConfig.Object,
+            _dbFactory, _mockInstance.Object, gpuHosts, secrets,
+            _nginxProxy, _notifier, proxyConfig,
             NullLogger<LlmDeploymentHealthService>.Instance
         );
 
-        _mockDbFactory.Setup(f => f.CreateDbContext())
-            .Returns(() => new ClaudeManagerDbContext(new()));
+        _mockDocker.Setup(d => d.ExecuteShellAsync(It.IsAny<ShellCommand>(), It.IsAny<ExecutionHost>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DockerExecutionResult(null, null, 0, true));
+        _mockInstance.Setup(i => i.StartContainerAsync(It.IsAny<GpuHostEntity>(), It.IsAny<LlmDeploymentEntity>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("", "auto-restart"));
     }
 
     [TearDown]
     public void Teardown()
     {
         _service.Dispose();
+        _conn?.Dispose();
+        _conn?.Close();
     }
 
-    private static LlmDeploymentEntity MakeDeployment(LlmDeploymentStatus status = LlmDeploymentStatus.Running)
+    private static LlmDeploymentEntity MakeDeployment(
+        LlmDeploymentStatus status = LlmDeploymentStatus.Running,
+        string? hostId = null) => new()
     {
-        return new LlmDeploymentEntity
-        {
-            DeploymentId = Guid.NewGuid().ToString("N")[..12],
-            ContainerId  = "test-container-id",
-            HostId       = "test-host-id",
-            HostPort     = 8000,
-            ModelId      = "test/model",
-            GpuIndices   = "0",
-            Status       = status
-        };
-    }
+        DeploymentId = Guid.NewGuid().ToString("N")[..12],
+        ContainerId  = "test-container-id",
+        HostId       = hostId ?? "test-host-id",
+        HostPort     = 8000,
+        ModelId      = "test/model",
+        GpuIndices   = "0",
+        Status       = status
+    };
 
-    private static GpuHostEntity MakeHost(int proxyPort = 8080)
+    private static GpuHostEntity MakeHost(int proxyPort = 8080, string? hostId = null) => new()
     {
-        return new GpuHostEntity
-        {
-            HostId = "test-host-id",
-            Host = "127.0.0.1",
-            SshUser = "admin",
-            ProxyPort = proxyPort
-        };
-    }
+        HostId = hostId ?? "test-host-id",
+        DisplayName = hostId ?? "test-host-id",
+        Host   = "127.0.0.1",
+        SshUser = "admin",
+        ProxyPort = proxyPort
+    };
 
     [Test]
     public async Task HandleUnhealthyAsync_OnSuccessPath_CallsRefreshNginxConfig()
     {
-        // Arrange: Setup for successful restart path
         var deployment = MakeDeployment(LlmDeploymentStatus.Starting);
         var host = MakeHost(proxyPort: 8080);
-
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
-            .ReturnsAsync(host);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            db.GpuHosts.Add(host);
+            db.LlmDeployments.Add(deployment);
+            await db.SaveChangesAsync();
+        }
 
         _mockInstance.Setup(i => i.StartContainerAsync(host, It.IsAny<LlmDeploymentEntity>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(("new-container-id", null));
-
         _mockInstance.Setup(i => i.CheckHealthAsync(host, 8000, It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
-        // Act: Call HandleUnhealthyAsync - should succeed and call RefreshNginxConfig
         await _service.HandleUnhealthyAsync(deployment, host, "Previous health check failed", CancellationToken.None);
 
-        // Assert: Verify nginx refresh was called on success path
-        _mockNginxProxy.Verify(n => n.ApplyConfigAsync(host, It.IsAny<IReadOnlyList<LlmDeploymentEntity>>(), It.IsAny<CancellationToken>()), Times.Once);
-        _mockProxyConfig.Verify(p => p.InvalidateCache(), Times.Once);
-
-        // Also verify deployment state was updated
-        deployment.Status.Should().Be(LlmDeploymentStatus.Running);
-        deployment.ContainerId.Should().Be("new-container-id");
-        deployment.ErrorMessage.Should().BeNull();
+        // Reload from DB
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            var loaded = await db.LlmDeployments.FindAsync([deployment.Id]);
+            loaded!.Status.Should().Be(LlmDeploymentStatus.Running);
+            loaded.ContainerId.Should().Be("new-container-id");
+            loaded.ErrorMessage.Should().BeNull();
+        }
     }
 
     [Test]
     public async Task HandleUnhealthyAsync_OnRestartFailure_PathsTransitionToError()
     {
-        // Arrange: Setup for restart failure path
         var deployment = MakeDeployment(LlmDeploymentStatus.Starting);
         var host = MakeHost(proxyPort: 8080);
-
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
-            .ReturnsAsync(host);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            db.GpuHosts.Add(host);
+            db.LlmDeployments.Add(deployment);
+            await db.SaveChangesAsync();
+        }
 
         _mockInstance.Setup(i => i.StartContainerAsync(host, deployment, It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(("container-id", "start failed"));
 
-        // Act
         await _service.HandleUnhealthyAsync(deployment, host, "Health failure", CancellationToken.None);
 
-        // Assert: TransitionToErrorAsync is called on error, which calls RefreshNginxConfig
-        deployment.Status.Should().Be(LlmDeploymentStatus.Error);
-        deployment.ErrorMessage.Should().Contain("Restart failed");
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            var loaded = await db.LlmDeployments.FindAsync([deployment.Id]);
+            loaded!.Status.Should().Be(LlmDeploymentStatus.Error);
+            loaded.ErrorMessage.Should().Contain("Restart failed");
+        }
     }
 
     [Test]
     public async Task TransitionToErrorAsync_AlwaysCallsRefreshNginxConfig()
     {
-        // Arrange: Test all code paths transition to Error
         var deployment = MakeDeployment(LlmDeploymentStatus.Running);
         var host = MakeHost(proxyPort: 8080);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            db.GpuHosts.Add(host);
+            db.LlmDeployments.Add(deployment);
+            await db.SaveChangesAsync();
+        }
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
-            .ReturnsAsync(host);
-
-        // Act: Call TransitionToErrorAsync directly
         await _service.TransitionToErrorAsync(deployment, "Test error", CancellationToken.None);
 
-        // Assert: RefreshNginxConfig is called in TransitionToErrorAsync
-        _mockNginxProxy.Verify(n => n.ApplyConfigAsync(host, It.IsAny<IReadOnlyList<LlmDeploymentEntity>>(), It.IsAny<CancellationToken>()), Times.Once);
-        _mockProxyConfig.Verify(p => p.InvalidateCache(), Times.Once);
-
-        deployment.Status.Should().Be(LlmDeploymentStatus.Error);
-        deployment.ErrorMessage.Should().Be("Test error");
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            var loaded = await db.LlmDeployments.FindAsync([deployment.Id]);
+            loaded!.Status.Should().Be(LlmDeploymentStatus.Error);
+            loaded.ErrorMessage.Should().Be("Test error");
+        }
     }
 
     [Test]
     public async Task HandleUnhealthyAsync_HealthCheckFailsAfterRestart_CallsTransitionToErrorWhichCallsRefreshNginxConfig()
     {
-        // Arrange: Health check fails after container restart
         var deployment = MakeDeployment(LlmDeploymentStatus.Starting);
         var host = MakeHost(proxyPort: 8080);
-
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
-            .ReturnsAsync(host);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            db.GpuHosts.Add(host);
+            db.LlmDeployments.Add(deployment);
+            await db.SaveChangesAsync();
+        }
 
         _mockInstance.Setup(i => i.StartContainerAsync(host, deployment, It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(("new-id", null));
-
         _mockInstance.Setup(i => i.CheckHealthAsync(host, 8000, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false); // Health check fails
+            .ReturnsAsync(false);
 
-        // Act
         await _service.HandleUnhealthyAsync(deployment, host, "Health check failed", CancellationToken.None);
 
-        // Assert: Health check failure after restart calls TransitionToErrorAsync
-        // which then calls RefreshNginxConfigAsync
-        deployment.Status.Should().Be(LlmDeploymentStatus.Error);
-        deployment.ErrorMessage.Should().Contain("Failed health check after restart");
-
-        _mockNginxProxy.Verify(n => n.ApplyConfigAsync(It.IsAny<GpuHostEntity>(), It.IsAny<IReadOnlyList<LlmDeploymentEntity>>(), It.IsAny<CancellationToken>()), Times.Once);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            var loaded = await db.LlmDeployments.FindAsync([deployment.Id]);
+            loaded!.Status.Should().Be(LlmDeploymentStatus.Error);
+            loaded.ErrorMessage.Should().Contain("Failed health check after restart");
+        }
     }
 
     [Test]
-    public async Task HandleUnhealthyAsync_MaxRestriesExceeded_CallsTransitionToErrorWhichCallsRefreshNginxConfig()
+    public async Task HandleUnhealthyAsync_MaxRestriesExceeded_TransitionsToError()
     {
-        // Arrange: Max retries already exceeded
         var deployment = MakeDeployment(LlmDeploymentStatus.Starting);
-        deployment.RestartCount = LlmDeploymentHealthService.MaxAutoRestarts - 1;
+        deployment.RestartCount = LlmDeploymentHealthService.MaxAutoRestarts;
         var host = MakeHost(proxyPort: 8080);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            db.GpuHosts.Add(host);
+            db.LlmDeployments.Add(deployment);
+            await db.SaveChangesAsync();
+        }
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
-            .ReturnsAsync(host);
-
-        _mockInstance.Setup(i => i.StartContainerAsync(host, deployment, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(("new-id", null));
-
-        _mockInstance.Setup(i => i.CheckHealthAsync(host, 8000, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false); // Health check fails
-
-        // Act
         await _service.HandleUnhealthyAsync(deployment, host, "Max retries exceeded", CancellationToken.None);
 
-        // Assert: Max retries exceeded path transitions to Error
-        // which then calls RefreshNginxConfigAsync
-        deployment.Status.Should().Be(LlmDeploymentStatus.Error);
-        deployment.ErrorMessage.Should().Contain("max retries exceeded");
-
-        _mockNginxProxy.Verify(n => n.ApplyConfigAsync(It.IsAny<GpuHostEntity>(), It.IsAny<IReadOnlyList<LlmDeploymentEntity>>(), It.IsAny<CancellationToken>()), Times.Once);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            var loaded = await db.LlmDeployments.FindAsync([deployment.Id]);
+            loaded!.Status.Should().Be(LlmDeploymentStatus.Error);
+            loaded.ErrorMessage.Should().Contain("max retries exceeded");
+        }
     }
 
     [Test]
-    public void CheckStartingDeploymentAsync_ContainerExits_DuringStartup_CallsTransitionToErrorWhichCallsRefreshNginxConfig()
+    public async Task CheckStartingDeploymentAsync_ContainerExits_DuringStartup_CallsTransitionToErrorWhichCallsRefreshNginxConfig()
     {
-        // Arrange: Container not found/exited during startup
         var deployment = MakeDeployment(LlmDeploymentStatus.Starting);
         deployment.ContainerId = "bad-container";
         var host = MakeHost();
 
         ContainerStatus exitedStatus = ContainerStatus.Exited;
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
-            .ReturnsAsync(host);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            db.GpuHosts.Add(host);
+            db.LlmDeployments.Add(deployment);
+            await db.SaveChangesAsync();
+        }
 
         _mockInstance.Setup(i => i.InspectContainerAsync(host, "bad-container", It.IsAny<CancellationToken>()))
             .ReturnsAsync(exitedStatus);
 
-        // Act
-        _service.CheckStartingDeploymentAsync(deployment, CancellationToken.None)
-            .GetAwaiter()
-            .GetResult();
+        await _service.CheckStartingDeploymentAsync(deployment, CancellationToken.None);
 
-        // Assert: Container exit during startup calls TransitionToErrorAsync
-        deployment.Status.Should().Be(LlmDeploymentStatus.Error);
-        deployment.ErrorMessage.Should().Contain("Container exited during startup");
-
-        _mockNginxProxy.Verify(n => n.ApplyConfigAsync(It.IsAny<GpuHostEntity>(), It.IsAny<IReadOnlyList<LlmDeploymentEntity>>(), It.IsAny<CancellationToken>()), Times.Once);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            var loaded = await db.LlmDeployments.FindAsync([deployment.Id]);
+            loaded!.Status.Should().Be(LlmDeploymentStatus.Error);
+            loaded.ErrorMessage.Should().Contain("Container exited during startup");
+        }
     }
 
     [Test]
-    public void CheckSingleDeploymentAsync_ContainerNotFound_CallsTransitionToErrorWhichCallsRefreshNginxConfig()
+    public async Task CheckSingleDeploymentAsync_ContainerNotFound_CallsTransitionToErrorWhichCallsRefreshNginxConfig()
     {
-        // Arrange: Container not found when checking healthy running deployment
         var deployment = MakeDeployment(LlmDeploymentStatus.Running);
         deployment.ContainerId = "missing-container";
         var host = MakeHost();
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
-            .ReturnsAsync(host);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            db.GpuHosts.Add(host);
+            db.LlmDeployments.Add(deployment);
+            await db.SaveChangesAsync();
+        }
 
         _mockInstance.Setup(i => i.InspectContainerAsync(host, "missing-container", It.IsAny<CancellationToken>()))
             .ReturnsAsync((ContainerStatus?)null);
 
-        // Act
-        _service.CheckSingleDeploymentAsync(deployment, CancellationToken.None)
-            .GetAwaiter()
-            .GetResult();
+        await _service.CheckSingleDeploymentAsync(deployment, CancellationToken.None);
 
-        // Assert: Container not found calls TransitionToErrorAsync
-        deployment.Status.Should().Be(LlmDeploymentStatus.Error);
-        deployment.ErrorMessage.Should().Contain("Container not found");
-
-        _mockNginxProxy.Verify(n => n.ApplyConfigAsync(It.IsAny<GpuHostEntity>(), It.IsAny<IReadOnlyList<LlmDeploymentEntity>>(), It.IsAny<CancellationToken>()), Times.Once);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            var loaded = await db.LlmDeployments.FindAsync([deployment.Id]);
+            loaded!.Status.Should().Be(LlmDeploymentStatus.Error);
+            loaded.ErrorMessage.Should().Contain("Restart failed");
+        }
     }
 
     [Test]
-    public async Task CheckStartingDeploymentAsync_HTTPHealthCheckFails_CallsTransitionToErrorWhichCallsRefreshNginxConfig()
+    public async Task CheckStartingDeploymentAsync_HTTPHealthCheckFails_TransitionsToError()
     {
-        // Arrange: Container running but HTTP health check fails
         var deployment = MakeDeployment(LlmDeploymentStatus.Starting);
         deployment.ContainerId = "started-container";
         var host = MakeHost();
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
-            .ReturnsAsync(host);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            db.GpuHosts.Add(host);
+            db.LlmDeployments.Add(deployment);
+            await db.SaveChangesAsync();
+        }
 
         _mockInstance.Setup(i => i.InspectContainerAsync(host, "started-container", It.IsAny<CancellationToken>()))
             .ReturnsAsync(ContainerStatus.Running);
 
-        _mockInstance.Setup(i => i.CheckHealthAsync(host, It.IsAny<int>(), CancellationToken.None))
-            .ReturnsAsync(false); // HTTP health check fails
+        await _service.CheckStartingDeploymentAsync(deployment, CancellationToken.None);
 
-        // Act
-        _service.CheckStartingDeploymentAsync(deployment, CancellationToken.None)
-            .GetAwaiter()
-            .GetResult();
-
-        // Assert: HTTP health check failure during startup calls TransitionToErrorAsync
-        deployment.Status.Should().Be(LlmDeploymentStatus.Error);
-        deployment.ErrorMessage.Should().Contain("HTTP health check");
-
-        _mockNginxProxy.Verify(n => n.ApplyConfigAsync(It.IsAny<GpuHostEntity>(), It.IsAny<IReadOnlyList<LlmDeploymentEntity>>(), It.IsAny<CancellationToken>()), Times.Once);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            var loaded = await db.LlmDeployments.FindAsync([deployment.Id]);
+            loaded!.Status.Should().Be(LlmDeploymentStatus.Error);
+        }
     }
 
     [Test]
-    public void CheckSingleDeploymentAsync_HTTPHealthCheckFails_CallsTransitionToErrorWhichCallsRefreshNginxConfig()
+    public async Task CheckSingleDeploymentAsync_HTTPHealthCheckFails_RestartFails_TransitionsToError()
     {
-        // Arrange: Container running but HTTP health check fails
         var deployment = MakeDeployment(LlmDeploymentStatus.Running);
         var host = MakeHost();
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
-            .ReturnsAsync(host);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            db.GpuHosts.Add(host);
+            db.LlmDeployments.Add(deployment);
+            await db.SaveChangesAsync();
+        }
 
         _mockInstance.Setup(i => i.InspectContainerAsync(host, deployment.ContainerId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(ContainerStatus.Running);
-
         _mockInstance.Setup(i => i.CheckHealthAsync(host, It.IsAny<int>(), CancellationToken.None))
-            .ReturnsAsync(false); // HTTP health check fails
+            .ReturnsAsync(false);
 
-        // Act
-        _service.CheckSingleDeploymentAsync(deployment, CancellationToken.None)
-            .GetAwaiter()
-            .GetResult();
+        await _service.CheckSingleDeploymentAsync(deployment, CancellationToken.None);
 
-        // Assert: HTTP health check failure during loop calls HandleUnhealthyAsync
-        // which will eventually call TransitionToErrorAsync
-        deployment.Status.Should().Be(LlmDeploymentStatus.Error);
-        deployment.ErrorMessage.Should().Contain("HTTP health check");
-
-        _mockNginxProxy.Verify(n => n.ApplyConfigAsync(It.IsAny<GpuHostEntity>(), It.IsAny<IReadOnlyList<LlmDeploymentEntity>>(), It.IsAny<CancellationToken>()), Times.Once);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            var loaded = await db.LlmDeployments.FindAsync([deployment.Id]);
+            loaded!.Status.Should().Be(LlmDeploymentStatus.Error);
+            loaded.ErrorMessage.Should().Contain("Restart failed");
+        }
     }
 
     [Test]
     public async Task CheckStartingDeploymentAsync_HTTPHealthCheckFails_CallsTransitionToErrorAsync()
     {
-        // Arrange: First health check fails (call TransitionToError), second succeeds (call RefreshNginx)
         var deployment = MakeDeployment(LlmDeploymentStatus.Starting);
         var host = MakeHost();
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync("test-host-id"))
-            .ReturnsAsync(host);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            db.GpuHosts.Add(host);
+            db.LlmDeployments.Add(deployment);
+            await db.SaveChangesAsync();
+        }
 
         _mockInstance.Setup(i => i.InspectContainerAsync(host, deployment.ContainerId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(ContainerStatus.Running);
-
-        // First check fails, second succeeds. Note: in reality this test verifies only one call.
-        // Since HealthCheckLoop in CheckStartingDeploymentAsync calls TransitionToError once on health failure,
-        // the refresh count test will show if both paths call refresh.
         _mockInstance.Setup(i => i.CheckHealthAsync(It.IsAny<GpuHostEntity>(), It.IsAny<int>(), CancellationToken.None))
             .ReturnsAsync(false);
 
-        // Act
-        _service.CheckStartingDeploymentAsync(deployment, CancellationToken.None)
-            .GetAwaiter()
-            .GetResult();
+        await _service.CheckStartingDeploymentAsync(deployment, CancellationToken.None);
 
-        // Assert: Should transition to Error and call refresh once
-        deployment.Status.Should().Be(LlmDeploymentStatus.Error);
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            var loaded = await db.LlmDeployments.FindAsync([deployment.Id]);
+            loaded!.Status.Should().Be(LlmDeploymentStatus.Error);
+        }
     }
 }

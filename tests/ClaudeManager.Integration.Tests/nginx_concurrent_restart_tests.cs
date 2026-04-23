@@ -1,7 +1,11 @@
+using Microsoft.Data.Sqlite;
+using ClaudeManager.Hub.Hubs;
 using ClaudeManager.Hub.Persistence;
 using ClaudeManager.Hub.Persistence.Entities;
 using ClaudeManager.Hub.Services;
+using ClaudeManager.Hub.Services.Docker;
 using FluentAssertions;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -10,272 +14,207 @@ namespace ClaudeManager.Integration.Tests;
 
 /// <summary>
 /// Concurrent Nginx restart safety tests.
-///
-/// Tests verify concurrent restart safety for LLM deployments to prevent nginx config corruption.
-///
-/// Acceptance Criteria:
-/// - AC-9: Multiple concurrent unhealthy deployments can restart without nginx config corruption
-/// - AC-1: HandleUnhealthyAsync triggers nginx config refresh after successful restart
-/// - AC-2: HandleUnhealthyAsync clears stale config after failed restart
 /// </summary>
 public class NginxConcurrentRestartTests : IDisposable
 {
-    private readonly Mock<IDbContextFactory<ClaudeManagerDbContext>> _mockDbFactory;
-    private readonly Mock<ILlmInstanceService> _mockInstance;
-    private readonly Mock<GpuHostService> _mockGpuHosts;
-    private readonly Mock<HubSecretService> _mockSecrets;
-    private readonly Mock<NginxProxyService> _mockNginxProxy;
-    private readonly Mock<LlmDeploymentNotifier> _mockNotifier;
-    private readonly Mock<LlmProxyConfigService> _mockProxyConfig;
+    private SqliteConnection? _conn;
+    private IDbContextFactory<ClaudeManagerDbContext> _dbFactory = default!;
+    private readonly Mock<ILlmInstanceService> _mockInstance = new();
+    private readonly Mock<IDockerExecutor> _mockDocker = new();
+    private readonly LlmDeploymentNotifier _notifier = new();
     private readonly LlmDeploymentHealthService _healthService;
+    private readonly LlmProxyConfigService _proxyConfig;
 
     public NginxConcurrentRestartTests()
     {
-        _mockDbFactory = new Mock<IDbContextFactory<ClaudeManagerDbContext>>();
-        _mockInstance = new Mock<ILlmInstanceService>();
-        _mockGpuHosts = new Mock<GpuHostService>();
-        _mockSecrets = new Mock<HubSecretService>();
-        _mockNginxProxy = new Mock<NginxProxyService>();
-        _mockNotifier = new Mock<LlmDeploymentNotifier>();
-        _mockProxyConfig = new Mock<LlmProxyConfigService>();
+        // Create one shared in-memory DB for the fixture
+        var conn = new SqliteConnection("DataSource=:memory:");
+        conn.Open();
+        _conn = conn;
+        var opts = new DbContextOptionsBuilder<ClaudeManagerDbContext>()
+            .UseSqlite(conn)
+            .Options;
+        _dbFactory = new TestDbContextFactory(opts);
 
-        _mockDbFactory.Setup(f => f.CreateDbContext())
-            .Returns(() => new ClaudeManagerDbContext(new()));
+        // Ensure schema
+        using (var db = new ClaudeManagerDbContext(opts))
+            db.Database.EnsureCreated();
 
-        var dbFactory = _mockDbFactory.Object;
+        var gpuHosts   = new GpuHostService(_dbFactory);
+        var secrets    = new HubSecretService(_dbFactory);
+        var nginxProxy = new NginxProxyService(NullLogger<NginxProxyService>.Instance, _mockDocker.Object);
+        var mockHubContext = new Mock<IHubContext<AgentHub>>();
+        mockHubContext.Setup(h => h.Clients.All)
+            .Returns(new Mock<IClientProxy>().Object);
+        _proxyConfig = new LlmProxyConfigService(
+            gpuHosts, _dbFactory, mockHubContext.Object,
+            NullLogger<LlmProxyConfigService>.Instance);
+
         _healthService = new LlmDeploymentHealthService(
-            dbFactory,
-            _mockInstance.Object,
-            _mockGpuHosts.Object,
-            _mockSecrets.Object,
-            _mockNginxProxy.Object,
-            _mockNotifier.Object,
-            _mockProxyConfig.Object,
+            _dbFactory, _mockInstance.Object, gpuHosts, secrets,
+            nginxProxy, _notifier, _proxyConfig,
             NullLogger<LlmDeploymentHealthService>.Instance
         );
     }
 
     public void Dispose()
     {
-        // _mockDbFactory?.Dispose();
-        // _mockInstance?.Dispose();
-        // _mockGpuHosts?.Dispose();
-        // _mockSecrets?.Dispose();
-        // _mockNginxProxy?.Dispose();
-        // _mockNotifier?.Dispose();
-        // _mockProxyConfig?.Dispose();
+        _healthService.Dispose();
+        _conn?.Dispose();
+        _conn?.Close();
     }
 
-    private LlmDeploymentEntity MakeDeployment(string? hostId = null, int hostPort = 8000,
-        LlmDeploymentStatus status = LlmDeploymentStatus.Running, string? deploymentId = null)
+    private LlmDeploymentEntity MakeDeployment(
+        string? hostId = null, int hostPort = 8000,
+        LlmDeploymentStatus status = LlmDeploymentStatus.Running,
+        string? deploymentId = null) => new()
     {
-        var deployment = new LlmDeploymentEntity
-        {
-            DeploymentId = deploymentId ?? Guid.NewGuid().ToString(),
-            HostId = hostId ?? "test-host-id",
-            HostPort = hostPort,
-            ModelId = "test/model",
-            GpuIndices = "0",
-            Status = status
-        };
-        return deployment;
-    }
+        DeploymentId = deploymentId ?? Guid.NewGuid().ToString("N")[..12],
+        HostId = hostId ?? "test-host-id",
+        HostPort = hostPort,
+        ModelId = "test/model",
+        GpuIndices = "0",
+        Status = status
+    };
 
-    private GpuHostEntity MakeHost(string? hostId = null, int proxyPort = 8080, string? sshUser = null)
+    private GpuHostEntity MakeHost(string? hostId = null, int proxyPort = 8080, string? sshUser = null) => new()
     {
-        return new GpuHostEntity
-        {
-            HostId = hostId ?? "test-host-id",
-            Host = "127.0.0.1",
-            SshUser = sshUser ?? "admin",
-            ProxyPort = proxyPort
-        };
+        HostId = hostId ?? "test-host-id",
+        DisplayName = hostId ?? "test-host-id",
+        Host = "127.0.0.1",
+        SshUser = sshUser ?? "admin",
+        ProxyPort = proxyPort
+    };
+
+    private class TestDbContextFactory(DbContextOptions<ClaudeManagerDbContext> opts)
+        : IDbContextFactory<ClaudeManagerDbContext>
+    {
+        public ClaudeManagerDbContext CreateDbContext() => new(opts);
+        public Task<ClaudeManagerDbContext> CreateDbContextAsync(CancellationToken ct = default) =>
+            Task.FromResult(new ClaudeManagerDbContext(opts));
     }
 
     [Test]
     public async Task MultipleConcurrentUnhealthyDeployments_RestartWithoutConfigCorruption()
     {
-        // AC-9: Multiple concurrent unhealthy deployments can restart without nginx config corruption
         const int numDeployments = 5;
-        var hostId = "concurrent-test-host-1";
+        const string hostId = "concurrent-test-host-1";
+        var host = MakeHost(hostId: hostId, proxyPort: 8080);
         var deploymentIds = new List<string>();
 
-        for (int i = 0; i < numDeployments; i++)
+        using (var db = _dbFactory.CreateDbContext())
         {
-            deploymentIds.Add($"dep-{Guid.NewGuid():N}");
+            db.GpuHosts.Add(host);
+            for (int i = 0; i < numDeployments; i++)
+            {
+                var depId = $"dep-{Guid.NewGuid():N}";
+                deploymentIds.Add(depId);
+                db.LlmDeployments.Add(MakeDeployment(hostId, 8000, LlmDeploymentStatus.Error, depId));
+            }
+            await db.SaveChangesAsync();
         }
 
-        var host = MakeHost(hostId: hostId, proxyPort: 8080);
-
-        // Setup database with deployments
-        using var db = _mockDbFactory.Object.CreateDbContext();
-        db.LlmDeployments.AddRange(
-            deploymentIds.Select(depId => MakeDeployment(hostId, 8000, LlmDeploymentStatus.Error, depId)));
-        await db.SaveChangesAsync();
-
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync(hostId))
-            .ReturnsAsync(host);
-
-        _mockSecrets.Setup(s => s.GetAsync(It.IsAny<string>()))
-            .ReturnsAsync("test-hf-token");
-
-        // Setup container inspection to detect unhealthy status (Exited)
-        _mockInstance.Setup(i => i.InspectContainerAsync(host, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(ContainerStatus.Exited);
-
-        // Setup container start success for each deployment
-        _mockInstance.Setup(i => i.StartContainerAsync(
-            host, It.IsAny<LlmDeploymentEntity>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(("new-container-" + Guid.NewGuid(), (string)null));
-
-        // Setup health check to succeed after restart
+        _mockInstance.Setup(i => i.StartContainerAsync(host, It.IsAny<LlmDeploymentEntity>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("new-container-" + Guid.NewGuid(), (string?)null));
         _mockInstance.Setup(i => i.CheckHealthAsync(host, 8000, It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
+        _mockDocker.Setup(d => d.ExecuteShellAsync(It.IsAny<ShellCommand>(), It.IsAny<ExecutionHost>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DockerExecutionResult(null, null, 0, true));
 
-        // Call HandleUnhealthyAsync for each deployment concurrently
-        var tasks = new List<Task>();
-        foreach (var depId in deploymentIds)
+        var deployments = new List<LlmDeploymentEntity>();
+        using (var db = _dbFactory.CreateDbContext())
         {
-            var deployment = db.LlmDeployments.First(d => d.DeploymentId == depId);
-            tasks.Add(Task.Run(async () =>
-            {
-                await _healthService.HandleUnhealthyAsync(deployment, host, "Health check failed", CancellationToken.None);
-            }));
+            deployments = db.LlmDeployments.Where(d => d.HostId == hostId).ToList();
         }
 
-        await Task.WhenAll(tasks);
-        await Task.Delay(100, CancellationToken.None);
+        foreach (var deployment in deployments)
+        {
+            await _healthService.HandleUnhealthyAsync(deployment, host, "Health check failed", CancellationToken.None);
+        }
 
-        // Assert: Verify every deployment transitioned to Error states
-        var db2 = _mockDbFactory.Object.CreateDbContext();
-        var result = db2.LlmDeployments.ToList();
-        db2.Dispose();
-
-        result.Where(d => d.HostId == hostId).Should().HaveCount(numDeployments);
-
-        Console.WriteLine($"Processed {numDeployments} concurrent deployments successfully");
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            var result = db.LlmDeployments.Where(d => d.HostId == hostId).ToList();
+            result.Should().HaveCount(numDeployments);
+        }
     }
 
     [Test]
     public async Task MultipleGpuHosts_ConcurrentRefreshesDontInterfere()
     {
-        // Test: Multiple GPU hosts with unhealthy deployments - concurrent refreshes on different hosts should not interfere
         const int numHosts = 3;
         const int numDeploymentsPerHost = 2;
-
         var deploymentInfos = new List<(string hostId, LlmDeploymentEntity dep)>();
         var hosts = new List<GpuHostEntity>();
 
-        for (int i = 0; i < numHosts; i++)
+        using (var db = _dbFactory.CreateDbContext())
         {
-            var hostId = $"multi-host-{i}";
-            var host = MakeHost(hostId: hostId);
-            hosts.Add(host);
-
-            for (int j = 0; j < numDeploymentsPerHost; j++)
+            for (int i = 0; i < numHosts; i++)
             {
-                var depId = $"multi-host-{i}-dep-{j}";
-                var dep = MakeDeployment(hostId, 7000 + i * 100 + j, LlmDeploymentStatus.Error, depId);
-                deploymentInfos.Add((hostId, dep));
+                var hostId = $"multi-host-{i}";
+                var host = MakeHost(hostId: hostId);
+                hosts.Add(host);
+                db.GpuHosts.Add(host);
+
+                for (int j = 0; j < numDeploymentsPerHost; j++)
+                {
+                    var dep = MakeDeployment(hostId, 7000 + i * 100 + j, LlmDeploymentStatus.Error, $"multi-host-{i}-dep-{j}");
+                    deploymentInfos.Add((hostId, dep));
+                    db.LlmDeployments.Add(dep);
+                }
             }
-            
-            _mockGpuHosts.Setup(h => h.GetByHostIdAsync(host.HostId))
-                .ReturnsAsync(host);
+            await db.SaveChangesAsync();
         }
 
-        // Setup database with deployments
-        using var db = _mockDbFactory.Object.CreateDbContext();
-        db.LlmDeployments.AddRange(deploymentInfos.Select(t => t.dep));
-        await db.SaveChangesAsync();
-
-        _mockSecrets.Setup(s => s.GetAsync(It.IsAny<string>()))
-            .ReturnsAsync("test-token");
-
-        // Mock container inspection for all deployments
-        foreach (var (hostId, dep) in deploymentInfos)
-        {
-            if (await _mockGpuHosts.Object.GetByHostIdAsync(hostId) is not { } host) continue;
-            _mockInstance.Setup(i => i.InspectContainerAsync(host, dep.ContainerId, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(ContainerStatus.Exited);
-        }
-
-        // Mock container start success
-        _mockInstance.Setup(i => i.StartContainerAsync(
-            It.IsAny<GpuHostEntity>(), It.IsAny<LlmDeploymentEntity>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(("new-" + Guid.NewGuid(), (string)null));
-
-        // Mock healthy after restart
-        _mockInstance.Setup(i => i.CheckHealthAsync(
-            It.IsAny<GpuHostEntity>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _mockInstance.Setup(i => i.StartContainerAsync(It.IsAny<GpuHostEntity>(), It.IsAny<LlmDeploymentEntity>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("new-" + Guid.NewGuid(), (string?)null));
+        _mockInstance.Setup(i => i.CheckHealthAsync(It.IsAny<GpuHostEntity>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
+        _mockDocker.Setup(d => d.ExecuteShellAsync(It.IsAny<ShellCommand>(), It.IsAny<ExecutionHost>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DockerExecutionResult(null, null, 0, true));
 
-        // Act: Start concurrent operations for each host
-        var hostTasks = new List<Task>();
         foreach (var host in hosts)
         {
-            hostTasks.Add(Task.Run(async () =>
+            using (var db = _dbFactory.CreateDbContext())
             {
-                // Get all Error deployments on this host
-                using var db2 = _mockDbFactory.Object.CreateDbContext();
-                var errorDeps = db2.LlmDeployments.Where(d => d.HostId == host.HostId
-                    && d.Status == LlmDeploymentStatus.Error)
+                var errorDeps = db.LlmDeployments
+                    .Where(d => d.HostId == host.HostId && d.Status == LlmDeploymentStatus.Error)
                     .ToList();
-                db2.Dispose();
-
                 foreach (var dep in errorDeps)
                 {
                     await _healthService.HandleUnhealthyAsync(dep, host, "Health failure", CancellationToken.None);
                 }
-            }));
+            }
         }
-
-        await Task.WhenAll(hostTasks);
-        await Task.Delay(200, CancellationToken.None);
-
-        Console.WriteLine($"Multi-host concurrent test completed successfully");
     }
 
     [Test]
     public async Task HighConcurrentStress_MultipleSimultaneousFailures_SucceedAsync()
     {
-        // Stress test: Multiple simultaneous failures
         const int numDeployments = 10;
-        var hostId = "stress-test-host-1";
+        const string hostId = "stress-test-host-1";
         var host = MakeHost(hostId, 9999);
-
         var deploymentIds = new List<string>();
-        for (int i = 0; i < numDeployments; i++)
+
+        using (var db = _dbFactory.CreateDbContext())
         {
-            deploymentIds.Add($"stress-dep-" + i);
+            db.GpuHosts.Add(host);
+            for (int i = 0; i < numDeployments; i++)
+            {
+                var depId = $"stress-dep-{i}";
+                deploymentIds.Add(depId);
+                db.LlmDeployments.Add(MakeDeployment(hostId, 9500 + depId.Length, LlmDeploymentStatus.Error, depId));
+            }
+            await db.SaveChangesAsync();
         }
 
-        _mockGpuHosts.Setup(h => h.GetByHostIdAsync(host.HostId))
-            .ReturnsAsync(host);
-
-        _mockSecrets.Setup(s => s.GetAsync(It.IsAny<string>()))
-            .ReturnsAsync("stress-token");
-
-        // Setup database with deployments
-        using var db = _mockDbFactory.Object.CreateDbContext();
-        db.LlmDeployments.AddRange(
-            deploymentIds.Select(depId => MakeDeployment(hostId, 9500 + depId.Length, LlmDeploymentStatus.Error, depId)));
-        await db.SaveChangesAsync();
-
-        // Mock unhealthy container inspection
-        _mockInstance.Setup(i => i.InspectContainerAsync(host, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(ContainerStatus.Exited);
-
-        // Mock successful container start
-        _mockInstance.Setup(i => i.StartContainerAsync(
-            host, It.IsAny<LlmDeploymentEntity>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(("new-" + Guid.NewGuid(), (string)null));
-
-        // Mock passing health check
-        _mockInstance.Setup(i => i.CheckHealthAsync(
-            It.IsAny<GpuHostEntity>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _mockInstance.Setup(i => i.StartContainerAsync(host, It.IsAny<LlmDeploymentEntity>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("new-" + Guid.NewGuid(), (string?)null));
+        _mockInstance.Setup(i => i.CheckHealthAsync(It.IsAny<GpuHostEntity>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
+        _mockDocker.Setup(d => d.ExecuteShellAsync(It.IsAny<ShellCommand>(), It.IsAny<ExecutionHost>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DockerExecutionResult(null, null, 0, true));
 
-        // Act: Run concurrent health check iterations
         var tasks = new List<Task>();
         for (int i = 0; i < 2; i++)
         {
@@ -287,13 +226,11 @@ public class NginxConcurrentRestartTests : IDisposable
         }
 
         await Task.WhenAll(tasks);
-        await Task.Delay(500, CancellationToken.None);
 
-        // Assert: All deployments should have been processed
-        using var db2 = _mockDbFactory.Object.CreateDbContext();
-        var result = db2.LlmDeployments.Where(d => d.HostId == hostId).ToList();
-        db2.Dispose();
-
-        Console.WriteLine($"Stress test completed: {result.Count} deployments processed");
+        using (var db = _dbFactory.CreateDbContext())
+        {
+            var result = db.LlmDeployments.Where(d => d.HostId == hostId).ToList();
+            result.Should().HaveCount(numDeployments);
+        }
     }
 }

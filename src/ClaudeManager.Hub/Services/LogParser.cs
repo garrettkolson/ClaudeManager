@@ -83,10 +83,13 @@ public class LogParser : ILogParser
 
                 if (TryParseDatetimeOffset(timestampText, out var timestamp))
                 {
+                    string content = bracketEndIndex + 2 < line.Length
+                        ? line.Substring(bracketEndIndex + 2).Trim()
+                        : "";
                     yield return new LogMessage
                     {
                         Timestamp = timestamp,
-                        Content = line.Substring(bracketEndIndex + 2).Trim(),
+                        Content = content,
                         LineNumber = lineNumber + 1
                     };
                     continue;
@@ -124,52 +127,40 @@ public class LogParser : ILogParser
             return false;
         }
 
-        // Try parsing with milliseconds (HH:mm:ss.fff)
-        if (timestampText.Length >= 8 && timestampText[7] == '.')
+        // Format: HH:mm:ss.fff or HH:mm:ss.ffffff
+        // Split on ':' first: "10" "30" "00.123"
+        var parts = timestampText.Split(':');
+        if (parts.Length < 3) return false;
+
+        if (!int.TryParse(parts[0], out var hh)) return false;
+        if (!int.TryParse(parts[1], out var mm)) return false;
+
+        // seconds must include fractional part: "00.123" or "00.123456"
+        var secPart = parts[2];
+        var dotIdx = secPart.IndexOf('.');
+        if (dotIdx < 0 || dotIdx >= secPart.Length - 1) return false;
+
+        var secStr = secPart.Substring(0, dotIdx);
+        var fracStr = secPart.Substring(dotIdx + 1);
+        if (!int.TryParse(secStr, out var ss)) return false;
+        if (fracStr.Length == 0 || fracStr.Length > 6) return false;
+        if (!int.TryParse(fracStr, out var frac)) return false;
+
+        // Normalize to milliseconds
+        string msStr = fracStr.PadRight(3, '0').Substring(0, 3);
+        if (!int.TryParse(msStr, out _)) return false;
+
+        try
         {
-            // Has millisecond precision
-            var timeString = timestampText;
-            try
-            {
-                result = DateTimeOffset.ParseExact(
-                    $"2000{timeString}", // Year padding for deterministic parsing
-                    "yyyyHH:mm:ss.fff",
-                    CultureInfo.InvariantCulture
-                );
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
+            var today = DateTimeOffset.UtcNow;
+            var dt = new DateTime(today.Year, today.Month, today.Day, hh, mm, ss, frac / 1000, DateTimeKind.Utc);
+            result = new DateTimeOffset(dt, TimeSpan.Zero);
+            return true;
         }
-
-        // Try parsing with microseconds (HH:mm:ss.ffffff)
-        if (timestampText.Length >= 14 && timestampText[7] == '.')
+        catch
         {
-            // Has microsecond precision - we'll only use first 3 digits for milliseconds
-            var partialTimestamp = timestampText.Substring(0, timestampText.Length - 4);
-            var timeString = partialTimestamp.PadRight(8, '0');
-
-            if (timestampText.Length > 7 && timestampText[7] == '.')
-            {
-                try
-                {
-                    result = DateTimeOffset.ParseExact(
-                        $"2000{timeString}",
-                        "yyyyHH:mm:ss.fff",
-                        CultureInfo.InvariantCulture
-                    );
-                    return true;
-                }
-                catch
-                {
-                    return false;
-                }
-            }
+            return false;
         }
-
-        return false;
     }
 }
 
@@ -214,13 +205,12 @@ public static class StringExtensions
             {
                 '\\' => "\\\\",
                 '"' => "\\\"",
-                '\'' => "\\'",
                 '\n' => "\\n",
                 '\r' => "\\r",
                 '\t' => "\\t",
                 '\b' => "\\b",
                 '\f' => "\\f",
-                var v when v < 32 => $"\\u{v:X4}",
+                char c2 when c2 < 32 => $"\\u{(int)c2:X4}",
                 _ => new string([c])
             });
         }

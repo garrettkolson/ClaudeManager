@@ -515,12 +515,11 @@ public class SweAfServiceTests
         var job = await db2.SweAfJobs.SingleAsync();
 
         var (ok, err) = await svc.CancelJobAsync(job.Id);
-        ok.Should().BeFalse();
-        err.Should().Contain("500");
+        ok.Should().BeTrue();
     }
 
     [Test]
-    public async Task CancelJobAsync_DoesNotUpdateDbStatus()
+    public async Task CancelJobAsync_TransitionsToCancelled()
     {
         await using (var db = _dbFactory.CreateDbContext())
         {
@@ -543,7 +542,7 @@ public class SweAfServiceTests
 
         await using var verify = _dbFactory.CreateDbContext();
         var refetched = await verify.SweAfJobs.SingleAsync();
-        refetched.Status.Should().Be(BuildStatus.Running);
+        refetched.Status.Should().Be(BuildStatus.Cancelled);
     }
 
     // ── ApproveJobAsync ───────────────────────────────────────────────────────
