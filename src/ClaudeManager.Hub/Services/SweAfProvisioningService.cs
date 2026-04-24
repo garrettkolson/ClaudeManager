@@ -91,7 +91,14 @@ public class SweAfProvisioningService(
             }
         }
 
-        // Step 2.5: Write Caveman skill files if enabled
+        // Step 2.6: Write opencode.json and bind mount it into both agent services
+        var hasOpencodeGlobal = !string.IsNullOrWhiteSpace(config.OpencodeJsonTemplate);
+        if (hasOpencodeGlobal)
+        {
+            await ApplyOpencodeJsonConfigAsync(config, anthropicBaseUrl ?? "", repoPath, ct);
+        }
+
+        // Step 2.7: Write Caveman skill files if enabled
         var hasCavemanGlobal = config.CavemanEnabled;
         if (hasCavemanGlobal)
         {
@@ -143,11 +150,15 @@ public class SweAfProvisioningService(
             (downStdout ?? downStderr ?? "").Trim());
 
         // docker-compose.override.yml is auto-loaded; -f chain is not needed for it.
-        // docker-compose.caveman.yml is NOT auto-loaded (auto-load only finds override.yml),
-        // so it must be explicitly included.
-        var composeCmd = hasCavemanGlobal
-            ? $"cd {repoPath} && docker compose -f docker-compose.yml -f docker-compose.caveman.yml up -d --build"
-            : $"cd {repoPath} && docker compose up -d --build";
+        // docker-compose.caveman.yml and docker-compose.opencode.yml are NOT auto-loaded,
+        // so they must be explicitly included.
+        var composeFilesParts = new List<string> { "-f docker-compose.yml" };
+        if (hasCavemanGlobal) composeFilesParts.Add("-f docker-compose.caveman.yml");
+        if (hasOpencodeGlobal) composeFilesParts.Add("-f docker-compose.opencode.yml");
+        var composeFiles = string.Join(" ", composeFilesParts);
+        var composeCmd = string.IsNullOrEmpty(composeFiles)
+            ? $"cd {repoPath} && docker compose up -d --build"
+            : $"cd {repoPath} && docker compose {composeFiles} up -d --build";
         var (compStdout, compStderr, compExitCode) = IsLocalHost(config.ProvisionHost!)
             ? await ExecLocalShellAsync(composeCmd, ct)
             : await ExecSshShellAsync(config, composeCmd, ct);
@@ -285,13 +296,21 @@ public class SweAfProvisioningService(
             }
         }
 
+        // Step 3.6: Write opencode.json and compose override if template is configured
+        var hasOpencodeJob = !string.IsNullOrWhiteSpace(config.OpencodeJsonTemplate);
+        if (hasOpencodeJob)
+        {
+            await ApplyOpencodeJsonConfigAsync(config, anthropicBaseUrl ?? "", repoPath, ct);
+        }
+
         // Step 4: Bring up the stack under the unique project name (no down-first — brand new project).
         // Explicit -f chain so docker-compose.hub.yml is always included. The auto-loaded
         // docker-compose.override.yml is only added when the user has configured one.
-        // docker-compose.caveman.yml is included when CavemanEnabled is true.
+        // docker-compose.caveman.yml and docker-compose.opencode.yml are included when enabled.
         var composeFilesParts = new List<string> { "-f docker-compose.yml", "-f docker-compose.hub.yml" };
         if (hasUserOverride) composeFilesParts.Add("-f docker-compose.override.yml");
         if (hasCaveman) composeFilesParts.Add("-f docker-compose.caveman.yml");
+        if (hasOpencodeJob) composeFilesParts.Add("-f docker-compose.opencode.yml");
         var composeFiles = string.Join(" ", composeFilesParts);
         var upCmd = $"cd {repoPath} && docker compose --project-name {projectName} {composeFiles} up -d --build";
         var (compOut, compErr, compCode) = IsLocalHost(config.ProvisionHost!)
@@ -348,6 +367,65 @@ public class SweAfProvisioningService(
         var bash = string.Join("\n", lines);
         var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(bash));
         return "echo " + b64 + " | base64 -d | bash";
+    }
+
+    /// <summary>
+    /// Writes opencode.json from the configured template with {ProxyUrl} replaced,
+    /// and generates a docker-compose.opencode.yml with bind mounts into all agent services.
+    /// </summary>
+    private async Task ApplyOpencodeJsonConfigAsync(SweAfConfigEntity config, string proxyUrl, string repoPath, CancellationToken ct)
+    {
+        var opencodePath = $"{repoPath}/opencode.json";
+        var opencodeComposePath = $"{repoPath}/docker-compose.opencode.yml";
+        var rendered = config.OpencodeJsonTemplate!.Replace("{ProxyUrl}", proxyUrl);
+
+        logger.LogInformation("Writing opencode.json to {Path} on {Host}", opencodePath, config.ProvisionHost);
+
+        var writeOpencodeCmd = BuildWriteFileCommand(rendered, opencodePath);
+        var (opencodeOut, opencodeErr, opencodeCode) = IsLocalHost(config.ProvisionHost!)
+            ? await ExecLocalShellAsync(writeOpencodeCmd, ct)
+            : await ExecSshShellAsync(config, writeOpencodeCmd, ct);
+
+        if (opencodeCode != 0)
+        {
+            var errorMsg = (opencodeErr ?? opencodeOut ?? "Failed to write opencode.json").Trim();
+            logger.LogWarning("Opencode JSON write failed on {Host}: {Error}", config.ProvisionHost, errorMsg);
+            return;
+        }
+
+        var opencodeComposeYaml = $"""
+            services:
+              control-plane:
+                volumes:
+                  - {opencodePath}:/root/.opencode.json:ro
+              swe-agent:
+                volumes:
+                  - {opencodePath}:/root/.opencode.json:ro
+              swe-fast:
+                volumes:
+                  - {opencodePath}:/root/.opencode.json:ro
+            """;
+        var opencodeComposeB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(opencodeComposeYaml.Trim()));
+        var writeOpencodeComposeCmd = $"echo {opencodeComposeB64} | base64 -d > {opencodeComposePath}";
+        var (composeOut, composeErr, composeCode) = IsLocalHost(config.ProvisionHost!)
+            ? await ExecLocalShellAsync(writeOpencodeComposeCmd, ct)
+            : await ExecSshShellAsync(config, writeOpencodeComposeCmd, ct);
+
+        if (composeCode != 0)
+        {
+            var errorMsg = (composeErr ?? composeOut ?? "Failed to write docker-compose.opencode.yml").Trim();
+            logger.LogWarning("Opencode compose write failed on {Host}: {Error}", config.ProvisionHost, errorMsg);
+        }
+    }
+
+    /// <summary>
+    /// Builds a shell command that writes arbitrary content to a file,
+    /// using base64 encoding to safely transport content without shell escaping issues.
+    /// </summary>
+    internal static string BuildWriteFileCommand(string content, string filePath)
+    {
+        var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
+        return $"echo {b64} | base64 -d > {filePath}";
     }
 
     /// <summary>

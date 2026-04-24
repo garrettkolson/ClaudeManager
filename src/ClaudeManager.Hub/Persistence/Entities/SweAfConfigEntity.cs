@@ -154,6 +154,13 @@ public class SweAfConfigEntity
     /// </summary>
     public bool CavemanEnabled { get; set; }
 
+    /// <summary>
+    /// JSON template for opencode.json to inject into each SWE-AF container.
+    /// Use {ProxyUrl} as a placeholder — it will be replaced with the LLM proxy URL at provisioning time.
+    /// When set, the file is written to /root/.opencode.json and bind-mounted into all three services.
+    /// </summary>
+    public string? OpencodeJsonTemplate { get; set; }
+
     [NotMapped]
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(ApiKey);

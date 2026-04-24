@@ -459,6 +459,16 @@
                         <textarea class="llm-input llm-textarea" @bind="_cfgForm.ComposeOverride" rows="8"
                                   placeholder="# Written alongside .env on every provisioning run.&#10;# Use named volumes to persist build history across docker compose down/up.&#10;# Example:&#10;#&#10;# services:&#10;#   backend:&#10;#     volumes:&#10;#       - swe_af_data:/app/data&#10;# volumes:&#10;#   swe_af_data:"></textarea>
 
+                        <label class="llm-label">Opencode JSON Template</label>
+                        <textarea class="llm-input llm-textarea" @bind="_cfgForm.OpencodeJsonTemplate" rows="12"
+                                  placeholder="JSON template for /root/.opencode.json in agent containers.&#10;Use {ProxyUrl} as placeholder for the LLM proxy URL."></textarea>
+                        <p class="llm-hint" style="grid-column: 1 / -1;">
+                            This template is rendered and written as opencode.json in each SWE-AF container,
+                            bind-mounted to <code>/root/.opencode.json</code> in all three services.
+                            Replace the baseURL value with <code>{ProxyUrl}</code> — it will be substituted with the
+                            running GPU host proxy URL at provisioning time (<em>e.g.</em> <code>http://192.168.4.36:12345/v1</code>).
+                        </p>
+
                     </div>
 
                     @if (_cfgError is not null) { <div class="error-msg">@_cfgError</div> }
@@ -914,6 +924,7 @@
                 SweAfRepoPath        = NullIfBlank(_cfgForm.SweAfRepoPath),
                 LlmDeploymentId      = NullIfBlank(_cfgForm.LlmDeploymentId),
                 ComposeOverride      = NullIfBlank(_cfgForm.ComposeOverride),
+                OpencodeJsonTemplate = NullIfBlank(_cfgForm.OpencodeJsonTemplate),
                 PortRangeStart       = _cfgForm.PortRangeStart,
                 PortRangeEnd         = _cfgForm.PortRangeEnd,
                 ControlPlaneImageTag = NullIfBlank(_cfgForm.ControlPlaneImageTag),
@@ -1125,16 +1136,39 @@
         public string  DefaultRepoUrl        = "";
         public string  SweAfRepoPath         = "";
         public string  LlmDeploymentId       = "";
-        public string  ComposeOverride       = "";
-        public string  ApiKey                = "";
-        public string  WebhookSecret         = "";
-        public string  RepositoryApiToken    = "";
-        public string  AnthropicApiKey       = "";
-        public string  OpenRouterApiKey      = "";
-        public int     PortRangeStart        = 8100;
-        public int     PortRangeEnd          = 8199;
-        public string  ControlPlaneImageTag  = "";
-        public bool    CavemanEnabled        = false;
+        public string  ComposeOverride              = "";
+        public string  OpencodeJsonTemplate         = "";
+        public string  ApiKey                       = "";
+        public string  WebhookSecret                = "";
+        public string  RepositoryApiToken           = "";
+        public string  AnthropicApiKey              = "";
+        public string  OpenRouterApiKey             = "";
+        public int     PortRangeStart               = 8100;
+        public int     PortRangeEnd                 = 8199;
+        public string  ControlPlaneImageTag         = "";
+        public bool    CavemanEnabled               = false;
+
+        private const string DefaultOpencodeJsonTemplate = """
+            {
+              "$schema": "https://opencode.ai/config.json",
+              "model": "foxhire-ai-1/qwen3.6-35b",
+              "provider": {
+                "foxhire-ai-1": {
+                  "npm": "@ai-sdk/openai-compatible",
+                  "name": "FoxHire-AI-1",
+                  "options": {
+                    "baseURL": "http://192.168.4.36:12345/v1",
+                    "apiKey": "dummy"
+                  },
+                  "models": {
+                    "qwen3.6-35b": {
+                      "name": "Qwen 3.6-35B-A3B"
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         public static CfgForm From(SweAfConfigEntity e) => new()
         {
@@ -1147,7 +1181,8 @@
             DefaultRepoUrl        = e.DefaultRepoUrl  ?? "",
             SweAfRepoPath         = e.SweAfRepoPath   ?? "",
             LlmDeploymentId       = e.LlmDeploymentId ?? "",
-            ComposeOverride       = e.ComposeOverride  ?? "",
+            ComposeOverride       = e.ComposeOverride       ?? "",
+            OpencodeJsonTemplate  = e.OpencodeJsonTemplate  ?? DefaultOpencodeJsonTemplate,
             ApiKey                = e.ApiKey,
             WebhookSecret         = e.WebhookSecret,
             RepositoryApiToken    = e.RepositoryApiToken,
