@@ -654,7 +654,7 @@ public class SweAfProvisioningService(
     /// Uses !override (Docker Compose 2.24.0+) so the allocated ports replace (not append)
     /// the hardcoded values in the base compose file.
     /// </summary>
-    private static string BuildWriteHubPortOverrideCommand(
+    internal static string BuildWriteHubPortOverrideCommand(
         string repoPath, int cpPort, int agentPort, int fastPort)
     {
         var yaml = $"""

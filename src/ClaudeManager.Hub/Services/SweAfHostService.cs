@@ -237,7 +237,7 @@ public class SweAfHostService
         }
     }
 
-    private static string InjectEnvVars(SweAfHostEntity host, string command)
+    internal static string InjectEnvVars(SweAfHostEntity host, string command)
     {
         var parts = new List<string>();
         if (!string.IsNullOrWhiteSpace(host.AnthropicBaseUrl))
@@ -247,10 +247,10 @@ public class SweAfHostService
         return parts.Count == 0 ? command : string.Join(" ", parts) + " " + command;
     }
 
-    private static string QuoteForShell(string value) =>
+    internal static string QuoteForShell(string value) =>
         "'" + value.Replace("'", "'\\''") + "'";
 
-    private static AuthenticationMethod? BuildAuth(SweAfHostEntity host)
+    internal static AuthenticationMethod? BuildAuth(SweAfHostEntity host)
     {
         if (host.SshKeyPath is not null)
         {
