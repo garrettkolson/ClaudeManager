@@ -476,6 +476,12 @@ public class SweAfService
         return job;
     }
 
+    // TODO: modify this to use the proper OpenCode provider slug
+    private string? ModifyModelSlugForBackEndRuntime(string? modelSlug, SweAfConfigEntity cfg) =>
+        cfg.Runtime == "open_code"
+            ? $"foxhire-ai-1/{modelSlug}"
+            : modelSlug;
+
     /// <summary>Sends the swe-planner.build trigger payload to the specified control plane URL.</summary>
     private async Task<(ExecuteResponse Result, HttpResponseMessage Response)> PostBuildTriggerAsync(
         string goal, string repoUrl, SweAfConfigEntity cfg, string controlPlaneUrl)
@@ -483,7 +489,25 @@ public class SweAfService
         SweAfModelsConfig? models = null;
         if (cfg.ModelDefault is not null || cfg.ModelCoder is not null || cfg.ModelQa is not null)
             models = new SweAfModelsConfig
-                { Default = cfg.ModelDefault, Coder = cfg.ModelCoder, Qa = cfg.ModelQa };
+            {
+                Default = ModifyModelSlugForBackEndRuntime(cfg.ModelDefault, cfg),
+                Coder = ModifyModelSlugForBackEndRuntime(cfg.ModelCoder, cfg), 
+                Qa = ModifyModelSlugForBackEndRuntime(cfg.ModelQa, cfg),
+                Pm = ModifyModelSlugForBackEndRuntime(cfg.ModelDefault, cfg),
+                Architect = ModifyModelSlugForBackEndRuntime(cfg.ModelDefault, cfg),
+                TechLead = ModifyModelSlugForBackEndRuntime(cfg.ModelDefault, cfg),
+                SprintPlanner = ModifyModelSlugForBackEndRuntime(cfg.ModelDefault, cfg),
+                CodeReviewer = ModifyModelSlugForBackEndRuntime(cfg.ModelDefault, cfg),
+                QaSynthesizer = ModifyModelSlugForBackEndRuntime(cfg.ModelDefault, cfg),
+                Replan = ModifyModelSlugForBackEndRuntime(cfg.ModelDefault, cfg),
+                RetryAdvisor = ModifyModelSlugForBackEndRuntime(cfg.ModelDefault, cfg),
+                IssueWriter = ModifyModelSlugForBackEndRuntime(cfg.ModelDefault, cfg),
+                IssueAdvisor = ModifyModelSlugForBackEndRuntime(cfg.ModelDefault, cfg),
+                Verifier = ModifyModelSlugForBackEndRuntime(cfg.ModelDefault, cfg),
+                Git = ModifyModelSlugForBackEndRuntime(cfg.ModelDefault, cfg),
+                Merger = ModifyModelSlugForBackEndRuntime(cfg.ModelDefault, cfg),
+                IntegrationTester = ModifyModelSlugForBackEndRuntime(cfg.ModelDefault, cfg)
+            };
 
         var payload = new
         {

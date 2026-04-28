@@ -393,17 +393,17 @@ public class SweAfProvisioningService(
             return;
         }
 
-        var opencodeComposeYaml = $"""
+        var opencodeComposeYaml = """
             services:
               control-plane:
                 volumes:
-                  - {opencodePath}:/root/.config/opencode/opencode.json:ro
+                  - ./opencode.json:/root/.config/opencode/opencode.json:ro
               swe-agent:
                 volumes:
-                  - {opencodePath}:/root/.config/opencode/opencode.json:ro
+                  - ./opencode.json:/root/.config/opencode/opencode.json:ro
               swe-fast:
                 volumes:
-                  - {opencodePath}:/root/.config/opencode/opencode.json:ro
+                  - ./opencode.json:/root/.config/opencode/opencode.json:ro
             """;
         var opencodeComposeB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(opencodeComposeYaml.Trim()));
         var writeOpencodeComposeCmd = $"echo {opencodeComposeB64} | base64 -d > {opencodeComposePath}";

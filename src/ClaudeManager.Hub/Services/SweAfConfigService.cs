@@ -103,7 +103,8 @@ public class SweAfConfigService : IHostedService
             existing.PortRangeStart        = config.PortRangeStart;
             existing.PortRangeEnd          = config.PortRangeEnd;
             existing.ControlPlaneImageTag  = config.ControlPlaneImageTag;
-            existing.CavemanEnabled = config.CavemanEnabled;
+            existing.CavemanEnabled        = config.CavemanEnabled;
+            existing.OpencodeJsonTemplate  = config.OpencodeJsonTemplate;
         }
         await db.SaveChangesAsync(ct);
 

@@ -71,4 +71,19 @@ public record SweAfModelsConfig
 
     /// <summary>Model used for QA / verification steps.</summary>
     [JsonPropertyName("qa")]      public string? Qa      { get; init; }
+    
+    [JsonPropertyName("pm")]      public string? Pm      { get; init; }
+    [JsonPropertyName("architect")]      public string? Architect      { get; init; }
+    [JsonPropertyName("tech_lead")]      public string? TechLead      { get; init; }
+    [JsonPropertyName("sprint_planner")]      public string? SprintPlanner      { get; init; }
+    [JsonPropertyName("code_reviewer")]      public string? CodeReviewer      { get; init; }
+    [JsonPropertyName("qa_synthesizer")]      public string? QaSynthesizer      { get; init; }
+    [JsonPropertyName("replan")]      public string? Replan      { get; init; }
+    [JsonPropertyName("retry_advisor")]      public string? RetryAdvisor      { get; init; }
+    [JsonPropertyName("issue_writer")]      public string? IssueWriter      { get; init; }
+    [JsonPropertyName("issue_advisor")]      public string? IssueAdvisor      { get; init; }
+    [JsonPropertyName("verifier")]      public string? Verifier      { get; init; }
+    [JsonPropertyName("git")]      public string? Git      { get; init; }
+    [JsonPropertyName("merger")]      public string? Merger      { get; init; }
+    [JsonPropertyName("integration_tester")]      public string? IntegrationTester      { get; init; }
 }
