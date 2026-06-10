@@ -704,6 +704,10 @@ public class SweAfProvisioningService(
                 lines.Add($"ANTHROPIC_BASE_URL={anthropicBaseUrl}");
             if (!string.IsNullOrWhiteSpace(config.AnthropicApiKey))
                 lines.Add($"ANTHROPIC_API_KEY={config.AnthropicApiKey}");
+
+            lines.Add($"ANTHROPIC_DEFAULT_HAIKU_MODEL={config.ModelDefault}");
+            lines.Add($"ANTHROPIC_DEFAULT_SONNET_MODEL={config.ModelDefault}");
+            lines.Add($"ANTHROPIC_DEFAULT_OPUS_MODEL={config.ModelDefault}");
         }
         // open_code runtime: no API key injected; base URL comes from LlmDeployment (already in anthropicBaseUrl)
         else
