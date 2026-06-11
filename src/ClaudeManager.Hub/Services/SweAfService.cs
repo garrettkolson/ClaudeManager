@@ -1117,4 +1117,74 @@ public class SweAfService
                 "TryTransitionJiraToReviewAsync failed for job {JobId}; Jira transition skipped", jobId);
         }
     }
+
+    // ── Error-triggered build management ────────────────────────────────────────
+
+    public async Task<List<SweAfJobEntity>> GetErrorTriggeredJobsAsync()
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        return await db.SweAfJobs
+            .Where(j => j.IsErrorTriggered && !j.IsArchived)
+            .OrderByDescending(j => j.CreatedAt)
+            .ToListAsync();
+    }
+
+    public async Task<(bool Success, string? Error)> ApproveErrorBuildAsync(long jobId, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var job = await db.SweAfJobs.FindAsync([jobId], ct);
+        if (job is null) return (false, "Build not found.");
+        if (job.Status != BuildStatus.Waiting || !job.IsErrorTriggered)
+            return (false, "Build is not in pending approval state.");
+
+        job.Status = BuildStatus.Queued;
+        job.IsErrorTriggered = false;
+        await db.SaveChangesAsync(ct);
+        _notifier.NotifyBuildChanged(job);
+
+        // Start the actual provisioning/build flow in background
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var progress = new Progress<string>(msg =>
+                    _logger.LogInformation("ErrorTrigger approve flow: {Msg}", msg));
+                await TriggerBuildAsync(job.Goal, job.RepoUrl, progress);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ErrorTrigger approve build failed for job {JobId}", jobId);
+                await using var db2 = await _dbFactory.CreateDbContextAsync(ct);
+                var updated = await db2.SweAfJobs.FindAsync([jobId], ct);
+                if (updated is not null)
+                {
+                    updated.Status       = BuildStatus.Failed;
+                    updated.ErrorMessage = "Approval build failed: " + ex.Message;
+                    updated.CompletedAt  = DateTimeOffset.UtcNow;
+                    await db2.SaveChangesAsync(ct);
+                    _notifier.NotifyBuildChanged(updated);
+                }
+            }
+        });
+
+        return (true, null);
+    }
+
+    public async Task<(bool Success, string? Error)> RejectErrorBuildAsync(long jobId, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var job = await db.SweAfJobs.FindAsync([jobId], ct);
+        if (job is null) return (false, "Build not found.");
+        if (job.Status != BuildStatus.Waiting || !job.IsErrorTriggered)
+            return (false, "Build is not in pending approval state.");
+
+        job.Status       = BuildStatus.Cancelled;
+        job.IsErrorTriggered = false;
+        job.CompletedAt  = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+        _notifier.NotifyBuildChanged(job);
+
+        _logger.LogInformation("ErrorTrigger: rejected build {JobId}", jobId);
+        return (true, null);
+    }
 }

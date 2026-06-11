@@ -17,6 +17,7 @@ public class ClaudeManagerDbContext : DbContext
     public DbSet<LlmDeploymentEntity>  LlmDeployments { get; set; } = default!;
     public DbSet<JiraConfigEntity>     JiraConfigs    { get; set; } = default!;
     public DbSet<JiraIssueLinkEntity>  JiraIssueLinks { get; set; } = default!;
+    public DbSet<KnownErrorEntity>     KnownErrors    { get; set; } = default!;
 
     public ClaudeManagerDbContext(DbContextOptions<ClaudeManagerDbContext> options)
         : base(options) { }
@@ -59,5 +60,10 @@ public class ClaudeManagerDbContext : DbContext
 
         mb.Entity<JiraIssueLinkEntity>()
             .HasIndex(l => l.IssueKey);
+
+        mb.Entity<KnownErrorEntity>()
+            .HasIndex(e => e.Fingerprint).IsUnique();
+        mb.Entity<KnownErrorEntity>()
+            .HasIndex(e => e.Status);
     }
 }

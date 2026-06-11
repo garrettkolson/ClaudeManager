@@ -57,4 +57,7 @@ public class SweAfJobEntity
 
     /// <summary>When true the job is hidden from the default builds list.</summary>
     public bool IsArchived { get; set; }
+
+    /// <summary>When true this job was created from an error trigger and is awaiting approval.</summary>
+    public bool IsErrorTriggered { get; set; }
 }

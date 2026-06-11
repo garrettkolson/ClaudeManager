@@ -228,6 +228,55 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                     b.ToTable("JiraIssueLinks");
                 });
 
+            modelBuilder.Entity("ClaudeManager.Hub.Persistence.Entities.KnownErrorEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Fingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("JiraKey")
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MetadataJson")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("NextTriggerAfter")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TriggerCount")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Fingerprint")
+                        .IsUnique();
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("KnownErrors");
+                });
+
             modelBuilder.Entity("ClaudeManager.Hub.Persistence.Entities.LlmDeploymentEntity", b =>
                 {
                     b.Property<long>("Id")
@@ -592,6 +641,9 @@ namespace ClaudeManager.Hub.Persistence.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("IsArchived")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsErrorTriggered")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Logs")

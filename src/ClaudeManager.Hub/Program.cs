@@ -5,8 +5,11 @@ using ClaudeManager.Hub.Hubs;
 using ClaudeManager.Hub.Models;
 using ClaudeManager.Hub.Persistence;
 using ClaudeManager.Hub.Services;
+using FoxHire.RabbitMQ.Services.Connections;
+using FoxHire.RabbitMQ.Services.Topology;
 using ClaudeManager.Hub.Services.Docker;
 using ClaudeManager.Hub.Services.Jira;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 // Wire SessionStore → PersistenceQueue after both are built
@@ -24,6 +27,17 @@ var dbPath = Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
     "ClaudeManager",
     "claude_manager.db");
+
+Console.WriteLine($"Using SQLite database located at {dbPath}...");
+
+await using var connection = new SqliteConnection($"Data Source={dbPath}");
+await connection.OpenAsync();
+
+Console.WriteLine($"Force drop of migration locks...");
+await using var command = connection.CreateCommand();
+command.CommandText = """DROP TABLE IF EXISTS "__EFMigrationsLock";""";
+await command.ExecuteNonQueryAsync();
+Console.WriteLine("Migration locks dropped...");
 
 Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
 
@@ -101,6 +115,32 @@ builder.Services.AddSingleton<JiraNotifier>();
 builder.Services.AddSingleton(JiraIssueCache.Instance);
 builder.Services.AddSingleton<JiraService>();
 builder.Services.AddHostedService<JiraPollingService>();
+
+// ── RabbitMQ (Error Trigger subscriber) ──────────────────────────────────────
+// During EF design-time (dotnet ef migrations), builder.Configuration may not
+// contain the ErrorTrigger section, so get config directly from appsettings.
+
+var rawConfig = builder.Configuration.GetSection("ErrorTrigger");
+var errorTriggerConfig = rawConfig.Get<ErrorTriggerConfig>() ?? new ErrorTriggerConfig();
+
+var rabbitMqConnService = new RabbitMQConnService(
+    errorTriggerConfig.EnvironmentIs ?? "local",
+    "claude-manager-hub");
+var rabbitMqChannelService = new RabbitMQChannelService(rabbitMqConnService);
+var rabbitMqExchangeService = new RabbitMQExchangeManagementService();
+var rabbitMqQueueService = new RabbitMQQueueManagementService();
+
+builder.Services.AddSingleton(errorTriggerConfig);
+builder.Services.AddSingleton(rabbitMqConnService);
+builder.Services.AddSingleton(rabbitMqChannelService);
+builder.Services.AddSingleton(rabbitMqExchangeService);
+builder.Services.AddSingleton(rabbitMqQueueService);
+builder.Services.AddSingleton<FoxHire.RabbitMQ.Interfaces.IRabbitMQManager>(
+    sp => new MinimalRabbitMQManager(rabbitMqConnService, rabbitMqChannelService,
+        rabbitMqExchangeService, rabbitMqQueueService, sp));
+builder.Services.AddSingleton<KnownErrorFingerprintService>();
+builder.Services.AddSingleton<ErrorTriggerSubscriber>();
+builder.Services.AddHostedService<RabbitMQStartupHostedService>();
 
 // ── SignalR ───────────────────────────────────────────────────────────────────
 

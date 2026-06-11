@@ -43,6 +43,7 @@
                 {
                     <button class="btn-primary" @onclick="OpenNewBuild">New Build</button>
                     <button class="btn-secondary" @onclick="ToggleWebhookPanel">Webhook</button>
+                    <button class="btn-secondary" @onclick="ToggleErrorBuildsPanel">Error Builds (@_errorPendingCount)</button>
                 }
             </div>
 
@@ -72,6 +73,52 @@
                             </button>
                         </div>
                     </div>
+                </div>
+            }
+
+            @if (_showErrorBuilds && _errorBuilds is not null)
+            {
+                <div class="error-builds-panel">
+                    <h4>Error-Triggered Builds (Pending Approval)</h4>
+                    @if (_errorBuilds.Count(j => j.Status == BuildStatus.Waiting && j.IsErrorTriggered) == 0)
+                    {
+                        <p>No pending error-triggered builds.</p>
+                    }
+                    else
+                    {
+                        <table class="error-builds-table">
+                            <thead>
+                                <tr>
+                                    <th>Goal</th>
+                                    <th>Error</th>
+                                    <th>Triggered</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var job in _errorBuilds.Where(j => j.Status == BuildStatus.Waiting && j.IsErrorTriggered))
+                                {
+                                    <tr class="error-builds-row">
+                                        <td class="error-builds-goal">@Truncate(job.Goal, 60)</td>
+                                        <td class="error-builds-error" title="@job.ErrorMessage">@Truncate(job.ErrorMessage ?? "", 40)</td>
+                                        <td class="error-builds-time">@job.CreatedAt.LocalDateTime.ToString("MM/dd HH:mm")</td>
+                                        <td class="error-builds-actions">
+                                            <button class="btn-approve-sm"
+                                                    @onclick="() => ApproveErrorBuild(job.Id)"
+                                                    disabled="@_actionInProgress.GetValueOrDefault(job.Id)">
+                                                Approve
+                                            </button>
+                                            <button class="btn-reject-sm"
+                                                    @onclick="() => RejectErrorBuild(job.Id)"
+                                                    disabled="@_actionInProgress.GetValueOrDefault(job.Id)">
+                                                Reject
+                                            </button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
                 </div>
             }
 
@@ -601,6 +648,10 @@
     private bool    _webhookSuccess;
     private bool    _webhookSaving;
 
+    private bool    _showErrorBuilds;
+    private List<SweAfJobEntity>? _errorBuilds;
+    private int _errorPendingCount => _errorBuilds?.Count(j => j.Status == BuildStatus.Waiting && j.IsErrorTriggered) ?? 0;
+
     private long?                    _viewingLogsId;
     private string?                  _buildLogs;
     private bool                     _loadingLogs;
@@ -636,6 +687,7 @@
     protected override async Task OnInitializedAsync()
     {
         _jobs = await BuildsSvc.GetAllJobsAsync();
+        _errorBuilds = await BuildsSvc.GetErrorTriggeredJobsAsync();
 
         _hosts = await HostSvc.GetAllAsync();
         _hostCommands = _hosts
@@ -775,6 +827,37 @@
             // If the current page is now beyond the last page, step back
             if (_currentPage > TotalPages) _currentPage = TotalPages;
         }
+    }
+
+    // ── Error builds ────────────────────────────────────────────────────────────
+
+    private void ToggleErrorBuildsPanel()
+    {
+        _showErrorBuilds = !_showErrorBuilds;
+        if (_showErrorBuilds)
+            _errorBuilds = BuildsSvc.GetErrorTriggeredJobsAsync().GetAwaiter().GetResult();
+    }
+
+    private async Task ApproveErrorBuild(long jobId)
+    {
+        _actionInProgress[jobId] = true;
+        _actionError.Remove(jobId);
+        StateHasChanged();
+        var (ok, err) = await BuildsSvc.ApproveErrorBuildAsync(jobId);
+        _actionInProgress[jobId] = false;
+        if (!ok) _actionError[jobId] = err ?? "Approve failed.";
+        else _errorBuilds = await BuildsSvc.GetErrorTriggeredJobsAsync();
+    }
+
+    private async Task RejectErrorBuild(long jobId)
+    {
+        _actionInProgress[jobId] = true;
+        _actionError.Remove(jobId);
+        StateHasChanged();
+        var (ok, err) = await BuildsSvc.RejectErrorBuildAsync(jobId);
+        _actionInProgress[jobId] = false;
+        if (!ok) _actionError[jobId] = err ?? "Reject failed.";
+        else _errorBuilds = await BuildsSvc.GetErrorTriggeredJobsAsync();
     }
 
     private void PrevPage() { if (_currentPage > 1) _currentPage--; }
